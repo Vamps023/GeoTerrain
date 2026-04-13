@@ -8,6 +8,7 @@
 
 #include <gdal_priv.h>
 #include <gdal.h>
+#include <gdalwarper.h>
 #include <ogr_spatialref.h>
 
 #include <curl/curl.h>
@@ -240,6 +241,67 @@ bool TileDownloader::download(const GeoBounds& bounds,
     }
 
     GDALClose(out_ds);
+
+    // Resample to target size if requested (1K/2K/3K/4K)
+    if (config.target_size > 0)
+    {
+        const int ts = config.target_size;
+        if (progress_cb)
+            progress_cb("Resampling albedo to " + std::to_string(ts) + "x" + std::to_string(ts) + "...", 88);
+
+        const std::string tmp_path = config.output_path + ".tmp.tif";
+
+        GDALDataset* src_ds = static_cast<GDALDataset*>(
+            GDALOpen(config.output_path.c_str(), GA_ReadOnly));
+        if (src_ds)
+        {
+            double gt[6];
+            src_ds->GetGeoTransform(gt);
+            const double new_px = (gt[1] * src_ds->GetRasterXSize()) / ts;
+            const double new_py = (-gt[5] * src_ds->GetRasterYSize()) / ts;
+            gt[1] =  new_px;
+            gt[5] = -new_py;
+
+            GDALDriver* drv = GetGDALDriverManager()->GetDriverByName("GTiff");
+            char** opts2 = nullptr;
+            opts2 = CSLSetNameValue(opts2, "COMPRESS", "LZW");
+            GDALDataset* dst_ds = drv->Create(tmp_path.c_str(), ts, ts, 3, GDT_Byte, opts2);
+            CSLDestroy(opts2);
+
+            if (dst_ds)
+            {
+                dst_ds->SetGeoTransform(gt);
+                dst_ds->SetProjection(src_ds->GetProjectionRef());
+
+                GDALWarpOptions* wo = GDALCreateWarpOptions();
+                wo->hSrcDS       = src_ds;
+                wo->hDstDS       = dst_ds;
+                wo->nBandCount   = 3;
+                wo->panSrcBands  = reinterpret_cast<int*>(CPLMalloc(3 * sizeof(int)));
+                wo->panDstBands  = reinterpret_cast<int*>(CPLMalloc(3 * sizeof(int)));
+                for (int b = 0; b < 3; ++b) { wo->panSrcBands[b] = b + 1; wo->panDstBands[b] = b + 1; }
+                wo->eResampleAlg    = GRA_Bilinear;
+                wo->pfnTransformer  = GDALGenImgProjTransform;
+                wo->pTransformerArg = GDALCreateGenImgProjTransformer(
+                    src_ds, src_ds->GetProjectionRef(),
+                    dst_ds, dst_ds->GetProjectionRef(), FALSE, 0.0, 1);
+
+                GDALWarpOperation wop;
+                if (wop.Initialize(wo) == CE_None)
+                    wop.ChunkAndWarpImage(0, 0, ts, ts);
+
+                GDALDestroyGenImgProjTransformer(wo->pTransformerArg);
+                GDALDestroyWarpOptions(wo);
+                GDALClose(dst_ds);
+            }
+            GDALClose(src_ds);
+
+            // Replace original with resampled
+            VSIUnlink(config.output_path.c_str());
+            VSIRename(tmp_path.c_str(), config.output_path.c_str());
+        }
+    }
+
     if (progress_cb) progress_cb("Tagging albedo CRS: EPSG:4326...", 92);
     GdalUtils::fixCrsTag(config.output_path);
     if (progress_cb) progress_cb("Albedo saved: " + config.output_path, 95);

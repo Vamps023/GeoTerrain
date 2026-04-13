@@ -158,7 +158,7 @@ bool DEMFetcher::fetchFromOpenTopography(const GeoBounds& bounds,
 
     if (progress_cb) progress_cb("Processing DEM to Float32 heightmap...", 60);
     const bool ok = convertToHeightmapTiff(vpath, config.output_path,
-                                            bounds, config.resolution_m, progress_cb);
+                                            bounds, config, progress_cb);
     VSIUnlink(vpath.c_str());
     if (ok)
     {
@@ -175,14 +175,14 @@ bool DEMFetcher::clipLocalTiff(const GeoBounds& bounds,
 {
     if (progress_cb) progress_cb("Clipping local GeoTIFF: " + config.local_tiff_path, 5);
     return convertToHeightmapTiff(config.local_tiff_path, config.output_path,
-                                   bounds, config.resolution_m, progress_cb);
+                                   bounds, config, progress_cb);
 }
 
 // ---------------------------------------------------------------------------
 bool DEMFetcher::convertToHeightmapTiff(const std::string& src_path,
                                           const std::string& dst_path,
                                           const GeoBounds&   bounds,
-                                          double             resolution_m,
+                                          const Config&      config,
                                           ProgressCallback   progress_cb)
 {
     GDALDataset* src_ds = static_cast<GDALDataset*>(GDALOpen(src_path.c_str(), GA_ReadOnly));
@@ -198,12 +198,50 @@ bool DEMFetcher::convertToHeightmapTiff(const std::string& src_path,
     char* dst_wkt = nullptr;
     dst_srs.exportToWkt(&dst_wkt);
 
-    // Compute output pixel size from resolution_m (degrees ~ 1m = 8.9e-6 deg at equator)
-    const double deg_per_m = 1.0 / 111320.0;
-    const double pixel_deg = resolution_m * deg_per_m;
+    int out_w = 0, out_h = 0;
+    double pixel_deg_x = 0.0, pixel_deg_y = 0.0;
 
-    const int out_w = std::max(1, static_cast<int>(std::ceil(bounds.width()  / pixel_deg)));
-    const int out_h = std::max(1, static_cast<int>(std::ceil(bounds.height() / pixel_deg)));
+    // Prefer matching albedo dimensions for pixel-perfect alignment
+    if (!config.ref_tif_path.empty())
+    {
+        GDALDataset* ref_ds = static_cast<GDALDataset*>(
+            GDALOpen(config.ref_tif_path.c_str(), GA_ReadOnly));
+        if (ref_ds)
+        {
+            double gt[6];
+            if (ref_ds->GetGeoTransform(gt) == CE_None)
+            {
+                out_w = ref_ds->GetRasterXSize();
+                out_h = ref_ds->GetRasterYSize();
+                pixel_deg_x =  gt[1];
+                pixel_deg_y = -gt[5];
+            }
+            GDALClose(ref_ds);
+        }
+    }
+
+    if (out_w <= 0 || out_h <= 0)
+    {
+        // Use native pixel size from source dataset if available
+        double src_gt[6];
+        if (src_ds->GetGeoTransform(src_gt) == CE_None &&
+            src_gt[1] > 0.0 && src_gt[5] < 0.0)
+        {
+            pixel_deg_x =  src_gt[1];
+            pixel_deg_y = -src_gt[5];
+            out_w = std::max(1, static_cast<int>(std::ceil(bounds.width()  / pixel_deg_x)));
+            out_h = std::max(1, static_cast<int>(std::ceil(bounds.height() / pixel_deg_y)));
+        }
+        else
+        {
+            const double deg_per_m = 1.0 / 111320.0;
+            const double pixel_deg = config.resolution_m * deg_per_m;
+            pixel_deg_x = pixel_deg;
+            pixel_deg_y = pixel_deg;
+            out_w = std::max(1, static_cast<int>(std::ceil(bounds.width()  / pixel_deg)));
+            out_h = std::max(1, static_cast<int>(std::ceil(bounds.height() / pixel_deg)));
+        }
+    }
 
     if (progress_cb)
         progress_cb("Output heightmap size: " + std::to_string(out_w) + "x" + std::to_string(out_h), 65);
@@ -226,8 +264,8 @@ bool DEMFetcher::convertToHeightmapTiff(const std::string& src_path,
     }
 
     double gt[6] = {
-        bounds.west,  pixel_deg,  0.0,
-        bounds.north, 0.0,       -pixel_deg
+        bounds.west,   pixel_deg_x, 0.0,
+        bounds.north,  0.0,        -pixel_deg_y
     };
     dst_ds->SetGeoTransform(gt);
     dst_ds->SetProjection(dst_wkt);

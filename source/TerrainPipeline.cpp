@@ -1,4 +1,5 @@
 #include "TerrainPipeline.h"
+#include "ShapefileExporter.h"
 
 #include <json.hpp>
 
@@ -29,23 +30,25 @@ void PipelineWorker::run()
     // Ensure output directory exists
     QDir().mkpath(QString::fromStdString(config_.output_dir));
 
-    // --- Step 1: DEM ---
-    emit progress("=== Step 1/4: Fetching DEM heightmap ===", 0);
+    // --- Step 1: TMS tiles ---
+    emit progress("=== Step 1/4: Downloading TMS albedo tiles ===", 0);
+    TileDownloader tile_dl;
+    TileDownloader::Config tiles_cfg = config_.tiles;
+    tiles_cfg.target_size = 0;  // no resampling — native tile resolution
+    const bool tiles_ok = tile_dl.download(config_.bounds, tiles_cfg, cb);
+    if (!tiles_ok)
+    {
+        emit finished(false, "Tile download failed. Check TMS URL and network.");
+        return;
+    }
+
+    // --- Step 2: DEM at native SRTM resolution ---
+    emit progress("=== Step 2/4: Fetching DEM heightmap ===", 25);
     DEMFetcher dem_fetcher;
     const bool dem_ok = dem_fetcher.fetch(config_.bounds, config_.dem, cb);
     if (!dem_ok)
     {
         emit finished(false, "DEM fetch failed. Check API key and network.");
-        return;
-    }
-
-    // --- Step 2: TMS tiles ---
-    emit progress("=== Step 2/4: Downloading TMS albedo tiles ===", 25);
-    TileDownloader tile_dl;
-    const bool tiles_ok = tile_dl.download(config_.bounds, config_.tiles, cb);
-    if (!tiles_ok)
-    {
-        emit finished(false, "Tile download failed. Check TMS URL and network.");
         return;
     }
 
@@ -57,7 +60,16 @@ void PipelineWorker::run()
     if (!osm_result.success)
         emit progress("WARNING: OSM fetch failed: " + QString::fromStdString(osm_result.error), 70);
     else
+    {
         emit progress("OSM: " + QString::number(osm_result.ways.size()) + " ways parsed", 70);
+
+        // Export Shapefiles
+        emit progress("=== Exporting Shapefiles ===", 72);
+        ShapefileExporter shp_exp;
+        ShapefileExporter::Config shp_cfg;
+        shp_cfg.output_dir = config_.output_dir;
+        shp_exp.exportAll(osm_result, shp_cfg, cb);
+    }
 
     // --- Step 4: Mask generation ---
     emit progress("=== Step 4/4: Generating masks ===", 75);

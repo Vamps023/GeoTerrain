@@ -72,9 +72,11 @@ OSMParser::ParseResult OSMParser::fetch(const GeoBounds& bounds,
     query << "[out:json][timeout:60];\n"
           << "(\n"
           << "  way[\"highway\"](" << bounds.toOverpassBBox() << ");\n"
+          << "  way[\"railway\"](" << bounds.toOverpassBBox() << ");\n"
           << "  way[\"building\"](" << bounds.toOverpassBBox() << ");\n"
-          << "  way[\"landuse\"~\"forest|grass|meadow|park|recreation_ground|village_green\"](" << bounds.toOverpassBBox() << ");\n"
-          << "  way[\"natural\"~\"wood|scrub|heath|grassland\"](" << bounds.toOverpassBBox() << ");\n"
+          << "  way[\"waterway\"](" << bounds.toOverpassBBox() << ");\n"
+          << "  way[\"natural\"~\"water|wood|scrub|heath|grassland\"](" << bounds.toOverpassBBox() << ");\n"
+          << "  way[\"landuse\"~\"forest|grass|meadow|park|recreation_ground|village_green|reservoir|basin\"](" << bounds.toOverpassBBox() << ");\n"
           << "  way[\"leisure\"~\"park|garden|nature_reserve\"](" << bounds.toOverpassBBox() << ");\n"
           << ");\n"
           << "(._;>;);\n"
@@ -196,13 +198,19 @@ OSMParser::ParseResult OSMParser::parseJson(const std::string& json_str,
         const std::string landuse  = tags.value("landuse",  "");
         const std::string natural  = tags.value("natural",  "");
         const std::string leisure  = tags.value("leisure",  "");
+        const std::string railway  = tags.value("railway",  "");
+        const std::string waterway = tags.value("waterway", "");
+        const std::string name     = tags.value("name",     "");
 
-        Way::Tag tag = classifyTags(highway, building, landuse, natural, leisure);
+        std::string subtype;
+        Way::Tag tag = classifyTags(highway, building, landuse, natural, leisure, railway, waterway, subtype);
         if (tag == Way::Tag::Unknown)
             continue;
 
         Way way;
-        way.tag = tag;
+        way.tag     = tag;
+        way.subtype = subtype;
+        way.name    = name;
 
         // 'out geom' format: geometry array with {lat, lon} objects inline
         if (el.contains("geometry") && el["geometry"].is_array())
@@ -242,16 +250,41 @@ OSMParser::Way::Tag OSMParser::classifyTags(const std::string& highway,
                                              const std::string& building,
                                              const std::string& landuse,
                                              const std::string& natural_tag,
-                                             const std::string& leisure)
+                                             const std::string& leisure,
+                                             const std::string& railway,
+                                             const std::string& waterway,
+                                             std::string&       out_subtype)
 {
+    if (!railway.empty())
+    {
+        out_subtype = railway;
+        return Way::Tag::Railway;
+    }
+
     if (!highway.empty())
+    {
+        out_subtype = highway;
         return Way::Tag::Road;
+    }
 
     if (!building.empty())
+    {
+        out_subtype = building;
         return Way::Tag::Building;
+    }
+
+    if (!waterway.empty() ||
+        natural_tag == "water" || landuse == "reservoir" || landuse == "basin")
+    {
+        out_subtype = !waterway.empty() ? waterway : (!natural_tag.empty() ? natural_tag : landuse);
+        return Way::Tag::Water;
+    }
 
     if (!landuse.empty() || !natural_tag.empty() || !leisure.empty())
+    {
+        out_subtype = !landuse.empty() ? landuse : (!natural_tag.empty() ? natural_tag : leisure);
         return Way::Tag::Vegetation;
+    }
 
     return Way::Tag::Unknown;
 }

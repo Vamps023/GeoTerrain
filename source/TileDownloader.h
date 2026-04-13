@@ -14,8 +14,9 @@ public:
     struct Config
     {
         std::string url_template;   // e.g. "https://tile.openstreetmap.org/{z}/{x}/{y}.png"
-        int         zoom_level = 14;
-        std::string output_path;    // full path to output albedo.tif
+        int         zoom_level  = 14;
+        int         target_size = 0; // if >0, resample output to target_size x target_size (e.g. 1024, 2048, 4096)
+        std::string output_path;     // full path to output albedo.tif
     };
 
     using ProgressCallback = std::function<void(const std::string& message, int percent)>;

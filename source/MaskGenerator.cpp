@@ -180,11 +180,13 @@ bool MaskGenerator::generate(const GeoBounds&              bounds,
     if (progress_cb)
         progress_cb("Mask raster size: " + std::to_string(out_w) + "x" + std::to_string(out_h), 5);
 
-    // Allocate three single-band buffers (Roads, Buildings, Vegetation)
+    // Allocate five single-band buffers
     const size_t sz = static_cast<size_t>(out_w) * out_h;
     std::vector<uint8_t> band_road(sz, 0);
     std::vector<uint8_t> band_bldg(sz, 0);
     std::vector<uint8_t> band_veg(sz, 0);
+    std::vector<uint8_t> band_rail(sz, 0);
+    std::vector<uint8_t> band_water(sz, 0);
 
     // Pixel size from actual output dimensions
     const double px_deg_x = ref_bounds.width()  / out_w;
@@ -212,11 +214,17 @@ bool MaskGenerator::generate(const GeoBounds&              bounds,
         case OSMParser::Way::Tag::Road:
             rasterizeLine(band_road, out_w, out_h, ref_bounds, way.nodes, road_radius_px, 255);
             break;
+        case OSMParser::Way::Tag::Railway:
+            rasterizeLine(band_rail, out_w, out_h, ref_bounds, way.nodes, 2, 255);
+            break;
         case OSMParser::Way::Tag::Building:
             rasterizePolygon(band_bldg, out_w, out_h, ref_bounds, way.nodes, 255);
             break;
         case OSMParser::Way::Tag::Vegetation:
             rasterizePolygon(band_veg, out_w, out_h, ref_bounds, way.nodes, 255);
+            break;
+        case OSMParser::Way::Tag::Water:
+            rasterizePolygon(band_water, out_w, out_h, ref_bounds, way.nodes, 255);
             break;
         default:
             break;
@@ -225,7 +233,7 @@ bool MaskGenerator::generate(const GeoBounds&              bounds,
 
     if (progress_cb) progress_cb("Writing mask GeoTIFF...", 88);
 
-    // Write 3-band GeoTIFF
+    // Write 5-band GeoTIFF
     GDALAllRegister();
     GDALDriver* driver = GetGDALDriverManager()->GetDriverByName("GTiff");
     if (!driver)
@@ -238,7 +246,7 @@ bool MaskGenerator::generate(const GeoBounds&              bounds,
     opts = CSLSetNameValue(opts, "COMPRESS", "LZW");
 
     GDALDataset* ds = driver->Create(config.output_path.c_str(),
-                                      out_w, out_h, 3, GDT_Byte, opts);
+                                      out_w, out_h, 5, GDT_Byte, opts);
     CSLDestroy(opts);
 
     if (!ds)
@@ -260,15 +268,74 @@ bool MaskGenerator::generate(const GeoBounds&              bounds,
     ds->GetRasterBand(1)->SetDescription("Roads");
     ds->GetRasterBand(2)->SetDescription("Buildings");
     ds->GetRasterBand(3)->SetDescription("Vegetation");
+    ds->GetRasterBand(4)->SetDescription("Railways");
+    ds->GetRasterBand(5)->SetDescription("Water");
 
     ds->GetRasterBand(1)->RasterIO(GF_Write, 0, 0, out_w, out_h,
-                                    band_road.data(), out_w, out_h, GDT_Byte, 0, 0);
+                                    band_road.data(),  out_w, out_h, GDT_Byte, 0, 0);
     ds->GetRasterBand(2)->RasterIO(GF_Write, 0, 0, out_w, out_h,
-                                    band_bldg.data(), out_w, out_h, GDT_Byte, 0, 0);
+                                    band_bldg.data(),  out_w, out_h, GDT_Byte, 0, 0);
     ds->GetRasterBand(3)->RasterIO(GF_Write, 0, 0, out_w, out_h,
-                                    band_veg.data(), out_w, out_h, GDT_Byte, 0, 0);
-
+                                    band_veg.data(),   out_w, out_h, GDT_Byte, 0, 0);
+    ds->GetRasterBand(4)->RasterIO(GF_Write, 0, 0, out_w, out_h,
+                                    band_rail.data(),  out_w, out_h, GDT_Byte, 0, 0);
+    ds->GetRasterBand(5)->RasterIO(GF_Write, 0, 0, out_w, out_h,
+                                    band_water.data(), out_w, out_h, GDT_Byte, 0, 0);
     GDALClose(ds);
+
+    // Log per-band pixel counts so user can verify data presence
+    auto countNonZero = [](const std::vector<uint8_t>& b)
+    {
+        int n = 0;
+        for (uint8_t v : b) if (v) ++n;
+        return n;
+    };
+    if (progress_cb)
+    {
+        progress_cb("Mask pixels — Roads:"      + std::to_string(countNonZero(band_road))  +
+                    " Buildings:"               + std::to_string(countNonZero(band_bldg))  +
+                    " Vegetation:"              + std::to_string(countNonZero(band_veg))   +
+                    " Railways:"                + std::to_string(countNonZero(band_rail))  +
+                    " Water:"                   + std::to_string(countNonZero(band_water)), 89);
+    }
+
+    // --- Write RGB colour preview: mask_preview.tif ---
+    // Roads=Red(255,0,0), Buildings=Yellow(255,255,0),
+    // Vegetation=Green(0,200,0), Railways=Blue(0,0,255), Water=Cyan(0,220,255)
+    {
+        const std::string preview_path =
+            config.output_path.substr(0, config.output_path.rfind('.')) + "_preview.tif";
+
+        GDALDataset* pds = driver->Create(preview_path.c_str(), out_w, out_h, 3, GDT_Byte, nullptr);
+        if (pds)
+        {
+            pds->SetGeoTransform(gt);
+            OGRSpatialReference psrs;
+            psrs.importFromEPSG(4326);
+            char* pwkt = nullptr;
+            psrs.exportToWkt(&pwkt);
+            pds->SetProjection(pwkt);
+            CPLFree(pwkt);
+
+            std::vector<uint8_t> pr(sz, 0), pg(sz, 0), pb(sz, 0);
+            for (size_t i = 0; i < sz; ++i)
+            {
+                if (band_water[i])  { pr[i] = 0;   pg[i] = 220; pb[i] = 255; } // Cyan
+                if (band_veg[i])    { pr[i] = 0;   pg[i] = 200; pb[i] = 0;   } // Green
+                if (band_bldg[i])   { pr[i] = 255; pg[i] = 255; pb[i] = 0;   } // Yellow
+                if (band_rail[i])   { pr[i] = 0;   pg[i] = 0;   pb[i] = 255; } // Blue
+                if (band_road[i])   { pr[i] = 255; pg[i] = 0;   pb[i] = 0;   } // Red
+            }
+            pds->GetRasterBand(1)->RasterIO(GF_Write, 0, 0, out_w, out_h,
+                pr.data(), out_w, out_h, GDT_Byte, 0, 0);
+            pds->GetRasterBand(2)->RasterIO(GF_Write, 0, 0, out_w, out_h,
+                pg.data(), out_w, out_h, GDT_Byte, 0, 0);
+            pds->GetRasterBand(3)->RasterIO(GF_Write, 0, 0, out_w, out_h,
+                pb.data(), out_w, out_h, GDT_Byte, 0, 0);
+            GDALClose(pds);
+            if (progress_cb) progress_cb("Mask preview saved: " + preview_path, 91);
+        }
+    }
 
     if (progress_cb) progress_cb("Tagging mask CRS: EPSG:4326...", 92);
     GdalUtils::fixCrsTag(config.output_path);

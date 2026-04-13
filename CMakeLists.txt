@@ -61,6 +61,7 @@ set(SOURCES
     source/DEMFetcher.cpp
     source/TileDownloader.cpp
     source/OSMParser.cpp
+    source/ShapefileExporter.cpp
     source/MaskGenerator.cpp
     source/TerrainPipeline.cpp
     source/GdalUtils.cpp
@@ -73,6 +74,7 @@ set(HEADERS
     source/DEMFetcher.h
     source/TileDownloader.h
     source/OSMParser.h
+    source/ShapefileExporter.h
     source/MaskGenerator.h
     source/TerrainPipeline.h
     source/GeoBounds.h

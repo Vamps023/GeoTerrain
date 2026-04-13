@@ -73,6 +73,7 @@ private:
     // Parameters tab
     QDoubleSpinBox* spin_resolution_   = nullptr;
     QSpinBox*       spin_zoom_         = nullptr;
+    QComboBox*      combo_map_size_    = nullptr;
     QDoubleSpinBox* spin_road_width_   = nullptr;
     QLineEdit*      edit_output_dir_   = nullptr;
 

@@ -13,8 +13,10 @@ class OSMParser
 public:
     struct Way
     {
-        enum class Tag { Road, Building, Vegetation, Unknown };
-        Tag tag = Tag::Unknown;
+        enum class Tag { Road, Railway, Building, Vegetation, Water, Unknown };
+        Tag         tag      = Tag::Unknown;
+        std::string subtype;   // e.g. "residential", "rail", "yes", "forest"
+        std::string name;      // OSM name tag if present
         std::vector<std::pair<double, double>> nodes; // (lat, lon) pairs
     };
 
@@ -46,5 +48,8 @@ private:
                                   const std::string& building,
                                   const std::string& landuse,
                                   const std::string& natural_tag,
-                                  const std::string& leisure);
+                                  const std::string& leisure,
+                                  const std::string& railway,
+                                  const std::string& waterway,
+                                  std::string&       out_subtype);
 };

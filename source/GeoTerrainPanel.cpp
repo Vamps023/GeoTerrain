@@ -310,6 +310,16 @@ QWidget* GeoTerrainPanel::buildParametersTab()
     spin_zoom_->setToolTip("TMS tile zoom level for albedo download");
     addRow(raster_gl, "Tile Zoom:", spin_zoom_);
 
+    combo_map_size_ = new QComboBox(w);
+    combo_map_size_->addItem("Native (tile-snapped)", 0);
+    combo_map_size_->addItem("1K  (1024 x 1024)",    1024);
+    combo_map_size_->addItem("2K  (2048 x 2048)",    2048);
+    combo_map_size_->addItem("3K  (3072 x 3072)",    3072);
+    combo_map_size_->addItem("4K  (4096 x 4096)",    4096);
+    combo_map_size_->setCurrentIndex(2);  // default 2K
+    combo_map_size_->setToolTip("Resample all outputs (albedo, heightmap, mask) to this square size");
+    addRow(raster_gl, "Map Size:", combo_map_size_);
+
     auto* crs_lbl = new QLabel(
         "<b>EPSG:4326 – WGS 84</b>  (GeoTIFF, Raw data)", w);
     crs_lbl->setStyleSheet("color:#a5d6a7; font-size:9pt; padding:2px;");
@@ -555,6 +565,7 @@ PipelineConfig GeoTerrainPanel::buildPipelineConfig() const
     cfg.tiles.url_template  = edit_tms_url_     ? edit_tms_url_->text().toStdString()
                                                  : "https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}";
     cfg.tiles.zoom_level    = spin_zoom_        ? spin_zoom_->value() : 14;
+    cfg.tiles.target_size   = combo_map_size_   ? combo_map_size_->currentData().toInt() : 0;
     cfg.tiles.output_path   = cfg.output_dir + "/albedo.tif";
 
     // OSM
@@ -595,8 +606,9 @@ void GeoTerrainPanel::onPipelineFinished(bool success, const QString& error)
 // ---------------------------------------------------------------------------
 void GeoTerrainPanel::onQgisExport()
 {
-    const QString gdal_translate =
-        "C:/Users/snare.ext/Documents/Sogeclair Rail Simulation/Track Editor/cots/qgis/bin/gdal_translate.exe";
+    const QString qgis_root = "C:/Users/snare.ext/Documents/Sogeclair Rail Simulation/Track Editor/cots/qgis";
+    const QString gdal_translate = qgis_root + "/bin/gdal_translate.exe";
+    const QString ogr2ogr        = qgis_root + "/bin/ogr2ogr.exe";
 
     if (!QFileInfo::exists(gdal_translate))
     {
@@ -605,27 +617,46 @@ void GeoTerrainPanel::onQgisExport()
         return;
     }
 
-    const QString out_dir = edit_output_dir_ ? edit_output_dir_->text()
-                                             : QDir::homePath() + "/GeoTerrainExport";
+    const QString out_dir    = edit_output_dir_ ? edit_output_dir_->text()
+                                                : QDir::homePath() + "/GeoTerrainExport";
+    const QString export_dir = out_dir + "/UnigineExport";
+    QDir().mkpath(export_dir);
+    appendLog("=== Unigine Export → " + export_dir + " ===");
 
-    const QStringList files = { "heightmap.tif", "albedo.tif", "mask.tif" };
+    // QGIS GDAL environment
+    QProcessEnvironment env = QProcessEnvironment::systemEnvironment();
+    env.insert("GDAL_DATA", qgis_root + "/share/gdal");
+    env.insert("PROJ_DATA", qgis_root + "/share/proj");
+    env.insert("PATH",      qgis_root + "/bin;" + env.value("PATH"));
+
+    auto runProc = [&](const QString& prog, const QStringList& args, const QString& label) -> bool
+    {
+        QProcess proc;
+        proc.setProgram(prog);
+        proc.setArguments(args);
+        proc.setProcessEnvironment(env);
+        proc.start();
+        proc.waitForFinished(120000);
+        if (proc.exitCode() == 0)
+        {
+            appendLog("[OK] " + label);
+            return true;
+        }
+        const QString err = QString::fromUtf8(proc.readAllStandardError()).trimmed();
+        appendLog("[FAIL] " + label + ": " + err);
+        return false;
+    };
+
     int ok_count = 0;
 
-    for (const QString& fname : files)
+    // --- GeoTIFFs via gdal_translate ---
+    const QStringList tifs = { "heightmap.tif", "albedo.tif", "mask.tif" };
+    for (const QString& fname : tifs)
     {
-        const QString src  = out_dir + "/" + fname;
-        const QString base = fname.left(fname.lastIndexOf('.'));
-        const QString dst  = out_dir + "/" + base + "_unigine.tif";
+        const QString src = out_dir + "/" + fname;
+        const QString dst = export_dir + "/" + fname;
+        if (!QFileInfo::exists(src)) { appendLog("[SKIP] " + fname + " not found"); continue; }
 
-        if (!QFileInfo::exists(src))
-        {
-            appendLog("[SKIP] " + fname + " not found");
-            continue;
-        }
-
-        appendLog("Exporting " + fname + " ...");
-
-        // gdal_translate -of GTiff -a_srs EPSG:4326 -co COMPRESS=LZW src dst
         QStringList args;
         args << "-of" << "GTiff"
              << "-a_srs" << "EPSG:4326"
@@ -633,44 +664,52 @@ void GeoTerrainPanel::onQgisExport()
              << "-co" << "TILED=YES"
              << src << dst;
 
-        QProcess proc;
-        proc.setProgram(gdal_translate);
-        proc.setArguments(args);
+        if (runProc(gdal_translate, args, fname)) ok_count++;
+    }
 
-        // Set QGIS GDAL environment so projections database is found
-        QProcessEnvironment env = QProcessEnvironment::systemEnvironment();
-        const QString qgis_root = "C:/Users/snare.ext/Documents/Sogeclair Rail Simulation/Track Editor/cots/qgis";
-        env.insert("GDAL_DATA",        qgis_root + "/share/gdal");
-        env.insert("PROJ_DATA",        qgis_root + "/share/proj");
-        env.insert("PATH",             qgis_root + "/bin;" + env.value("PATH"));
-        proc.setProcessEnvironment(env);
-
-        proc.start();
-        proc.waitForFinished(60000);
-
-        if (proc.exitCode() == 0)
+    // --- Shapefiles via ogr2ogr ---
+    // Matches QGIS "Save Vector Layer as..." exactly:
+    //   Format: ESRI Shapefile, CRS: EPSG:4326 (assigned, not reprojected),
+    //   Encoding: UTF-8, Geometry: Automatic, RESIZE=NO
+    if (QFileInfo::exists(ogr2ogr))
+    {
+        const QStringList shps = { "roads", "railways", "buildings", "vegetation", "water" };
+        for (const QString& layer : shps)
         {
-            appendLog("[OK] " + base + "_unigine.tif");
-            ok_count++;
+            const QString src = out_dir + "/" + layer + ".shp";
+            const QString dst = export_dir + "/" + layer + ".shp";
+            if (!QFileInfo::exists(src)) { appendLog("[SKIP] " + layer + ".shp not found"); continue; }
+
+            // Remove existing output sidecar files so -overwrite works cleanly
+            for (const QString& ext : { ".shp", ".shx", ".dbf", ".prj", ".cpg" })
+                QFile::remove(export_dir + "/" + layer + ext);
+
+            QStringList args;
+            args << "-f"        << "ESRI Shapefile"
+                 << "-a_srs"    << "EPSG:4326"      // assign CRS (not reproject) — same as QGIS
+                 << "-lco"      << "ENCODING=UTF-8"  // UTF-8 encoding
+                 << "-lco"      << "RESIZE=NO"       // no DBF resize
+                 << "-overwrite"
+                 << dst << src;
+
+            if (runProc(ogr2ogr, args, layer + ".shp")) ok_count++;
         }
-        else
-        {
-            const QString err = proc.readAllStandardError().trimmed();
-            appendLog("[FAIL] " + fname + ": " + err);
-        }
+    }
+    else
+    {
+        appendLog("[SKIP] ogr2ogr.exe not found — shapefiles not re-exported");
     }
 
     if (ok_count > 0)
     {
-        appendLog(QString("=== QGIS Export done: %1/3 files written to %2 ===")
-                  .arg(ok_count).arg(out_dir));
-        QMessageBox::information(this, "QGIS Export Complete",
-            QString("%1 file(s) exported to:\n%2\n\nFiles: heightmap_unigine.tif, albedo_unigine.tif, mask_unigine.tif")
-            .arg(ok_count).arg(out_dir));
+        appendLog(QString("=== Unigine Export done: %1 file(s) → %2 ===")
+                  .arg(ok_count).arg(export_dir));
+        QMessageBox::information(this, "Unigine Export Complete",
+            QString("%1 file(s) exported to:\n%2").arg(ok_count).arg(export_dir));
     }
     else
     {
-        appendLog("=== QGIS Export failed — no files written ===");
+        appendLog("=== Unigine Export failed — no files written ===");
     }
 }
 
