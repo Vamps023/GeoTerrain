@@ -63,6 +63,7 @@ set(SOURCES
     source/OSMParser.cpp
     source/MaskGenerator.cpp
     source/TerrainPipeline.cpp
+    source/GdalUtils.cpp
 )
 
 set(HEADERS
@@ -75,6 +76,7 @@ set(HEADERS
     source/MaskGenerator.h
     source/TerrainPipeline.h
     source/GeoBounds.h
+    source/GdalUtils.h
 )
 
 add_library(${target_name} SHARED ${SOURCES} ${HEADERS})

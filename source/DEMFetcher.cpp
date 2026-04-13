@@ -1,4 +1,5 @@
 #include "DEMFetcher.h"
+#include "GdalUtils.h"
 
 #ifndef _USE_MATH_DEFINES
 #define _USE_MATH_DEFINES
@@ -159,6 +160,11 @@ bool DEMFetcher::fetchFromOpenTopography(const GeoBounds& bounds,
     const bool ok = convertToHeightmapTiff(vpath, config.output_path,
                                             bounds, config.resolution_m, progress_cb);
     VSIUnlink(vpath.c_str());
+    if (ok)
+    {
+        if (progress_cb) progress_cb("Reprojecting heightmap to EPSG:3395...", 95);
+        GdalUtils::reprojectToMercator(config.output_path);
+    }
     return ok;
 }
 
