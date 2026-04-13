@@ -56,25 +56,29 @@ OSMParser::ParseResult OSMParser::fetch(const GeoBounds& bounds,
         return res;
     }
 
+    // Warn if area is large — Overpass free servers 504 on big queries
+    const double dLat = bounds.north - bounds.south;
+    const double dLon = bounds.east  - bounds.west;
+    if (progress_cb && (dLat > 0.05 || dLon > 0.05))
+        progress_cb("WARNING: Selected area is large (" +
+                    std::to_string((int)(dLat * 111)) + "km x " +
+                    std::to_string((int)(dLon * 111)) + "km) — OSM query may timeout. "
+                    "Select a smaller area for reliable OSM data.", 5);
+
     if (progress_cb) progress_cb("Building Overpass query...", 5);
 
     // Overpass QL query — fetch all ways with highway/building/landuse tags
     std::ostringstream query;
-    query << "[out:json][timeout:" << config.timeout_s << "];\n"
+    query << "[out:json][timeout:60];\n"
           << "(\n"
           << "  way[\"highway\"](" << bounds.toOverpassBBox() << ");\n"
           << "  way[\"building\"](" << bounds.toOverpassBBox() << ");\n"
-          << "  way[\"landuse\"~\"forest|grass|meadow|park|recreation_ground|village_green\"]("
-                                    << bounds.toOverpassBBox() << ");\n"
-          << "  way[\"natural\"~\"wood|scrub|heath|grassland\"]("
-                                    << bounds.toOverpassBBox() << ");\n"
-          << "  way[\"leisure\"~\"park|garden|nature_reserve\"]("
-                                    << bounds.toOverpassBBox() << ");\n"
+          << "  way[\"landuse\"~\"forest|grass|meadow|park|recreation_ground|village_green\"](" << bounds.toOverpassBBox() << ");\n"
+          << "  way[\"natural\"~\"wood|scrub|heath|grassland\"](" << bounds.toOverpassBBox() << ");\n"
+          << "  way[\"leisure\"~\"park|garden|nature_reserve\"](" << bounds.toOverpassBBox() << ");\n"
           << ");\n"
           << "(._;>;);\n"
           << "out body;";
-
-    if (progress_cb) progress_cb("Querying Overpass API...", 10);
 
     // URL-encode the query string for the POST body
     CURL* enc = curl_easy_init();
@@ -84,25 +88,52 @@ OSMParser::ParseResult OSMParser::fetch(const GeoBounds& bounds,
     curl_free(encoded_query);
     curl_easy_cleanup(enc);
 
-    long http_code = 0;
-    const std::string response = httpPost(config.overpass_url, body,
-                                          config.timeout_s, &http_code);
+    // Try primary server first, then fallback mirrors on 504 / empty
+    // Include both HTTPS and HTTP variants in case firewall blocks SSL
+    const std::vector<std::string> servers = {
+        config.overpass_url,                              // https://overpass-api.de (primary)
+        "https://overpass.kumi.systems/api/interpreter",  // EU mirror
+        "http://overpass-api.de/api/interpreter",         // HTTP fallback (no SSL)
+    };
 
-    if (progress_cb)
-        progress_cb("Overpass HTTP " + std::to_string(http_code) +
-                    " — " + std::to_string(response.size() / 1024) + " KB", 30);
+    long http_code = 0;
+    std::string response;
+
+    for (size_t i = 0; i < servers.size(); ++i)
+    {
+        if (progress_cb)
+            progress_cb("Querying Overpass [" + std::to_string(i + 1) + "/" +
+                        std::to_string(servers.size()) + "]: " + servers[i], 10);
+
+        http_code = 0;
+        response  = httpPost(servers[i], body, config.timeout_s, &http_code);
+
+        if (progress_cb)
+            progress_cb("Overpass HTTP " + std::to_string(http_code) +
+                        " — " + std::to_string(response.size() / 1024) + " KB", 30);
+
+        // Accept if we got a non-error JSON response
+        const bool is_html  = response.find("<html") != std::string::npos;
+        const bool is_error = response.find("\"error\"") != std::string::npos;
+        const bool is_ok    = !response.empty() && !is_html && !is_error;
+
+        if (is_ok)
+            break;
+
+        if (progress_cb && i + 1 < servers.size())
+            progress_cb("Retrying with next mirror...", 12);
+    }
 
     if (response.empty())
     {
         ParseResult res;
-        res.error = "Empty response from Overpass API (HTTP " +
+        res.error = "All Overpass mirrors returned empty response (last HTTP " +
                     std::to_string(http_code) + ")";
         return res;
     }
 
-    // Check for Overpass error response
-    if (response.find("\"error\"") != std::string::npos ||
-        response.find("<html") != std::string::npos)
+    if (response.find("<html") != std::string::npos ||
+        response.find("\"error\"") != std::string::npos)
     {
         ParseResult res;
         res.error = "Overpass error: " +
@@ -138,14 +169,13 @@ OSMParser::ParseResult OSMParser::parseJson(const std::string& json_str,
         return result;
     }
 
-    // Build node id -> (lat,lon) lookup
-    std::unordered_map<long long, std::pair<double,double>> node_map;
     const auto& elements = doc["elements"];
 
+    // Build node id -> (lat,lon) lookup for classic 'out body' format
+    std::unordered_map<long long, std::pair<double,double>> node_map;
     for (const auto& el : elements)
     {
-        const std::string type = el.value("type", "");
-        if (type == "node")
+        if (el.value("type", "") == "node")
         {
             const long long id  = el.value("id", 0LL);
             const double    lat = el.value("lat", 0.0);
@@ -156,12 +186,10 @@ OSMParser::ParseResult OSMParser::parseJson(const std::string& json_str,
 
     for (const auto& el : elements)
     {
-        const std::string type = el.value("type", "");
-        if (type != "way")
+        if (el.value("type", "") != "way")
             continue;
 
-        const auto& tags     = el.value("tags", json::object());
-        const auto& node_ids = el.value("nodes", json::array());
+        const auto& tags = el.value("tags", json::object());
 
         const std::string highway  = tags.value("highway",  "");
         const std::string building = tags.value("building", "");
@@ -175,14 +203,27 @@ OSMParser::ParseResult OSMParser::parseJson(const std::string& json_str,
 
         Way way;
         way.tag = tag;
-        way.nodes.reserve(node_ids.size());
 
-        for (const auto& nid_json : node_ids)
+        // 'out geom' format: geometry array with {lat, lon} objects inline
+        if (el.contains("geometry") && el["geometry"].is_array())
         {
-            const long long nid = nid_json.get<long long>();
-            auto it = node_map.find(nid);
-            if (it != node_map.end())
-                way.nodes.push_back(it->second);
+            for (const auto& pt : el["geometry"])
+            {
+                if (pt.contains("lat") && pt.contains("lon"))
+                    way.nodes.push_back({ pt["lat"].get<double>(),
+                                          pt["lon"].get<double>() });
+            }
+        }
+        else if (el.contains("nodes"))
+        {
+            // Classic 'out body' format: node id array + separate node elements
+            for (const auto& nid_json : el["nodes"])
+            {
+                const long long nid = nid_json.get<long long>();
+                auto it = node_map.find(nid);
+                if (it != node_map.end())
+                    way.nodes.push_back(it->second);
+            }
         }
 
         if (!way.nodes.empty())

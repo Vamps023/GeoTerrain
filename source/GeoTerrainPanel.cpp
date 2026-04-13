@@ -101,7 +101,7 @@ QWidget* GeoTerrainPanel::buildMapTab()
     // TMS URL row
     auto* tms_row = new QHBoxLayout();
     tms_row->addWidget(new QLabel("TMS URL:", w));
-    auto* tms_edit = new QLineEdit("https://tile.openstreetmap.org/{z}/{x}/{y}.png", w);
+    auto* tms_edit = new QLineEdit("https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}", w);
     tms_edit->setToolTip("XYZ tile URL with {z}/{x}/{y} placeholders");
     tms_row->addWidget(tms_edit);
     auto* tms_btn = new QPushButton("Apply", w);
@@ -230,9 +230,31 @@ QWidget* GeoTerrainPanel::buildSourcesTab()
 
     // --- TMS ---
     auto* tms_gl = makeGroup("TMS Imagery");
-    edit_tms_url_ = new QLineEdit("https://tile.openstreetmap.org/{z}/{x}/{y}.png", w);
-    edit_tms_url_->setToolTip("XYZ tile URL with {z}/{x}/{y} placeholders");
+
+    // Preset selector
+    auto* preset_combo = new QComboBox(w);
+    preset_combo->addItem("ESRI World Imagery (Satellite)",
+        QString("https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}"));
+    preset_combo->addItem("ESRI Clarity (Hi-res Satellite)",
+        QString("https://clarity.maptiles.arcgis.com/arcgis/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}"));
+    preset_combo->addItem("OpenStreetMap (Street map)",
+        QString("https://tile.openstreetmap.org/{z}/{x}/{y}.png"));
+    preset_combo->addItem("Custom URL...", QString());
+    preset_combo->setToolTip("Select a tile source preset");
+    addRow(tms_gl, "Preset:", preset_combo);
+
+    edit_tms_url_ = new QLineEdit(
+        "https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}", w);
+    edit_tms_url_->setToolTip("XYZ tile URL — {z}/{x}/{y} placeholders. ESRI uses {z}/{y}/{x} order.");
     addRow(tms_gl, "TMS URL:", edit_tms_url_);
+
+    connect(preset_combo, QOverload<int>::of(&QComboBox::currentIndexChanged),
+            this, [this, preset_combo](int idx)
+    {
+        const QString url = preset_combo->itemData(idx).toString();
+        if (!url.isEmpty())
+            edit_tms_url_->setText(url);
+    });
 
     // --- OSM ---
     auto* osm_gl = makeGroup("OSM / Overpass");
@@ -531,7 +553,7 @@ PipelineConfig GeoTerrainPanel::buildPipelineConfig() const
 
     // Tiles
     cfg.tiles.url_template  = edit_tms_url_     ? edit_tms_url_->text().toStdString()
-                                                 : "https://tile.openstreetmap.org/{z}/{x}/{y}.png";
+                                                 : "https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}";
     cfg.tiles.zoom_level    = spin_zoom_        ? spin_zoom_->value() : 14;
     cfg.tiles.output_path   = cfg.output_dir + "/albedo.tif";
 

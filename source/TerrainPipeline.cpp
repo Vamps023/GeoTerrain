@@ -62,7 +62,9 @@ void PipelineWorker::run()
     // --- Step 4: Mask generation ---
     emit progress("=== Step 4/4: Generating masks ===", 75);
     MaskGenerator mask_gen;
-    const bool mask_ok = mask_gen.generate(config_.bounds, osm_result, config_.mask, cb);
+    MaskGenerator::Config mask_cfg = config_.mask;
+    mask_cfg.ref_tif_path = config_.tiles.output_path;  // match albedo dimensions
+    const bool mask_ok = mask_gen.generate(config_.bounds, osm_result, mask_cfg, cb);
     if (!mask_ok)
     {
         emit finished(false, "Mask generation failed.");

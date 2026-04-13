@@ -145,10 +145,37 @@ bool MaskGenerator::generate(const GeoBounds&              bounds,
         if (progress_cb) progress_cb("WARNING: OSM parse failed — generating empty mask", 10);
     }
 
-    constexpr double DEG_PER_M = 1.0 / 111320.0;
-    const double pixel_deg = config.resolution_m * DEG_PER_M;
-    const int out_w = std::max(1, static_cast<int>(std::ceil(bounds.width()  / pixel_deg)));
-    const int out_h = std::max(1, static_cast<int>(std::ceil(bounds.height() / pixel_deg)));
+    int out_w = 0, out_h = 0;
+    GeoBounds ref_bounds = bounds;
+
+    if (!config.ref_tif_path.empty())
+    {
+        GDALAllRegister();
+        GDALDataset* ref_ds = static_cast<GDALDataset*>(
+            GDALOpen(config.ref_tif_path.c_str(), GA_ReadOnly));
+        if (ref_ds)
+        {
+            double gt[6];
+            if (ref_ds->GetGeoTransform(gt) == CE_None)
+            {
+                out_w = ref_ds->GetRasterXSize();
+                out_h = ref_ds->GetRasterYSize();
+                ref_bounds.west  = gt[0];
+                ref_bounds.north = gt[3];
+                ref_bounds.east  = gt[0] + gt[1] * out_w;
+                ref_bounds.south = gt[3] + gt[5] * out_h;
+            }
+            GDALClose(ref_ds);
+        }
+    }
+
+    if (out_w <= 0 || out_h <= 0)
+    {
+        constexpr double DEG_PER_M = 1.0 / 111320.0;
+        const double pixel_deg = config.resolution_m * DEG_PER_M;
+        out_w = std::max(1, static_cast<int>(std::ceil(bounds.width()  / pixel_deg)));
+        out_h = std::max(1, static_cast<int>(std::ceil(bounds.height() / pixel_deg)));
+    }
 
     if (progress_cb)
         progress_cb("Mask raster size: " + std::to_string(out_w) + "x" + std::to_string(out_h), 5);
@@ -159,8 +186,13 @@ bool MaskGenerator::generate(const GeoBounds&              bounds,
     std::vector<uint8_t> band_bldg(sz, 0);
     std::vector<uint8_t> band_veg(sz, 0);
 
+    // Pixel size from actual output dimensions
+    const double px_deg_x = ref_bounds.width()  / out_w;
+    const double px_deg_y = ref_bounds.height() / out_h;
+    const double px_deg   = std::min(px_deg_x, px_deg_y);
+    constexpr double DEG_PER_M = 1.0 / 111320.0;
     const int road_radius_px = std::max(1, static_cast<int>(
-        config.road_width_m * DEG_PER_M / pixel_deg * 0.5));
+        config.road_width_m * DEG_PER_M / px_deg * 0.5));
 
     int way_count = 0;
     const int total_ways = static_cast<int>(osm.ways.size());
@@ -178,13 +210,13 @@ bool MaskGenerator::generate(const GeoBounds&              bounds,
         switch (way.tag)
         {
         case OSMParser::Way::Tag::Road:
-            rasterizeLine(band_road, out_w, out_h, bounds, way.nodes, road_radius_px, 255);
+            rasterizeLine(band_road, out_w, out_h, ref_bounds, way.nodes, road_radius_px, 255);
             break;
         case OSMParser::Way::Tag::Building:
-            rasterizePolygon(band_bldg, out_w, out_h, bounds, way.nodes, 255);
+            rasterizePolygon(band_bldg, out_w, out_h, ref_bounds, way.nodes, 255);
             break;
         case OSMParser::Way::Tag::Vegetation:
-            rasterizePolygon(band_veg, out_w, out_h, bounds, way.nodes, 255);
+            rasterizePolygon(band_veg, out_w, out_h, ref_bounds, way.nodes, 255);
             break;
         default:
             break;
@@ -215,8 +247,7 @@ bool MaskGenerator::generate(const GeoBounds&              bounds,
         return false;
     }
 
-    const double deg = pixel_deg;
-    double gt[6] = { bounds.west, deg, 0.0, bounds.north, 0.0, -deg };
+    double gt[6] = { ref_bounds.west, px_deg_x, 0.0, ref_bounds.north, 0.0, -px_deg_y };
     ds->SetGeoTransform(gt);
 
     OGRSpatialReference srs;

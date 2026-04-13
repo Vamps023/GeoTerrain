@@ -16,6 +16,7 @@ public:
     struct Config
     {
         std::string output_path;     // full path to output mask.tif
+        std::string ref_tif_path;    // if set, match width/height/bounds of this GeoTIFF (albedo)
         double      resolution_m = 30.0;
         double      road_width_m = 10.0; // buffer radius for road lines
     };

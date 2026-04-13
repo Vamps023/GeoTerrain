@@ -59,9 +59,11 @@ std::vector<uint8_t> TileDownloader::fetchTile(int z, int x, int y,
     curl_easy_setopt(curl, CURLOPT_URL,            url.c_str());
     curl_easy_setopt(curl, CURLOPT_WRITEFUNCTION,  curlWriteCallback);
     curl_easy_setopt(curl, CURLOPT_WRITEDATA,      &data);
-    curl_easy_setopt(curl, CURLOPT_USERAGENT,      "GeoTerrainEditorPlugin/1.0");
+    curl_easy_setopt(curl, CURLOPT_USERAGENT,      "Mozilla/5.0 GeoTerrainPlugin/1.0");
     curl_easy_setopt(curl, CURLOPT_FOLLOWLOCATION, 1L);
     curl_easy_setopt(curl, CURLOPT_TIMEOUT,        30L);
+    curl_easy_setopt(curl, CURLOPT_SSL_VERIFYPEER, 0L);
+    curl_easy_setopt(curl, CURLOPT_SSL_VERIFYHOST, 0L);
 
     const CURLcode res = curl_easy_perform(curl);
     curl_easy_cleanup(curl);
@@ -123,7 +125,7 @@ bool TileDownloader::download(const GeoBounds& bounds,
     create_opts = CSLSetNameValue(create_opts, "PHOTOMETRIC", "RGB");
 
     GDALDataset* out_ds = driver->Create(config.output_path.c_str(),
-                                         out_w, out_h, 4, GDT_Byte, create_opts);
+                                         out_w, out_h, 3, GDT_Byte, create_opts);
     CSLDestroy(create_opts);
 
     if (!out_ds)
@@ -143,7 +145,13 @@ bool TileDownloader::download(const GeoBounds& bounds,
     out_ds->SetProjection(wkt);
     CPLFree(wkt);
 
-    std::vector<uint8_t> tile_buf(TILE_SIZE * TILE_SIZE * 4, 255u);
+    // Planar band buffers: one contiguous block per band (not interleaved)
+    constexpr int BAND_PIXELS = TILE_SIZE * TILE_SIZE;
+    std::vector<uint8_t> band_r(BAND_PIXELS, 255u);
+    std::vector<uint8_t> band_g(BAND_PIXELS, 255u);
+    std::vector<uint8_t> band_b(BAND_PIXELS, 255u);
+    std::vector<uint8_t> band_a(BAND_PIXELS, 255u);
+
     int tiles_done  = 0;
     int total_tiles = num_tiles_x * num_tiles_y;
 
@@ -161,7 +169,10 @@ bool TileDownloader::download(const GeoBounds& bounds,
             }
 
             if (png.empty())
+            {
+                if (progress_cb) progress_cb("[WARN] Tile " + std::to_string(tx) + "," + std::to_string(ty) + " empty", -1);
                 continue;
+            }
 
             const std::string vpath = "/vsimem/dl_tile.png";
             VSILFILE* vf = VSIFileFromMemBuffer(vpath.c_str(), png.data(),
@@ -170,30 +181,61 @@ bool TileDownloader::download(const GeoBounds& bounds,
             VSIFCloseL(vf);
 
             GDALDataset* tds = static_cast<GDALDataset*>(GDALOpen(vpath.c_str(), GA_ReadOnly));
-            if (!tds) { VSIUnlink(vpath.c_str()); continue; }
-
-            const int nb = std::min(tds->GetRasterCount(), 4);
-            std::fill(tile_buf.begin(), tile_buf.end(), 255u);
-
-            for (int b = 0; b < nb; ++b)
+            if (!tds)
             {
-                tds->GetRasterBand(b + 1)->RasterIO(
+                if (progress_cb && tiles_done == 1)
+                    progress_cb("[WARN] GDAL cannot decode PNG tile (" + std::to_string(png.size()) + " bytes) — PNG driver missing?", -1);
+                VSIUnlink(vpath.c_str()); continue;
+            }
+            if (progress_cb && tiles_done == 1)
+                progress_cb("[INFO] Tile decoded OK: " + std::to_string(tds->GetRasterXSize()) +
+                            "x" + std::to_string(tds->GetRasterYSize()) +
+                            " bands=" + std::to_string(tds->GetRasterCount()), -1);
+
+            const int nb = tds->GetRasterCount();
+
+            // Reset buffers to opaque white for tiles with fewer than 4 bands
+            std::fill(band_r.begin(), band_r.end(), 255u);
+            std::fill(band_g.begin(), band_g.end(), 255u);
+            std::fill(band_b.begin(), band_b.end(), 255u);
+            std::fill(band_a.begin(), band_a.end(), 255u);
+
+            if (nb == 1 || nb == 2)
+            {
+                // Grayscale (1-band) or grayscale+alpha (2-band): read gray into R,G,B
+                tds->GetRasterBand(1)->RasterIO(
                     GF_Read, 0, 0, TILE_SIZE, TILE_SIZE,
-                    tile_buf.data() + b, TILE_SIZE, TILE_SIZE,
-                    GDT_Byte, 4, 4 * TILE_SIZE);
+                    band_r.data(), TILE_SIZE, TILE_SIZE,
+                    GDT_Byte, 1, TILE_SIZE);
+                std::copy(band_r.begin(), band_r.end(), band_g.begin());
+                std::copy(band_r.begin(), band_r.end(), band_b.begin());
+            }
+            else
+            {
+                // RGB (3-band) or RGBA (4-band): read each band separately
+                uint8_t* planes[4] = { band_r.data(), band_g.data(), band_b.data(), band_a.data() };
+                const int read_bands = std::min(nb, 4);
+                for (int b = 0; b < read_bands; ++b)
+                {
+                    tds->GetRasterBand(b + 1)->RasterIO(
+                        GF_Read, 0, 0, TILE_SIZE, TILE_SIZE,
+                        planes[b], TILE_SIZE, TILE_SIZE,
+                        GDT_Byte, 1, TILE_SIZE);
+                }
             }
             GDALClose(tds);
             VSIUnlink(vpath.c_str());
 
             const int px = (tx - tx0) * TILE_SIZE;
             const int py = (ty - ty0) * TILE_SIZE;
-            for (int b = 1; b <= 4; ++b)
-            {
-                out_ds->GetRasterBand(b)->RasterIO(
-                    GF_Write, px, py, TILE_SIZE, TILE_SIZE,
-                    tile_buf.data() + (b - 1), TILE_SIZE, TILE_SIZE,
-                    GDT_Byte, 4, 4 * TILE_SIZE);
-            }
+
+            // Write R, G, B bands to output (planar)
+            out_ds->GetRasterBand(1)->RasterIO(GF_Write, px, py, TILE_SIZE, TILE_SIZE,
+                band_r.data(), TILE_SIZE, TILE_SIZE, GDT_Byte, 1, TILE_SIZE);
+            out_ds->GetRasterBand(2)->RasterIO(GF_Write, px, py, TILE_SIZE, TILE_SIZE,
+                band_g.data(), TILE_SIZE, TILE_SIZE, GDT_Byte, 1, TILE_SIZE);
+            out_ds->GetRasterBand(3)->RasterIO(GF_Write, px, py, TILE_SIZE, TILE_SIZE,
+                band_b.data(), TILE_SIZE, TILE_SIZE, GDT_Byte, 1, TILE_SIZE);
         }
     }
 
