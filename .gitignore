@@ -1,0 +1,43 @@
+# Build output
+build/
+*.dll
+*.lib
+*.exp
+*.pdb
+*.ilk
+*.obj
+*.o
+
+# CMake generated
+CMakeCache.txt
+CMakeFiles/
+cmake_install.cmake
+Makefile
+install_manifest.txt
+CTestTestfile.cmake
+_deps/
+
+# Qt MOC / autogen
+*_autogen/
+moc_*.cpp
+moc_*.h
+qrc_*.cpp
+ui_*.h
+
+# VS / IDE
+.vs/
+*.user
+*.suo
+*.sdf
+*.opensdf
+*.VC.db
+*.VC.opendb
+*.vcxproj.user
+
+# OS
+Thumbs.db
+Desktop.ini
+.DS_Store
+
+# third_party — nlohmann json is a single header, keep it tracked
+# (no exclusion here)

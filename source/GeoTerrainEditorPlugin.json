@@ -1,0 +1,8 @@
+{
+  "Name": "GeoTerrainEditorPlugin",
+  "Vendor": "Vamps",
+  "Description": "Sandworm-style georeferenced terrain generator: select area on map, generate heightmap + albedo + masks",
+  "Version": "1.0.0.0",
+  "CompatVersion": "1.0.0.0",
+  "Dependencies": []
+}
