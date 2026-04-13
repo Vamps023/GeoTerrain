@@ -1,4 +1,5 @@
 #include "DEMFetcher.h"
+#include "GdalUtils.h"
 
 #ifndef _USE_MATH_DEFINES
 #define _USE_MATH_DEFINES
@@ -159,6 +160,11 @@ bool DEMFetcher::fetchFromOpenTopography(const GeoBounds& bounds,
     const bool ok = convertToHeightmapTiff(vpath, config.output_path,
                                             bounds, config.resolution_m, progress_cb);
     VSIUnlink(vpath.c_str());
+    if (ok)
+    {
+        if (progress_cb) progress_cb("Reprojecting heightmap to EPSG:3395...", 95);
+        GdalUtils::reprojectToMercator(config.output_path);
+    }
     return ok;
 }
 
@@ -186,13 +192,11 @@ bool DEMFetcher::convertToHeightmapTiff(const std::string& src_path,
         return false;
     }
 
-    // Target SRS: EPSG:4326 — export as WKT1 (GDAL legacy format Unigine understands)
+    // Target SRS: EPSG:4326
     OGRSpatialReference dst_srs;
     dst_srs.importFromEPSG(4326);
-    dst_srs.SetAxisMappingStrategy(OAMS_TRADITIONAL_GIS_ORDER);
     char* dst_wkt = nullptr;
-    const char* wkt_opts[] = { "FORMAT=WKT1_GDAL", nullptr };
-    dst_srs.exportToWkt(&dst_wkt, wkt_opts);
+    dst_srs.exportToWkt(&dst_wkt);
 
     // Compute output pixel size from resolution_m (degrees ~ 1m = 8.9e-6 deg at equator)
     const double deg_per_m = 1.0 / 111320.0;

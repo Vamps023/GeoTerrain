@@ -1,4 +1,5 @@
 #include "MaskGenerator.h"
+#include "GdalUtils.h"
 
 #include <gdal_priv.h>
 #include <ogr_spatialref.h>
@@ -220,10 +221,8 @@ bool MaskGenerator::generate(const GeoBounds&              bounds,
 
     OGRSpatialReference srs;
     srs.importFromEPSG(4326);
-    srs.SetAxisMappingStrategy(OAMS_TRADITIONAL_GIS_ORDER);
     char* wkt = nullptr;
-    const char* wkt_opts[] = { "FORMAT=WKT1_GDAL", nullptr };
-    srs.exportToWkt(&wkt, wkt_opts);
+    srs.exportToWkt(&wkt);
     ds->SetProjection(wkt);
     CPLFree(wkt);
 
@@ -240,6 +239,8 @@ bool MaskGenerator::generate(const GeoBounds&              bounds,
 
     GDALClose(ds);
 
+    if (progress_cb) progress_cb("Reprojecting mask to EPSG:3395...", 92);
+    GdalUtils::reprojectToMercator(config.output_path);
     if (progress_cb) progress_cb("Mask saved: " + config.output_path, 95);
     return true;
 }

@@ -1,4 +1,5 @@
 #include "TileDownloader.h"
+#include "GdalUtils.h"
 
 #ifndef _USE_MATH_DEFINES
 #define _USE_MATH_DEFINES
@@ -137,10 +138,8 @@ bool TileDownloader::download(const GeoBounds& bounds,
 
     OGRSpatialReference srs;
     srs.importFromEPSG(4326);
-    srs.SetAxisMappingStrategy(OAMS_TRADITIONAL_GIS_ORDER);
     char* wkt = nullptr;
-    const char* wkt_opts[] = { "FORMAT=WKT1_GDAL", nullptr };
-    srs.exportToWkt(&wkt, wkt_opts);
+    srs.exportToWkt(&wkt);
     out_ds->SetProjection(wkt);
     CPLFree(wkt);
 
@@ -199,6 +198,8 @@ bool TileDownloader::download(const GeoBounds& bounds,
     }
 
     GDALClose(out_ds);
+    if (progress_cb) progress_cb("Reprojecting albedo to EPSG:3395...", 92);
+    GdalUtils::reprojectToMercator(config.output_path);
     if (progress_cb) progress_cb("Albedo saved: " + config.output_path, 95);
     return true;
 }
