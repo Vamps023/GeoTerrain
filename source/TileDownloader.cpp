@@ -198,8 +198,8 @@ bool TileDownloader::download(const GeoBounds& bounds,
     }
 
     GDALClose(out_ds);
-    if (progress_cb) progress_cb("Reprojecting albedo to EPSG:3395...", 92);
-    GdalUtils::reprojectToMercator(config.output_path);
+    if (progress_cb) progress_cb("Tagging albedo CRS: EPSG:4326...", 92);
+    GdalUtils::fixCrsTag(config.output_path);
     if (progress_cb) progress_cb("Albedo saved: " + config.output_path, 95);
     return true;
 }

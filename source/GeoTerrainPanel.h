@@ -40,6 +40,7 @@ protected:
 private slots:
     void onSelectionChanged(const GeoBounds& bounds);
     void onGenerate();
+    void onQgisExport();
     void onPipelineProgress(const QString& message, int percent);
     void onPipelineFinished(bool success, const QString& error);
 
@@ -72,13 +73,13 @@ private:
     // Parameters tab
     QDoubleSpinBox* spin_resolution_   = nullptr;
     QSpinBox*       spin_zoom_         = nullptr;
-    QComboBox*      combo_epsg_        = nullptr;
     QDoubleSpinBox* spin_road_width_   = nullptr;
     QLineEdit*      edit_output_dir_   = nullptr;
 
     // Generate tab
     QPushButton*  btn_generate_      = nullptr;
     QPushButton*  btn_cancel_        = nullptr;
+    QPushButton*  btn_qgis_export_   = nullptr;
     QProgressBar* progress_bar_      = nullptr;
     QTextEdit*    log_text_          = nullptr;
 

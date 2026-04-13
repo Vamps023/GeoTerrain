@@ -239,8 +239,8 @@ bool MaskGenerator::generate(const GeoBounds&              bounds,
 
     GDALClose(ds);
 
-    if (progress_cb) progress_cb("Reprojecting mask to EPSG:3395...", 92);
-    GdalUtils::reprojectToMercator(config.output_path);
+    if (progress_cb) progress_cb("Tagging mask CRS: EPSG:4326...", 92);
+    GdalUtils::fixCrsTag(config.output_path);
     if (progress_cb) progress_cb("Mask saved: " + config.output_path, 95);
     return true;
 }

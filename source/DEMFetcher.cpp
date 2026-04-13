@@ -162,8 +162,8 @@ bool DEMFetcher::fetchFromOpenTopography(const GeoBounds& bounds,
     VSIUnlink(vpath.c_str());
     if (ok)
     {
-        if (progress_cb) progress_cb("Reprojecting heightmap to EPSG:3395...", 95);
-        GdalUtils::reprojectToMercator(config.output_path);
+        if (progress_cb) progress_cb("Tagging heightmap CRS: EPSG:4326...", 95);
+        GdalUtils::fixCrsTag(config.output_path);
     }
     return ok;
 }

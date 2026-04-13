@@ -8,6 +8,9 @@
 #include <QLabel>
 #include <QMessageBox>
 #include <QPalette>
+#include <QFileInfo>
+#include <QProcess>
+#include <QProcessEnvironment>
 #include <QShowEvent>
 #include <QSizePolicy>
 #include <QSplitter>
@@ -285,11 +288,13 @@ QWidget* GeoTerrainPanel::buildParametersTab()
     spin_zoom_->setToolTip("TMS tile zoom level for albedo download");
     addRow(raster_gl, "Tile Zoom:", spin_zoom_);
 
-    combo_epsg_ = new QComboBox(w);
-    combo_epsg_->addItem("EPSG:4326 – WGS-84 Geographic", 4326);
-    combo_epsg_->addItem("EPSG:3857 – Web Mercator",       3857);
-    combo_epsg_->setToolTip("Output projection");
-    addRow(raster_gl, "Projection:", combo_epsg_);
+    auto* crs_lbl = new QLabel(
+        "<b>EPSG:4326 – WGS 84</b>  (GeoTIFF, Raw data)", w);
+    crs_lbl->setStyleSheet("color:#a5d6a7; font-size:9pt; padding:2px;");
+    crs_lbl->setToolTip(
+        "Output CRS is fixed as EPSG:4326 WGS84.\n"
+        "Compatible with QGIS \"Save Raster Layer as\" (Raw data, EPSG:4326).");
+    addRow(raster_gl, "Output CRS:", crs_lbl);
 
     // --- Mask ---
     auto* mask_gl = makeGroup("Mask Settings");
@@ -346,20 +351,57 @@ QWidget* GeoTerrainPanel::buildGenerateTab()
     summary_grp->setStyleSheet("QGroupBox { color: #4fc3f7; font-weight: bold; "
                                "border: 1px solid #555; margin-top: 6px; padding-top: 4px; }");
     auto* sg_layout = new QVBoxLayout(summary_grp);
-    auto* summary_lbl = new QLabel(
-        "1. Fetch DEM heightmap from OpenTopography\n"
-        "2. Download & stitch TMS albedo tiles\n"
-        "3. Fetch OSM vector data (roads / buildings / vegetation)\n"
-        "4. Rasterize OSM → 3-band mask GeoTIFF\n"
-        "5. Write metadata.json\n\n"
-        "Output files:\n"
-        "  Export/heightmap.tif\n"
-        "  Export/albedo.tif\n"
-        "  Export/mask.tif\n"
-        "  Export/metadata.json", w);
-    summary_lbl->setStyleSheet("color: #ccc; font-size: 9pt;");
+    auto* summary_lbl = new QLabel(w);
+    summary_lbl->setText(
+        "<table cellspacing='4' style='color:#cccccc; font-size:9pt;'>"
+        "<tr><td colspan='2'><b style='color:#4fc3f7;'>Steps</b></td></tr>"
+        "<tr><td>1.</td><td>Fetch DEM heightmap &nbsp;<i>(OpenTopography)</i></td></tr>"
+        "<tr><td>2.</td><td>Download TMS albedo tiles</td></tr>"
+        "<tr><td>3.</td><td>Fetch OSM vector data</td></tr>"
+        "<tr><td>4.</td><td>Rasterize OSM roads / buildings / vegetation</td></tr>"
+        "<tr><td>5.</td><td>Write metadata.json</td></tr>"
+        "<tr><td colspan='2'>&nbsp;</td></tr>"
+        "<tr><td colspan='2'>"
+          "<b style='color:#4fc3f7;'>Output</b>&nbsp;&nbsp;"
+          "GeoTIFF &nbsp;|&nbsp; <b style='color:#a5d6a7;'>EPSG:4326 WGS 84</b>"
+        "</td></tr>"
+        "<tr><td colspan='2' style='color:#aaa;'>"
+          "heightmap.tif &nbsp;&nbsp; albedo.tif &nbsp;&nbsp; mask.tif &nbsp;&nbsp; metadata.json"
+        "</td></tr>"
+        "</table>");
+    summary_lbl->setTextFormat(Qt::RichText);
+    summary_lbl->setContentsMargins(4, 4, 4, 4);
     sg_layout->addWidget(summary_lbl);
     layout->addWidget(summary_grp);
+
+    // Auto QGIS export button
+    auto* qgis_grp = new QGroupBox("Export for Unigine (EPSG:4326 GeoTIFF)", w);
+    qgis_grp->setStyleSheet("QGroupBox { color: #ffcc80; font-weight: bold; "
+                            "border: 1px solid #555; margin-top: 6px; padding-top: 4px; }");
+    auto* qgis_layout = new QVBoxLayout(qgis_grp);
+    auto* qgis_lbl = new QLabel(w);
+    qgis_lbl->setText(
+        "<span style='color:#ffe082; font-size:9pt;'>"
+        "Runs <b>gdal_translate</b> on all three output files.<br>"
+        "Format: <b>GeoTIFF</b> &nbsp;|&nbsp; "
+        "CRS: <b style='color:#a5d6a7;'>EPSG:4326 WGS 84</b> &nbsp;|&nbsp; "
+        "Mode: <b>Raw data</b><br>"
+        "<span style='color:#aaa;'>Saves as &nbsp;"
+        "heightmap_unigine.tif &nbsp; albedo_unigine.tif &nbsp; mask_unigine.tif</span>"
+        "</span>");
+    qgis_lbl->setTextFormat(Qt::RichText);
+    qgis_lbl->setContentsMargins(4, 2, 4, 4);
+    qgis_layout->addWidget(qgis_lbl);
+    btn_qgis_export_ = new QPushButton("Export for Unigine (via QGIS GDAL)", w);
+    btn_qgis_export_->setStyleSheet(
+        "QPushButton { background-color: #5c4a00; color: #ffe082; padding: 8px; "
+        "font-weight: bold; border-radius: 4px; border: 1px solid #ffcc80; }"
+        "QPushButton:hover { background-color: #7a6200; }"
+        "QPushButton:disabled { background-color: #3a3a3a; color: #777; }");
+    btn_qgis_export_->setEnabled(false);
+    connect(btn_qgis_export_, &QPushButton::clicked, this, &GeoTerrainPanel::onQgisExport);
+    qgis_layout->addWidget(btn_qgis_export_);
+    layout->addWidget(qgis_grp);
 
     // Buttons
     auto* btn_row = new QHBoxLayout();
@@ -517,12 +559,97 @@ void GeoTerrainPanel::onPipelineFinished(bool success, const QString& error)
 {
     progress_bar_->setValue(success ? 100 : progress_bar_->value());
     if (success)
+    {
         appendLog("=== SUCCESS: Outputs written to " +
                   (edit_output_dir_ ? edit_output_dir_->text() : QString("Export dir")) + " ===");
+        if (btn_qgis_export_) btn_qgis_export_->setEnabled(true);
+    }
     else
         appendLog("=== FAILED: " + error + " ===");
 
     setControlsEnabled(true);
+}
+
+// ---------------------------------------------------------------------------
+void GeoTerrainPanel::onQgisExport()
+{
+    const QString gdal_translate =
+        "C:/Users/snare.ext/Documents/Sogeclair Rail Simulation/Track Editor/cots/qgis/bin/gdal_translate.exe";
+
+    if (!QFileInfo::exists(gdal_translate))
+    {
+        QMessageBox::critical(this, "QGIS Export",
+            "gdal_translate.exe not found at:\n" + gdal_translate);
+        return;
+    }
+
+    const QString out_dir = edit_output_dir_ ? edit_output_dir_->text()
+                                             : QDir::homePath() + "/GeoTerrainExport";
+
+    const QStringList files = { "heightmap.tif", "albedo.tif", "mask.tif" };
+    int ok_count = 0;
+
+    for (const QString& fname : files)
+    {
+        const QString src  = out_dir + "/" + fname;
+        const QString base = fname.left(fname.lastIndexOf('.'));
+        const QString dst  = out_dir + "/" + base + "_unigine.tif";
+
+        if (!QFileInfo::exists(src))
+        {
+            appendLog("[SKIP] " + fname + " not found");
+            continue;
+        }
+
+        appendLog("Exporting " + fname + " ...");
+
+        // gdal_translate -of GTiff -a_srs EPSG:4326 -co COMPRESS=LZW src dst
+        QStringList args;
+        args << "-of" << "GTiff"
+             << "-a_srs" << "EPSG:4326"
+             << "-co" << "COMPRESS=LZW"
+             << "-co" << "TILED=YES"
+             << src << dst;
+
+        QProcess proc;
+        proc.setProgram(gdal_translate);
+        proc.setArguments(args);
+
+        // Set QGIS GDAL environment so projections database is found
+        QProcessEnvironment env = QProcessEnvironment::systemEnvironment();
+        const QString qgis_root = "C:/Users/snare.ext/Documents/Sogeclair Rail Simulation/Track Editor/cots/qgis";
+        env.insert("GDAL_DATA",        qgis_root + "/share/gdal");
+        env.insert("PROJ_DATA",        qgis_root + "/share/proj");
+        env.insert("PATH",             qgis_root + "/bin;" + env.value("PATH"));
+        proc.setProcessEnvironment(env);
+
+        proc.start();
+        proc.waitForFinished(60000);
+
+        if (proc.exitCode() == 0)
+        {
+            appendLog("[OK] " + base + "_unigine.tif");
+            ok_count++;
+        }
+        else
+        {
+            const QString err = proc.readAllStandardError().trimmed();
+            appendLog("[FAIL] " + fname + ": " + err);
+        }
+    }
+
+    if (ok_count > 0)
+    {
+        appendLog(QString("=== QGIS Export done: %1/3 files written to %2 ===")
+                  .arg(ok_count).arg(out_dir));
+        QMessageBox::information(this, "QGIS Export Complete",
+            QString("%1 file(s) exported to:\n%2\n\nFiles: heightmap_unigine.tif, albedo_unigine.tif, mask_unigine.tif")
+            .arg(ok_count).arg(out_dir));
+    }
+    else
+    {
+        appendLog("=== QGIS Export failed — no files written ===");
+    }
 }
 
 // ---------------------------------------------------------------------------

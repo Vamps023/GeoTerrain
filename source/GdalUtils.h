@@ -3,9 +3,9 @@
 
 namespace GdalUtils
 {
-    // Reproject a GeoTIFF file in-place to EPSG:3395 (World Mercator, metres).
-    // Unigine LayerGeo requires Mercator/metres — EPSG:4326 (degrees) is rejected.
-    // Returns true on success; on failure the original file is left untouched.
-    bool reprojectToMercator(const std::string& tif_path,
-                             const std::string& tmp_path = "");
+    // Re-embed the correct EPSG:4326 WGS84 WKT1 CRS tag into a GeoTIFF in-place.
+    // Ensures QGIS "Save Raster Layer as" and Unigine LayerGeo both read the CRS.
+    // Data values and geotransform are preserved; no reprojection is performed.
+    // Returns true on success.
+    bool fixCrsTag(const std::string& tif_path);
 }
