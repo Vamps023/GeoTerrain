@@ -188,6 +188,34 @@ bool MaskGenerator::generate(const GeoBounds&              bounds,
     std::vector<uint8_t> band_rail(sz, 0);
     std::vector<uint8_t> band_water(sz, 0);
 
+    // Per-subtype vegetation RGB buffers for vegetation_mask.tif
+    // Indexed by subtype category 0-5
+    struct VegType { uint8_t r, g, b; };
+    // 0=forest/wood  1=park/garden  2=grass/meadow  3=farmland  4=scrub/heath  5=other
+    static const VegType VEG_COLORS[6] = {
+        { 34, 139,  34},   // 0 forest    — dark green
+        {  0, 200,  80},   // 1 park      — medium green
+        {144, 238,  80},   // 2 grass     — light green
+        {200, 220,  60},   // 3 farmland  — yellow-green
+        {107, 142,  35},   // 4 scrub     — olive
+        {180, 230, 130},   // 5 other veg — pale green
+    };
+    auto vegCategory = [](const std::string& sub) -> int
+    {
+        if (sub == "forest" || sub == "wood")                              return 0;
+        if (sub == "park"   || sub == "garden" || sub == "nature_reserve"
+            || sub == "recreation_ground" || sub == "cemetery")            return 1;
+        if (sub == "grass"  || sub == "meadow" || sub == "village_green"
+            || sub == "greenfield")                                        return 2;
+        if (sub == "farmland" || sub == "farmyard" || sub == "orchard"
+            || sub == "vineyard" || sub == "allotments")                   return 3;
+        if (sub == "scrub"  || sub == "heath"  || sub == "wetland"
+            || sub == "fell" || sub == "tundra")                           return 4;
+        return 5;
+    };
+    // Per-category mask buffers (just presence, used for RGB composite)
+    std::vector<std::vector<uint8_t>> veg_cat(6, std::vector<uint8_t>(sz, 0));
+
     // Pixel size from actual output dimensions
     const double px_deg_x = ref_bounds.width()  / out_w;
     const double px_deg_y = ref_bounds.height() / out_h;
@@ -222,6 +250,8 @@ bool MaskGenerator::generate(const GeoBounds&              bounds,
             break;
         case OSMParser::Way::Tag::Vegetation:
             rasterizePolygon(band_veg, out_w, out_h, ref_bounds, way.nodes, 255);
+            rasterizePolygon(veg_cat[vegCategory(way.subtype)],
+                             out_w, out_h, ref_bounds, way.nodes, 255);
             break;
         case OSMParser::Way::Tag::Water:
             rasterizePolygon(band_water, out_w, out_h, ref_bounds, way.nodes, 255);
@@ -334,6 +364,49 @@ bool MaskGenerator::generate(const GeoBounds&              bounds,
                 pb.data(), out_w, out_h, GDT_Byte, 0, 0);
             GDALClose(pds);
             if (progress_cb) progress_cb("Mask preview saved: " + preview_path, 91);
+        }
+    }
+
+    // --- Write vegetation_mask.tif — RGB, one colour per vegetation type ---
+    {
+        const std::string veg_path =
+            config.output_path.substr(0, config.output_path.rfind('/') + 1) + "vegetation_mask.tif";
+
+        GDALDataset* vds = driver->Create(veg_path.c_str(), out_w, out_h, 3, GDT_Byte, nullptr);
+        if (vds)
+        {
+            vds->SetGeoTransform(gt);
+            OGRSpatialReference vsrs;
+            vsrs.importFromEPSG(4326);
+            char* vwkt = nullptr;
+            vsrs.exportToWkt(&vwkt);
+            vds->SetProjection(vwkt);
+            CPLFree(vwkt);
+
+            std::vector<uint8_t> vr(sz, 0), vg(sz, 0), vb(sz, 0);
+            // Paint in reverse priority (category 0 = forest = highest priority, painted last)
+            for (int cat = 5; cat >= 0; --cat)
+            {
+                const VegType& col = VEG_COLORS[cat];
+                for (size_t i = 0; i < sz; ++i)
+                {
+                    if (veg_cat[cat][i])
+                    {
+                        vr[i] = col.r;
+                        vg[i] = col.g;
+                        vb[i] = col.b;
+                    }
+                }
+            }
+            vds->GetRasterBand(1)->RasterIO(GF_Write, 0, 0, out_w, out_h,
+                vr.data(), out_w, out_h, GDT_Byte, 0, 0);
+            vds->GetRasterBand(2)->RasterIO(GF_Write, 0, 0, out_w, out_h,
+                vg.data(), out_w, out_h, GDT_Byte, 0, 0);
+            vds->GetRasterBand(3)->RasterIO(GF_Write, 0, 0, out_w, out_h,
+                vb.data(), out_w, out_h, GDT_Byte, 0, 0);
+            GDALClose(vds);
+            GdalUtils::fixCrsTag(veg_path);
+            if (progress_cb) progress_cb("Vegetation mask saved: " + veg_path, 93);
         }
     }
 

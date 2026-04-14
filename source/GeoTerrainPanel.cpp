@@ -697,7 +697,8 @@ void GeoTerrainPanel::onQgisExport()
     int ok_count = 0;
 
     // --- GeoTIFFs via gdal_translate ---
-    const QStringList tifs = { "heightmap.tif", "albedo.tif", "mask.tif" };
+    const QStringList tifs = { "heightmap.tif", "albedo.tif", "mask.tif",
+                               "vegetation_mask.tif", "mask_preview.tif" };
     for (const QString& fname : tifs)
     {
         const QString src = out_dir + "/" + fname;
