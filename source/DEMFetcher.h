@@ -16,9 +16,12 @@ class DEMFetcher
 public:
     enum class Source
     {
-        OpenTopography_SRTM30m,   // SRTMGL1 (~30 m)
-        OpenTopography_SRTM90m,   // SRTMGL3 (~90 m)
-        OpenTopography_AW3D30,    // ALOS World 3D-30m
+        OpenTopography_SRTM30m,   // SRTMGL1    (~30 m) — global
+        OpenTopography_SRTM90m,   // SRTMGL3    (~90 m) — global
+        OpenTopography_AW3D30,    // AW3D30     (~30 m) — global, ALOS
+        OpenTopography_COP30,     // COP30      (~30 m) — global, Copernicus (best quality)
+        OpenTopography_NASADEM,   // NASADEM    (~30 m) — global, NASA reprocessed SRTM
+        OpenTopography_3DEP10m,   // 3DEP_10m   (~10 m) — USA only
         LocalGeoTIFF              // user-supplied file
     };
 

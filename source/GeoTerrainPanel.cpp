@@ -172,10 +172,13 @@ QWidget* GeoTerrainPanel::buildSourcesTab()
     // --- DEM ---
     auto* dem_gl = makeGroup("DEM Source");
     combo_dem_source_ = new QComboBox(w);
-    combo_dem_source_->addItem("OpenTopography SRTM 30m", 0);
-    combo_dem_source_->addItem("OpenTopography SRTM 90m", 1);
-    combo_dem_source_->addItem("OpenTopography AW3D30",   2);
-    combo_dem_source_->addItem("Local GeoTIFF file",      3);
+    combo_dem_source_->addItem("SRTM GL1  ~30m  (global)",           0);
+    combo_dem_source_->addItem("SRTM GL3  ~90m  (global)",           1);
+    combo_dem_source_->addItem("ALOS AW3D30  ~30m  (global)",        2);
+    combo_dem_source_->addItem("Copernicus GLO-30  ~30m  (global)",  3);
+    combo_dem_source_->addItem("NASADEM  ~30m  (global)",            4);
+    combo_dem_source_->addItem("USGS 3DEP  ~10m  (USA only)",        5);
+    combo_dem_source_->addItem("Local GeoTIFF file",                 6);
     addRow(dem_gl, "DEM Source:", combo_dem_source_);
 
     edit_api_key_ = new QLineEdit(w);
@@ -225,27 +228,33 @@ QWidget* GeoTerrainPanel::buildSourcesTab()
 
     // Show/hide local row based on selection
     connect(combo_dem_source_, QOverload<int>::of(&QComboBox::currentIndexChanged),
-            this, [lrow_w](int idx) { lrow_w->setVisible(idx == 3); });
+            this, [lrow_w](int idx) { lrow_w->setVisible(idx == 6); });
     lrow_w->setVisible(false);
 
     // --- TMS ---
     auto* tms_gl = makeGroup("TMS Imagery");
 
-    // Preset selector
+    // Preset selector — sorted by quality (best first)
     auto* preset_combo = new QComboBox(w);
-    preset_combo->addItem("ESRI World Imagery (Satellite)",
-        QString("https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}"));
-    preset_combo->addItem("ESRI Clarity (Hi-res Satellite)",
+    preset_combo->addItem("ESRI Clarity  ~0.3m  (best quality)",
         QString("https://clarity.maptiles.arcgis.com/arcgis/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}"));
-    preset_combo->addItem("OpenStreetMap (Street map)",
+    preset_combo->addItem("ESRI World Imagery  ~0.3-1m",
+        QString("https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}"));
+    preset_combo->addItem("Google Satellite  ~0.3m  (urban)",
+        QString("https://mt1.google.com/vt/lyrs=s&x={x}&y={y}&z={z}"));
+    preset_combo->addItem("Google Hybrid  (satellite+roads)",
+        QString("https://mt1.google.com/vt/lyrs=y&x={x}&y={y}&z={z}"));
+    preset_combo->addItem("Bing Aerial  ~0.3m",
+        QString("https://ecn.t0.tiles.virtualearth.net/tiles/a{q}.jpeg?g=1"));
+    preset_combo->addItem("OpenStreetMap  (street map)",
         QString("https://tile.openstreetmap.org/{z}/{x}/{y}.png"));
     preset_combo->addItem("Custom URL...", QString());
-    preset_combo->setToolTip("Select a tile source preset");
+    preset_combo->setToolTip("Select a tile source — ESRI Clarity and Google give ~0.3m at zoom 19-20");
     addRow(tms_gl, "Preset:", preset_combo);
 
     edit_tms_url_ = new QLineEdit(
-        "https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}", w);
-    edit_tms_url_->setToolTip("XYZ tile URL — {z}/{x}/{y} placeholders. ESRI uses {z}/{y}/{x} order.");
+        "https://clarity.maptiles.arcgis.com/arcgis/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}", w);
+    edit_tms_url_->setToolTip("XYZ tile URL — use {z}/{x}/{y} or {z}/{y}/{x} depending on the server.");
     addRow(tms_gl, "TMS URL:", edit_tms_url_);
 
     connect(preset_combo, QOverload<int>::of(&QComboBox::currentIndexChanged),
@@ -305,10 +314,45 @@ QWidget* GeoTerrainPanel::buildParametersTab()
     addRow(raster_gl, "Resolution:", spin_resolution_);
 
     spin_zoom_ = new QSpinBox(w);
-    spin_zoom_->setRange(1, 19);
-    spin_zoom_->setValue(14);
-    spin_zoom_->setToolTip("TMS tile zoom level for albedo download");
+    spin_zoom_->setRange(1, 20);
+    spin_zoom_->setValue(17);
+    spin_zoom_->setToolTip(
+        "TMS tile zoom level.\n"
+        "Zoom 14 = ~10m/px  |  16 = ~2.5m/px\n"
+        "Zoom 17 = ~1.2m/px  |  18 = ~0.6m/px\n"
+        "Zoom 19 = ~0.3m/px  |  20 = ~0.15m/px (very large!)");
     addRow(raster_gl, "Tile Zoom:", spin_zoom_);
+
+    // Live GSD label — updates as zoom changes
+    auto* gsd_lbl = new QLabel(w);
+    gsd_lbl->setStyleSheet("color:#ffe082; font-size:9pt; padding-left:4px;");
+    auto updateGsd = [gsd_lbl](int z)
+    {
+        // Approx GSD at equator: 156543 / 2^z metres per pixel
+        const double gsd = 156543.0 / (1 << z);
+        QString s;
+        if      (gsd >= 1000) s = QString::number(gsd/1000.0, 'f', 1) + " km/px";
+        else if (gsd >= 1.0)  s = QString::number(gsd,        'f', 1) + " m/px";
+        else                  s = QString::number(gsd*100.0,  'f', 0) + " cm/px";
+        gsd_lbl->setText("≈ " + s + " at equator");
+    };
+    updateGsd(spin_zoom_->value());
+    connect(spin_zoom_, QOverload<int>::of(&QSpinBox::valueChanged), w, updateGsd);
+    addRow(raster_gl, "Approx GSD:", gsd_lbl);
+
+    // Zoom quality presets
+    auto* zoom_preset = new QComboBox(w);
+    zoom_preset->addItem("Low    ~10 m/px  (zoom 14)",  14);
+    zoom_preset->addItem("Medium  ~2.5 m/px  (zoom 16)", 16);
+    zoom_preset->addItem("High    ~1.2 m/px  (zoom 17)", 17);
+    zoom_preset->addItem("Ultra   ~0.6 m/px  (zoom 18)", 18);
+    zoom_preset->addItem("Max     ~0.3 m/px  (zoom 19)", 19);
+    zoom_preset->setCurrentIndex(2);  // default High
+    zoom_preset->setToolTip("Quick zoom preset — sets the zoom spinner above");
+    connect(zoom_preset, QOverload<int>::of(&QComboBox::currentIndexChanged),
+            w, [this, zoom_preset](int idx)
+    { spin_zoom_->setValue(zoom_preset->itemData(idx).toInt()); });
+    addRow(raster_gl, "Quality Preset:", zoom_preset);
 
     combo_map_size_ = new QComboBox(w);
     combo_map_size_->addItem("Native (tile-snapped)", 0);
@@ -553,7 +597,10 @@ PipelineConfig GeoTerrainPanel::buildPipelineConfig() const
     {
     case 1:  cfg.dem.source = DEMFetcher::Source::OpenTopography_SRTM90m; break;
     case 2:  cfg.dem.source = DEMFetcher::Source::OpenTopography_AW3D30;  break;
-    case 3:  cfg.dem.source = DEMFetcher::Source::LocalGeoTIFF;           break;
+    case 3:  cfg.dem.source = DEMFetcher::Source::OpenTopography_COP30;   break;
+    case 4:  cfg.dem.source = DEMFetcher::Source::OpenTopography_NASADEM; break;
+    case 5:  cfg.dem.source = DEMFetcher::Source::OpenTopography_3DEP10m; break;
+    case 6:  cfg.dem.source = DEMFetcher::Source::LocalGeoTIFF;           break;
     default: cfg.dem.source = DEMFetcher::Source::OpenTopography_SRTM30m; break;
     }
     cfg.dem.api_key         = edit_api_key_     ? edit_api_key_->text().toStdString()     : "";

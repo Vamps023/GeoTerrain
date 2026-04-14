@@ -69,6 +69,9 @@ static const char* demDatasetName(DEMFetcher::Source src)
     case DEMFetcher::Source::OpenTopography_SRTM30m: return "SRTMGL1";
     case DEMFetcher::Source::OpenTopography_SRTM90m: return "SRTMGL3";
     case DEMFetcher::Source::OpenTopography_AW3D30:  return "AW3D30";
+    case DEMFetcher::Source::OpenTopography_COP30:   return "COP30";
+    case DEMFetcher::Source::OpenTopography_NASADEM: return "NASADEM";
+    case DEMFetcher::Source::OpenTopography_3DEP10m: return "USGS10m";  // usgsdem endpoint
     default:                                          return "SRTMGL1";
     }
 }
@@ -99,15 +102,29 @@ bool DEMFetcher::fetchFromOpenTopography(const GeoBounds& bounds,
 {
     if (progress_cb) progress_cb("Requesting DEM from OpenTopography...", 5);
 
-    // Build OpenTopography REST URL
+    // Build OpenTopography REST URL — 3DEP uses a different endpoint/param than global DEMs
+    const bool is_3dep = (config.source == Source::OpenTopography_3DEP10m);
     std::ostringstream url;
-    url << "https://portal.opentopography.org/API/globaldem"
-        << "?demtype="   << demDatasetName(config.source)
-        << "&south="     << bounds.south
-        << "&north="     << bounds.north
-        << "&west="      << bounds.west
-        << "&east="      << bounds.east
-        << "&outputFormat=GTiff";
+    if (is_3dep)
+    {
+        url << "https://portal.opentopography.org/API/usgsdem"
+            << "?datasetName=" << demDatasetName(config.source)
+            << "&south="       << bounds.south
+            << "&north="       << bounds.north
+            << "&west="        << bounds.west
+            << "&east="        << bounds.east
+            << "&outputFormat=GTiff";
+    }
+    else
+    {
+        url << "https://portal.opentopography.org/API/globaldem"
+            << "?demtype="   << demDatasetName(config.source)
+            << "&south="     << bounds.south
+            << "&north="     << bounds.north
+            << "&west="      << bounds.west
+            << "&east="      << bounds.east
+            << "&outputFormat=GTiff";
+    }
 
     if (!config.api_key.empty())
         url << "&API_Key=" << config.api_key;
