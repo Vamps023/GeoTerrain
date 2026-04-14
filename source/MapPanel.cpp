@@ -51,13 +51,6 @@ void MapPanel::setTileUrl(const QString& url_template)
 {
     tile_url_template_ = url_template;
     tile_cache_.clear();
-    // Abort and discard all in-flight replies so stale tiles don't
-    // re-populate the cache after the URL switches.
-    for (QNetworkReply* reply : pending_)
-    {
-        reply->abort();
-        reply->deleteLater();
-    }
     pending_.clear();
     update();
 }
