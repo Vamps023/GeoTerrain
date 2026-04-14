@@ -140,13 +140,17 @@ void TerrainPipeline::start(const PipelineConfig& config)
     connect(worker_, &PipelineWorker::finished,
             this, [this](bool ok, const QString& err)
             {
-                emit finished(ok, err);
                 thread_->quit();
+                // Clear pointers before emitting so isRunning() == false
+                // when onChunkFinished calls start() for the next chunk.
+                // The thread/worker delete themselves via deleteLater connections.
+                thread_ = nullptr;
+                worker_ = nullptr;
+                emit finished(ok, err);
             });
     connect(thread_, &QThread::finished,  worker_,  &QObject::deleteLater);
     connect(thread_, &QThread::finished,  thread_,  &QObject::deleteLater);
 
-    thread_ = thread_; // already assigned
     thread_->start();
 }
 

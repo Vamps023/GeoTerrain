@@ -51,6 +51,13 @@ void MapPanel::setTileUrl(const QString& url_template)
 {
     tile_url_template_ = url_template;
     tile_cache_.clear();
+    // Abort and discard all in-flight replies so stale tiles don't
+    // re-populate the cache after the URL switches.
+    for (QNetworkReply* reply : pending_)
+    {
+        reply->abort();
+        reply->deleteLater();
+    }
     pending_.clear();
     update();
 }
@@ -71,6 +78,45 @@ void MapPanel::centerOn(double lat, double lon, int zoom)
 void MapPanel::clearSelection()
 {
     has_selection_ = false;
+    update();
+}
+
+// ---------------------------------------------------------------------------
+void MapPanel::setSelection(const GeoBounds& bounds)
+{
+    sel_start_world_ = latLonToWorld(bounds.north, bounds.west);
+    sel_end_world_   = latLonToWorld(bounds.south, bounds.east);
+    has_selection_   = true;
+    selecting_       = false;
+    update();
+    emit selectionChanged(bounds);
+}
+
+// ---------------------------------------------------------------------------
+void MapPanel::setOverlayLayers(const QVector<OverlayLayer>& layers)
+{
+    overlay_layers_ = layers;
+    update();
+}
+
+void MapPanel::clearOverlay()
+{
+    overlay_layers_.clear();
+    update();
+}
+
+// ---------------------------------------------------------------------------
+void MapPanel::setChunkGrid(const QVector<GeoBounds>& chunks)
+{
+    chunk_grid_    = chunks;
+    chunk_enabled_.fill(true, chunks.size());
+    update();
+}
+
+void MapPanel::clearChunkGrid()
+{
+    chunk_grid_.clear();
+    chunk_enabled_.clear();
     update();
 }
 
@@ -248,6 +294,66 @@ void MapPanel::paintEvent(QPaintEvent*)
             p.drawEllipse(corner, hsize, hsize);
     }
 
+    // --- Chunk grid overlay ---
+    if (!chunk_grid_.isEmpty())
+    {
+        p.setRenderHint(QPainter::Antialiasing, false);
+        QFont cf = p.font();
+        cf.setPointSize(8);
+        cf.setBold(true);
+        p.setFont(cf);
+
+        for (int i = 0; i < chunk_grid_.size(); ++i)
+        {
+            const GeoBounds& cb = chunk_grid_[i];
+            const bool enabled  = i < chunk_enabled_.size() && chunk_enabled_[i];
+
+            const QPointF worldNW = latLonToWorld(cb.north, cb.west);
+            const QPointF worldSE = latLonToWorld(cb.south, cb.east);
+            const QPointF wNW = worldToWidget(worldNW.x(), worldNW.y());
+            const QPointF wSE = worldToWidget(worldSE.x(), worldSE.y());
+            const QRectF  cr  = QRectF(wNW, wSE).normalized();
+
+            if (enabled)
+            {
+                p.setBrush(QColor(0, 200, 80, 40));
+                p.setPen(QPen(QColor(0, 220, 100), 1, Qt::DashLine));
+            }
+            else
+            {
+                p.setBrush(QColor(220, 0, 0, 55));
+                p.setPen(QPen(QColor(255, 60, 60), 1, Qt::DashLine));
+            }
+            p.drawRect(cr);
+
+            // Chunk number label
+            const QString lbl = enabled
+                ? QString("C%1").arg(i + 1)
+                : QString("C%1\nSKIP").arg(i + 1);
+            p.setPen(enabled ? QColor(120, 255, 140) : QColor(255, 100, 100));
+            p.drawText(cr, Qt::AlignCenter, lbl);
+
+            // Cross-out for disabled
+            if (!enabled)
+            {
+                p.setPen(QPen(QColor(255, 60, 60, 160), 1));
+                p.drawLine(cr.topLeft(), cr.bottomRight());
+                p.drawLine(cr.topRight(), cr.bottomLeft());
+            }
+        }
+
+        // Legend hint
+        p.setFont(QFont());
+        p.setBrush(QColor(0,0,0,140));
+        p.setPen(Qt::NoPen);
+        const QString hint = "Click chunk to skip/include";
+        QFontMetrics hfm(p.font());
+        QRect hrect(6, height() - hfm.height() - 14, hfm.horizontalAdvance(hint) + 12, hfm.height() + 8);
+        p.drawRoundedRect(hrect, 3, 3);
+        p.setPen(QColor(200,200,200));
+        p.drawText(hrect, Qt::AlignCenter, hint);
+    }
+
     // --- Coordinates overlay ---
     if (has_selection_)
     {
@@ -289,6 +395,34 @@ void MapPanel::paintEvent(QPaintEvent*)
         p.drawText(zoom_rect, Qt::AlignCenter, zoom_str);
     }
 
+    // --- Vector overlay layers ---
+    if (!overlay_layers_.isEmpty())
+    {
+        p.setRenderHint(QPainter::Antialiasing, true);
+        for (const OverlayLayer& layer : overlay_layers_)
+        {
+            QPen pen(layer.color, 2, Qt::SolidLine);
+            pen.setCosmetic(true);
+            p.setPen(pen);
+            p.setBrush(Qt::NoBrush);
+            for (const OverlayRing& ring : layer.rings)
+            {
+                if (ring.points.size() < 2) continue;
+                QPolygonF poly;
+                poly.reserve(ring.points.size());
+                for (const QPointF& ll : ring.points)
+                {
+                    const QPointF w = latLonToWorld(ll.y(), ll.x()); // y=lat x=lon
+                    poly << worldToWidget(w.x(), w.y());
+                }
+                if (ring.closed)
+                    p.drawPolygon(poly);
+                else
+                    p.drawPolyline(poly);
+            }
+        }
+    }
+
     // --- Instructions ---
     if (!has_selection_)
     {
@@ -307,6 +441,32 @@ void MapPanel::paintEvent(QPaintEvent*)
 // ---------------------------------------------------------------------------
 void MapPanel::mousePressEvent(QMouseEvent* event)
 {
+    // Check chunk grid toggle first (plain left-click, no shift, no right)
+    if (event->button() == Qt::LeftButton &&
+        !(event->modifiers() & Qt::ShiftModifier) &&
+        !chunk_grid_.isEmpty())
+    {
+        const QPointF pos = event->pos();
+        for (int i = 0; i < chunk_grid_.size(); ++i)
+        {
+            const GeoBounds& cb   = chunk_grid_[i];
+            const QPointF worldNW = latLonToWorld(cb.north, cb.west);
+            const QPointF worldSE = latLonToWorld(cb.south, cb.east);
+            const QPointF wNW     = worldToWidget(worldNW.x(), worldNW.y());
+            const QPointF wSE     = worldToWidget(worldSE.x(), worldSE.y());
+            const QRectF  cr      = QRectF(wNW, wSE).normalized();
+
+            if (cr.contains(pos))
+            {
+                chunk_enabled_[i] = !chunk_enabled_[i];
+                emit chunkToggled(i, chunk_enabled_[i]);
+                update();
+                event->accept();
+                return;  // don't start pan
+            }
+        }
+    }
+
     if (event->button() == Qt::RightButton ||
         (event->button() == Qt::LeftButton && !(event->modifiers() & Qt::ShiftModifier)))
     {

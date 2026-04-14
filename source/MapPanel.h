@@ -7,12 +7,30 @@
 #include <QPoint>
 #include <QRect>
 #include <QMap>
+#include <QColor>
 #include <QNetworkAccessManager>
 #include <QNetworkReply>
 #include <QString>
 #include <QTimer>
+#include <QVector>
 
 #include <functional>
+
+// ---------------------------------------------------------------------------
+// Overlay geometry — lat/lon rings drawn on top of the map
+// ---------------------------------------------------------------------------
+struct OverlayRing
+{
+    QVector<QPointF> points;  // lat/lon pairs  (x=lon, y=lat)
+    bool             closed = false;
+};
+
+struct OverlayLayer
+{
+    QString            name;
+    QColor             color  = QColor(255, 165, 0);  // orange default
+    QVector<OverlayRing> rings;
+};
 
 // ---------------------------------------------------------------------------
 // MapPanel
@@ -41,9 +59,22 @@ public:
     // Navigate to a lat/lon center at a given zoom
     void centerOn(double lat, double lon, int zoom);
 
+    // Programmatically set the selection rectangle and emit selectionChanged
+    void setSelection(const GeoBounds& bounds);
+
+    // Set vector overlay layers drawn on top of tiles (pass empty to clear)
+    void setOverlayLayers(const QVector<OverlayLayer>& layers);
+    void clearOverlay();
+
+    // Chunk grid — drawn over the selection; click to enable/disable tiles
+    void setChunkGrid(const QVector<GeoBounds>& chunks);  // pass empty to clear
+    void clearChunkGrid();
+    QVector<bool> chunkEnabled() const { return chunk_enabled_; }
+
 signals:
     void selectionChanged(const GeoBounds& bounds);
     void logMessage(const QString& message);
+    void chunkToggled(int index, bool enabled);
 
 protected:
     void paintEvent(QPaintEvent* event)         override;
@@ -94,4 +125,11 @@ private:
     QPointF sel_end_world_;     // drag corner in world-pixel space
 
     QTimer* refresh_timer_ = nullptr;
+
+    // Vector overlay layers
+    QVector<OverlayLayer> overlay_layers_;
+
+    // Chunk grid
+    QVector<GeoBounds> chunk_grid_;
+    QVector<bool>      chunk_enabled_;
 };

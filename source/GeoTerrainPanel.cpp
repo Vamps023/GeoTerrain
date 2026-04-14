@@ -1,6 +1,9 @@
 #include "GeoTerrainPanel.h"
 #include "MapPanel.h"
 
+#include <gdal_priv.h>
+#include <ogrsf_frmts.h>
+
 #include <QApplication>
 #include <QDir>
 #include <QFileDialog>
@@ -11,7 +14,17 @@
 #include <QFileInfo>
 #include <QProcess>
 #include <QProcessEnvironment>
+#include <QFrame>
+#include <QJsonArray>
+#include <QJsonDocument>
+#include <QJsonObject>
+#include <QNetworkAccessManager>
+#include <QNetworkReply>
+#include <QNetworkRequest>
+#include <QScrollArea>
 #include <QShowEvent>
+#include <QTimer>
+#include <QUrlQuery>
 #include <QSizePolicy>
 #include <QSplitter>
 
@@ -87,56 +100,215 @@ QWidget* GeoTerrainPanel::buildMapTab()
     auto* w      = new QWidget();
     auto* layout = new QVBoxLayout(w);
     layout->setContentsMargins(6, 6, 6, 6);
-    layout->setSpacing(6);
+    layout->setSpacing(4);
 
-    // Instructions label
+    // --- Row 1: Search bar + Satellite toggle ---
+    auto* top_row = new QHBoxLayout();
+    top_row->setSpacing(4);
+
+    edit_search_ = new QLineEdit(w);
+    edit_search_->setPlaceholderText("Search place... (e.g. Paris, Houston TX)");
+    edit_search_->setToolTip("Type a place name and press Enter or click Search");
+    top_row->addWidget(edit_search_, 1);
+
+    auto* btn_search = new QPushButton("Search", w);
+    btn_search->setFixedWidth(60);
+    btn_search->setToolTip("Geocode and pan to place");
+    top_row->addWidget(btn_search);
+
+    btn_satellite_ = new QPushButton("Street", w);
+    btn_satellite_->setFixedWidth(60);
+    btn_satellite_->setToolTip("Toggle between Satellite and Street map");
+    btn_satellite_->setStyleSheet(
+        "QPushButton { background:#1e6a2e; color:white; font-weight:bold; padding:4px; border-radius:3px; }"
+        "QPushButton:hover { background:#27923e; }");
+    top_row->addWidget(btn_satellite_);
+
+    layout->addLayout(top_row);
+
+    // --- Row 2: Instructions ---
     auto* instr = new QLabel(
-        "<b>Shift+drag</b> to select area &nbsp;|&nbsp; "
-        "<b>Right-drag</b> or <b>drag</b> to pan &nbsp;|&nbsp; "
+        "<b>Shift+drag</b> to select &nbsp;|&nbsp; "
+        "<b>Drag</b> to pan &nbsp;|&nbsp; "
         "<b>Scroll</b> to zoom", w);
-    instr->setWordWrap(true);
-    instr->setStyleSheet("color: #aaa; font-size: 9pt;");
+    instr->setStyleSheet("color: #888; font-size: 8pt;");
     layout->addWidget(instr);
 
-    // TMS URL row
-    auto* tms_row = new QHBoxLayout();
-    tms_row->addWidget(new QLabel("TMS URL:", w));
-    auto* tms_edit = new QLineEdit("https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}", w);
-    tms_edit->setToolTip("XYZ tile URL with {z}/{x}/{y} placeholders");
-    tms_row->addWidget(tms_edit);
-    auto* tms_btn = new QPushButton("Apply", w);
-    tms_btn->setFixedWidth(60);
-    tms_row->addWidget(tms_btn);
-    layout->addLayout(tms_row);
-
-    // Map widget
+    // --- Map widget ---
     map_panel_ = new MapPanel(w);
     map_panel_->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Expanding);
+    // Start on satellite
+    map_panel_->setTileUrl(
+        "https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}");
     layout->addWidget(map_panel_, 1);
 
-    connect(tms_btn, &QPushButton::clicked, this, [this, tms_edit]()
-    {
-        map_panel_->setTileUrl(tms_edit->text());
-    });
+    // --- Row 3: GPKG Layer info bar ---
+    auto* layer_row = new QHBoxLayout();
+    layer_row->setSpacing(4);
+    label_layer_info_ = new QLabel("No vector layer loaded", w);
+    label_layer_info_->setStyleSheet("color:#ffe082; font-size:8pt; padding:2px;");
+    layer_row->addWidget(label_layer_info_, 1);
+    // Padding control
+    auto* pad_lbl = new QLabel("Pad:", w);
+    pad_lbl->setStyleSheet("color:#aaa; font-size:8pt;");
+    layer_row->addWidget(pad_lbl);
+    spin_pad_deg_ = new QDoubleSpinBox(w);
+    spin_pad_deg_->setRange(0.0, 1.0);
+    spin_pad_deg_->setValue(0.01);
+    spin_pad_deg_->setSingleStep(0.005);
+    spin_pad_deg_->setDecimals(3);
+    spin_pad_deg_->setSuffix("°");
+    spin_pad_deg_->setFixedWidth(72);
+    spin_pad_deg_->setToolTip("Extra padding added around the layer bounding box (~1km per 0.01°)");
+    layer_row->addWidget(spin_pad_deg_);
 
-    // Bounds display
+    btn_sel_bounds_ = new QPushButton("Select Bounds", w);
+    auto* btn_sel_bounds = btn_sel_bounds_;
+    btn_sel_bounds->setFixedWidth(95);
+    btn_sel_bounds->setEnabled(false);
+    btn_sel_bounds->setToolTip("Auto-select the bounding box of the loaded layer as the terrain area");
+    btn_sel_bounds->setStyleSheet(
+        "QPushButton { background:#555; color:white; padding:3px; border-radius:3px; }"
+        "QPushButton:enabled { background:#6a1ea8; }"
+        "QPushButton:hover:enabled { background:#8a2ecc; }");
+    layer_row->addWidget(btn_sel_bounds);
+
+    btn_focus_layer_ = new QPushButton("Focus Layer", w);
+    btn_focus_layer_->setFixedWidth(85);
+    btn_focus_layer_->setEnabled(false);
+    btn_focus_layer_->setToolTip("Zoom map to loaded GPKG/SHP layer extent");
+    btn_focus_layer_->setStyleSheet(
+        "QPushButton { background:#555; color:white; padding:3px; border-radius:3px; }"
+        "QPushButton:enabled { background:#1e5ea8; }"
+        "QPushButton:hover:enabled { background:#2474cc; }");
+    layer_row->addWidget(btn_focus_layer_);
+    layout->addLayout(layer_row);
+
+    // --- Row 4: Bounds + Preview Grid + Clear ---
+    auto* bot_row = new QHBoxLayout();
     label_bounds_ = new QLabel("No area selected", w);
     label_bounds_->setStyleSheet("color: #4fc3f7; font-size: 9pt; padding: 2px;");
-    layout->addWidget(label_bounds_);
+    bot_row->addWidget(label_bounds_, 1);
 
-    // Clear button
-    btn_clear_sel_ = new QPushButton("Clear Selection", w);
-    btn_clear_sel_->setStyleSheet("QPushButton { background: #555; color: white; padding: 4px; }");
+    auto* btn_preview_grid = new QPushButton("Preview Grid", w);
+    btn_preview_grid->setFixedWidth(90);
+    btn_preview_grid->setToolTip(
+        "Show chunk grid on map based on Parameters > Chunk Size.\n"
+        "Click individual chunks to skip them before generating.");
+    btn_preview_grid->setStyleSheet(
+        "QPushButton { background:#555; color:white; padding:3px; border-radius:3px; }"
+        "QPushButton:hover { background:#2a6a2a; }");
+    bot_row->addWidget(btn_preview_grid);
+
+    btn_clear_sel_ = new QPushButton("Clear", w);
+    btn_clear_sel_->setFixedWidth(55);
+    btn_clear_sel_->setStyleSheet("QPushButton { background:#555; color:white; padding:3px; border-radius:3px; }");
+    bot_row->addWidget(btn_clear_sel_);
+    layout->addLayout(bot_row);
+
+    // --- Connections ---
+    connect(map_panel_, &MapPanel::selectionChanged,
+            this,       &GeoTerrainPanel::onSelectionChanged);
+
     connect(btn_clear_sel_, &QPushButton::clicked, this, [this]()
     {
         map_panel_->clearSelection();
         label_bounds_->setText("No area selected");
         current_bounds_ = GeoBounds{};
     });
-    layout->addWidget(btn_clear_sel_);
 
-    connect(map_panel_, &MapPanel::selectionChanged,
-            this,       &GeoTerrainPanel::onSelectionChanged);
+    // Satellite / Street toggle
+    connect(btn_satellite_, &QPushButton::clicked, this, [this]()
+    {
+        map_satellite_ = !map_satellite_;
+        if (map_satellite_)
+        {
+            map_panel_->setTileUrl(
+                "https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}");
+            btn_satellite_->setText("Street");
+            btn_satellite_->setStyleSheet(
+                "QPushButton { background:#1e6a2e; color:white; font-weight:bold; padding:4px; border-radius:3px; }"
+                "QPushButton:hover { background:#27923e; }");
+        }
+        else
+        {
+            map_panel_->setTileUrl("https://tile.openstreetmap.org/{z}/{x}/{y}.png");
+            btn_satellite_->setText("Satellite");
+            btn_satellite_->setStyleSheet(
+                "QPushButton { background:#6a4a1e; color:white; font-weight:bold; padding:4px; border-radius:3px; }"
+                "QPushButton:hover { background:#8a6228; }");
+        }
+    });
+
+    // Preview Grid button — computes chunk grid from current bounds + Parameters chunk size
+    connect(btn_preview_grid, &QPushButton::clicked, this, [this]()
+    {
+        if (!map_panel_ || !current_bounds_.isValid()) return;
+        const double chunk_km = spin_tile_km_ ? spin_tile_km_->value() : 0.0;
+        if (chunk_km < 1.0)
+        {
+            map_panel_->clearChunkGrid();
+            appendLog("[Grid] Chunk size is 0 — set Parameters > Chunk Size first");
+            return;
+        }
+        const GeoBounds& b = current_bounds_;
+        const double centre_lat     = (b.north + b.south) * 0.5;
+        const double deg_per_km_lat = 1.0 / 111.0;
+        const double deg_per_km_lon = 1.0 / (111.0 * std::cos(centre_lat * M_PI / 180.0));
+        const double chunk_lat = chunk_km * deg_per_km_lat;
+        const double chunk_lon = chunk_km * deg_per_km_lon;
+        const int rows = std::max(1, (int)std::ceil((b.north - b.south) / chunk_lat));
+        const int cols = std::max(1, (int)std::ceil((b.east  - b.west)  / chunk_lon));
+
+        QVector<GeoBounds> grid;
+        for (int r = 0; r < rows; ++r)
+            for (int c = 0; c < cols; ++c)
+            {
+                GeoBounds cb;
+                cb.south = b.south + r * chunk_lat;
+                cb.north = std::min(b.north, cb.south + chunk_lat);
+                cb.west  = b.west  + c * chunk_lon;
+                cb.east  = std::min(b.east,  cb.west  + chunk_lon);
+                grid << cb;
+            }
+        map_panel_->setChunkGrid(grid);
+        appendLog(QString("[Grid] %1 x %2 = %3 chunks shown — click to skip").arg(rows).arg(cols).arg(grid.size()));
+        tabs_->setCurrentIndex(0);  // switch to Map tab
+    });
+
+    // Search — Enter or button
+    connect(btn_search,   &QPushButton::clicked,  this, &GeoTerrainPanel::onSearchPlace);
+    connect(edit_search_, &QLineEdit::returnPressed, this, &GeoTerrainPanel::onSearchPlace);
+
+    // Select Bounds button — sets the map selection rectangle to the layer bounding box
+    connect(btn_sel_bounds, &QPushButton::clicked, this, [this]()
+    {
+        if (gpkg_ext_minLat_ < gpkg_ext_maxLat_ && gpkg_ext_minLon_ < gpkg_ext_maxLon_)
+        {
+            const double pad = spin_pad_deg_ ? spin_pad_deg_->value() : 0.01;
+            GeoBounds b;
+            b.north = gpkg_ext_maxLat_ + pad;
+            b.south = gpkg_ext_minLat_ - pad;
+            b.west  = gpkg_ext_minLon_ - pad;
+            b.east  = gpkg_ext_maxLon_ + pad;
+            map_panel_->setSelection(b);
+            map_panel_->clearChunkGrid();  // clear old grid when bounds change
+            map_panel_->centerOn(
+                (b.north + b.south) * 0.5,
+                (b.west  + b.east)  * 0.5, 13);
+        }
+    });
+
+    // Focus Layer button
+    connect(btn_focus_layer_, &QPushButton::clicked, this, [this]()
+    {
+        if (gpkg_ext_minLat_ < gpkg_ext_maxLat_ && gpkg_ext_minLon_ < gpkg_ext_maxLon_)
+        {
+            map_panel_->centerOn(
+                (gpkg_ext_minLat_ + gpkg_ext_maxLat_) * 0.5,
+                (gpkg_ext_minLon_ + gpkg_ext_maxLon_) * 0.5, 13);
+        }
+    });
 
     return w;
 }
@@ -144,10 +316,17 @@ QWidget* GeoTerrainPanel::buildMapTab()
 // ---------------------------------------------------------------------------
 QWidget* GeoTerrainPanel::buildSourcesTab()
 {
+    // Wrap everything in a scroll area so all groups are reachable
+    auto* scroll = new QScrollArea();
+    scroll->setWidgetResizable(true);
+    scroll->setFrameShape(QFrame::NoFrame);
+    scroll->setHorizontalScrollBarPolicy(Qt::ScrollBarAlwaysOff);
+
     auto* w      = new QWidget();
     auto* layout = new QVBoxLayout(w);
     layout->setContentsMargins(10, 10, 10, 10);
     layout->setSpacing(8);
+    scroll->setWidget(w);
 
     auto makeGroup = [&](const QString& title) -> QVBoxLayout*
     {
@@ -270,8 +449,88 @@ QWidget* GeoTerrainPanel::buildSourcesTab()
     edit_overpass_url_ = new QLineEdit("https://overpass-api.de/api/interpreter", w);
     addRow(osm_gl, "Overpass URL:", edit_overpass_url_);
 
+    // --- Vector Overlay (GeoPackage / Shapefile) ---
+    auto* gpkg_gl = makeGroup("Vector Overlay (.gpkg / .shp)");
+
+    // Path row: text field + Browse button
+    auto* gpkg_path_row = new QHBoxLayout();
+    edit_gpkg_path_ = new QLineEdit(w);
+    edit_gpkg_path_->setPlaceholderText("Browse for a .gpkg or .shp file...");
+    edit_gpkg_path_->setReadOnly(true);
+    edit_gpkg_path_->setAcceptDrops(false);
+    auto* gpkg_browse_btn = new QPushButton("Browse", w);
+    gpkg_browse_btn->setFixedWidth(70);
+    auto* gpkg_clear_btn  = new QPushButton("Clear",  w);
+    gpkg_clear_btn->setFixedWidth(55);
+    gpkg_path_row->addWidget(edit_gpkg_path_);
+    gpkg_path_row->addWidget(gpkg_browse_btn);
+    gpkg_path_row->addWidget(gpkg_clear_btn);
+    gpkg_gl->addLayout(gpkg_path_row);
+
+    // Layer selector
+    combo_gpkg_layer_ = new QComboBox(w);
+    combo_gpkg_layer_->addItem("-- select a file first --");
+    combo_gpkg_layer_->setEnabled(false);
+    addRow(gpkg_gl, "Layer:", combo_gpkg_layer_);
+
+    // Load GPKG layers helper — populates combo from file using GDAL
+    auto loadGpkgLayers = [this](const QString& path)
+    {
+        gpkg_path_ = path;
+        edit_gpkg_path_->setText(path);
+        combo_gpkg_layer_->clear();
+        combo_gpkg_layer_->setEnabled(false);
+        if (map_panel_) map_panel_->clearOverlay();
+
+        GDALAllRegister();
+        GDALDataset* ds = static_cast<GDALDataset*>(
+            GDALOpenEx(path.toUtf8().constData(), GDAL_OF_VECTOR | GDAL_OF_READONLY,
+                       nullptr, nullptr, nullptr));
+        if (!ds)
+        {
+            combo_gpkg_layer_->addItem("-- failed to open file --");
+            return;
+        }
+        const int n = ds->GetLayerCount();
+        combo_gpkg_layer_->blockSignals(true);
+        for (int i = 0; i < n; ++i)
+        {
+            OGRLayer* lyr = ds->GetLayer(i);
+            if (lyr) combo_gpkg_layer_->addItem(QString::fromUtf8(lyr->GetName()), i);
+        }
+        combo_gpkg_layer_->blockSignals(false);
+        GDALClose(ds);
+        combo_gpkg_layer_->setEnabled(n > 0);
+        if (n > 0) onGpkgLayerChanged(0);
+    };
+
+    connect(gpkg_browse_btn, &QPushButton::clicked, w, [this, loadGpkgLayers]()
+    {
+        const QString path = QFileDialog::getOpenFileName(
+            this, "Select Vector File", QString(),
+            "Vector Files (*.gpkg *.shp);;GeoPackage (*.gpkg);;Shapefile (*.shp)");
+        if (!path.isEmpty()) loadGpkgLayers(path);
+    });
+
+    connect(gpkg_clear_btn, &QPushButton::clicked, w, [this]()
+    {
+        gpkg_path_.clear();
+        edit_gpkg_path_->clear();
+        combo_gpkg_layer_->clear();
+        combo_gpkg_layer_->addItem("-- select a file first --");
+        combo_gpkg_layer_->setEnabled(false);
+        if (map_panel_) map_panel_->clearOverlay();
+    });
+
+    connect(combo_gpkg_layer_, QOverload<int>::of(&QComboBox::currentIndexChanged),
+            this, &GeoTerrainPanel::onGpkgLayerChanged);
+
+    // Accept file drops on the path field
+    edit_gpkg_path_->installEventFilter(w);
+    w->setAcceptDrops(true);
+
     layout->addStretch();
-    return w;
+    return scroll;
 }
 
 // ---------------------------------------------------------------------------
@@ -410,6 +669,30 @@ QWidget* GeoTerrainPanel::buildParametersTab()
             edit_output_dir_->setText(dir);
     });
 
+    // --- Tile Split ---
+    auto* split_gl = makeGroup("Area Splitting (large areas)");
+
+    spin_tile_km_ = new QDoubleSpinBox(w);
+    spin_tile_km_->setRange(0.0, 500.0);
+    spin_tile_km_->setValue(0.0);
+    spin_tile_km_->setSingleStep(5.0);
+    spin_tile_km_->setDecimals(1);
+    spin_tile_km_->setSuffix(" km");
+    spin_tile_km_->setSpecialValueText("Disabled (single area)");
+    spin_tile_km_->setToolTip(
+        "Split the selected area into chunks of this size.\n"
+        "Each chunk is generated separately into its own subfolder.\n"
+        "Set to 0 to disable splitting (single area).\n"
+        "Example: 5 km splits a 50km route into ~10 tiles.");
+    addRow(split_gl, "Chunk Size:", spin_tile_km_);
+
+    auto* split_info = new QLabel(
+        "Each chunk is exported to <output>/chunk_R_C/\n"
+        "where R=row, C=column in the grid.", w);
+    split_info->setStyleSheet("color:#888; font-size:8pt; padding:2px;");
+    split_info->setWordWrap(true);
+    split_gl->addWidget(split_info);
+
     layout->addStretch();
     return w;
 }
@@ -477,6 +760,20 @@ QWidget* GeoTerrainPanel::buildGenerateTab()
     btn_qgis_export_->setEnabled(false);
     connect(btn_qgis_export_, &QPushButton::clicked, this, &GeoTerrainPanel::onQgisExport);
     qgis_layout->addWidget(btn_qgis_export_);
+
+    btn_gather_ = new QPushButton("Gather All Chunks into One Folder", w);
+    btn_gather_->setToolTip(
+        "Copies every chunk's UnigineExport files into a single GatheredExport/ folder,\n"
+        "prefixing each file with its chunk name  (e.g. chunk_0_0_heightmap.tif).");
+    btn_gather_->setStyleSheet(
+        "QPushButton { background-color: #1a4a6a; color: #80d8ff; padding: 7px; "
+        "font-weight: bold; border-radius: 4px; border: 1px solid #4fc3f7; }"
+        "QPushButton:hover { background-color: #1e5f88; }"
+        "QPushButton:disabled { background-color: #3a3a3a; color: #777; }");
+    btn_gather_->setEnabled(false);
+    connect(btn_gather_, &QPushButton::clicked, this, &GeoTerrainPanel::onGatherExport);
+    qgis_layout->addWidget(btn_gather_);
+
     layout->addWidget(qgis_grp);
 
     // Buttons
@@ -561,22 +858,129 @@ void GeoTerrainPanel::onGenerate()
         return;
     }
 
-    const PipelineConfig cfg = buildPipelineConfig();
+    const double chunk_km = spin_tile_km_ ? spin_tile_km_->value() : 0.0;
+
+    if (chunk_km < 1.0)
+    {
+        // --- Single area (no split) ---
+        const PipelineConfig cfg = buildPipelineConfig();
+        log_text_->clear();
+        progress_bar_->setValue(0);
+        appendLog("Starting pipeline...");
+        appendLog(QString("Bounds: N=%1 S=%2 W=%3 E=%4")
+                  .arg(cfg.bounds.north, 0, 'f', 5).arg(cfg.bounds.south, 0, 'f', 5)
+                  .arg(cfg.bounds.west,  0, 'f', 5).arg(cfg.bounds.east,  0, 'f', 5));
+        appendLog("Output: " + QString::fromStdString(cfg.output_dir));
+        setControlsEnabled(false);
+        tabs_->setCurrentIndex(3);
+        pipeline_->start(cfg);
+        return;
+    }
+
+    // --- Split into chunks ---
+    // ~111 km per degree latitude; longitude varies with cos(lat)
+    const GeoBounds& b       = current_bounds_;
+    const double centre_lat  = (b.north + b.south) * 0.5;
+    const double deg_per_km_lat = 1.0 / 111.0;
+    const double deg_per_km_lon = 1.0 / (111.0 * std::cos(centre_lat * M_PI / 180.0));
+
+    const double chunk_lat = chunk_km * deg_per_km_lat;
+    const double chunk_lon = chunk_km * deg_per_km_lon;
+
+    const int rows = std::max(1, (int)std::ceil((b.north - b.south) / chunk_lat));
+    const int cols = std::max(1, (int)std::ceil((b.east  - b.west)  / chunk_lon));
 
     log_text_->clear();
     progress_bar_->setValue(0);
-    appendLog("Starting pipeline...");
-    appendLog(QString("Bounds: N=%1 S=%2 W=%3 E=%4")
-              .arg(cfg.bounds.north, 0, 'f', 5)
-              .arg(cfg.bounds.south, 0, 'f', 5)
-              .arg(cfg.bounds.west,  0, 'f', 5)
-              .arg(cfg.bounds.east,  0, 'f', 5));
-    appendLog("Output: " + QString::fromStdString(cfg.output_dir));
+    const QString base_dir = edit_output_dir_ ? edit_output_dir_->text()
+                                              : QDir::homePath() + "/GeoTerrainExport";
+
+    // Build full chunk grid
+    QVector<GeoBounds> all_chunks;
+    QVector<QString>   all_dirs;
+    for (int r = 0; r < rows; ++r)
+        for (int c = 0; c < cols; ++c)
+        {
+            GeoBounds cb;
+            cb.south = b.south + r * chunk_lat;
+            cb.north = std::min(b.north, cb.south + chunk_lat);
+            cb.west  = b.west  + c * chunk_lon;
+            cb.east  = std::min(b.east,  cb.west  + chunk_lon);
+            all_chunks << cb;
+            all_dirs   << QString("%1/chunk_%2_%3").arg(base_dir).arg(r).arg(c);
+        }
+
+    // Get enabled mask from map panel (if grid was shown)
+    QVector<bool> enabled = map_panel_ ? map_panel_->chunkEnabled() : QVector<bool>();
+    if (enabled.size() != all_chunks.size())
+        enabled.fill(true, all_chunks.size());  // default all on if no grid shown
+
+    // Filter to only enabled chunks
+    chunk_bounds_.clear();
+    chunk_dirs_.clear();
+    chunk_current_ = 0;
+    int skipped = 0;
+    for (int i = 0; i < all_chunks.size(); ++i)
+    {
+        if (enabled[i]) { chunk_bounds_ << all_chunks[i]; chunk_dirs_ << all_dirs[i]; }
+        else ++skipped;
+    }
+
+    appendLog(QString("=== Split mode: %1 km chunks -> %2 x %3 grid = %4 tiles (%5 skipped) ===")
+              .arg(chunk_km).arg(rows).arg(cols).arg(chunk_bounds_.size()).arg(skipped));
+    tabs_->setCurrentIndex(3);
 
     setControlsEnabled(false);
 
-    // Switch to Generate tab so user sees progress
-    tabs_->setCurrentIndex(3);
+    // Switch finished signal to chunk handler
+    disconnect(pipeline_.get(), &TerrainPipeline::finished,
+               this, &GeoTerrainPanel::onPipelineFinished);
+    connect(pipeline_.get(), &TerrainPipeline::finished,
+            this, &GeoTerrainPanel::onChunkFinished);
+
+    // Kick off first chunk (singleShot with no args — use lambda)
+    QTimer::singleShot(0, this, [this]() { onChunkFinished(true, QString()); });
+}
+
+// ---------------------------------------------------------------------------
+void GeoTerrainPanel::onChunkFinished(bool /*ok*/, const QString& err)
+{
+    if (!err.isEmpty())
+        appendLog("[WARN] Chunk failed: " + err);
+
+    if (chunk_current_ >= chunk_bounds_.size())
+    {
+        // All done — restore normal connection
+        disconnect(pipeline_.get(), &TerrainPipeline::finished,
+                   this, &GeoTerrainPanel::onChunkFinished);
+        connect(pipeline_.get(), &TerrainPipeline::finished,
+                this, &GeoTerrainPanel::onPipelineFinished);
+        appendLog(QString("=== All %1 chunks complete ===").arg(chunk_bounds_.size()));
+        appendLog("    Each folder: heightmap.tif  albedo.tif  mask.tif");
+        progress_bar_->setValue(100);
+        if (btn_qgis_export_) btn_qgis_export_->setEnabled(true);
+        setControlsEnabled(true);
+        return;
+    }
+
+    const int       idx = chunk_current_++;
+    const GeoBounds cb  = chunk_bounds_[idx];
+    const QString   dir = chunk_dirs_[idx];
+    QDir().mkpath(dir);
+
+    PipelineConfig cfg    = buildPipelineConfig();
+    cfg.bounds            = cb;
+    cfg.output_dir        = dir.toStdString();
+    cfg.dem.output_path   = cfg.output_dir + "/heightmap.tif";
+    cfg.tiles.output_path = cfg.output_dir + "/albedo.tif";
+    cfg.mask.output_path  = cfg.output_dir + "/mask.tif";
+
+    appendLog(QString("--- Chunk %1/%2  [%3] ---")
+              .arg(idx + 1).arg(chunk_bounds_.size()).arg(QFileInfo(dir).fileName()));
+    appendLog(QString("    N=%1  S=%2  W=%3  E=%4")
+              .arg(cb.north, 0, 'f', 5).arg(cb.south, 0, 'f', 5)
+              .arg(cb.west,  0, 'f', 5).arg(cb.east,  0, 'f', 5));
+    progress_bar_->setValue(int(100.0 * idx / chunk_bounds_.size()));
 
     pipeline_->start(cfg);
 }
@@ -653,9 +1057,9 @@ void GeoTerrainPanel::onPipelineFinished(bool success, const QString& error)
 // ---------------------------------------------------------------------------
 void GeoTerrainPanel::onQgisExport()
 {
-    const QString qgis_root = "C:/Users/snare.ext/Documents/Sogeclair Rail Simulation/Track Editor/cots/qgis";
-    const QString gdal_translate = qgis_root + "/bin/gdal_translate.exe";
-    const QString ogr2ogr        = qgis_root + "/bin/ogr2ogr.exe";
+    const QString qgis_root      = "C:/Users/snare.ext/Documents/Sogeclair Rail Simulation/Track Editor/cots/qgis";
+    const QString gdal_translate  = qgis_root + "/bin/gdal_translate.exe";
+    const QString ogr2ogr         = qgis_root + "/bin/ogr2ogr.exe";
 
     if (!QFileInfo::exists(gdal_translate))
     {
@@ -664,11 +1068,8 @@ void GeoTerrainPanel::onQgisExport()
         return;
     }
 
-    const QString out_dir    = edit_output_dir_ ? edit_output_dir_->text()
-                                                : QDir::homePath() + "/GeoTerrainExport";
-    const QString export_dir = out_dir + "/UnigineExport";
-    QDir().mkpath(export_dir);
-    appendLog("=== Unigine Export → " + export_dir + " ===");
+    const QString base_out = edit_output_dir_ ? edit_output_dir_->text()
+                                              : QDir::homePath() + "/GeoTerrainExport";
 
     // QGIS GDAL environment
     QProcessEnvironment env = QProcessEnvironment::systemEnvironment();
@@ -684,81 +1085,351 @@ void GeoTerrainPanel::onQgisExport()
         proc.setProcessEnvironment(env);
         proc.start();
         proc.waitForFinished(120000);
-        if (proc.exitCode() == 0)
-        {
-            appendLog("[OK] " + label);
-            return true;
-        }
-        const QString err = QString::fromUtf8(proc.readAllStandardError()).trimmed();
-        appendLog("[FAIL] " + label + ": " + err);
+        if (proc.exitCode() == 0) { appendLog("[OK] " + label); return true; }
+        appendLog("[FAIL] " + label + ": " +
+                  QString::fromUtf8(proc.readAllStandardError()).trimmed());
         return false;
     };
 
-    int ok_count = 0;
-
-    // --- GeoTIFFs via gdal_translate ---
-    const QStringList tifs = { "heightmap.tif", "albedo.tif", "mask.tif",
-                               "vegetation_mask.tif", "mask_preview.tif" };
-    for (const QString& fname : tifs)
+    // --- Per-directory export helper ---
+    // src_dir: folder containing raw outputs (heightmap.tif, albedo.tif, ...)
+    // dst_dir: where to write the QGIS-converted copies
+    // Returns number of files converted
+    auto exportDir = [&](const QString& src_dir, const QString& dst_dir) -> int
     {
-        const QString src = out_dir + "/" + fname;
-        const QString dst = export_dir + "/" + fname;
-        if (!QFileInfo::exists(src)) { appendLog("[SKIP] " + fname + " not found"); continue; }
+        QDir().mkpath(dst_dir);
+        appendLog("  → " + dst_dir);
+        int n = 0;
 
-        QStringList args;
-        args << "-of" << "GTiff"
-             << "-a_srs" << "EPSG:4326"
-             << "-co" << "COMPRESS=LZW"
-             << "-co" << "TILED=YES"
-             << src << dst;
-
-        if (runProc(gdal_translate, args, fname)) ok_count++;
-    }
-
-    // --- Shapefiles via ogr2ogr ---
-    // Matches QGIS "Save Vector Layer as..." exactly:
-    //   Format: ESRI Shapefile, CRS: EPSG:4326 (assigned, not reprojected),
-    //   Encoding: UTF-8, Geometry: Automatic, RESIZE=NO
-    if (QFileInfo::exists(ogr2ogr))
-    {
-        const QStringList shps = { "roads", "railways", "buildings", "vegetation", "water" };
-        for (const QString& layer : shps)
+        // GeoTIFFs
+        const QStringList tifs = { "heightmap.tif", "albedo.tif", "mask.tif",
+                                   "vegetation_mask.tif", "mask_preview.tif" };
+        for (const QString& fname : tifs)
         {
-            const QString src = out_dir + "/" + layer + ".shp";
-            const QString dst = export_dir + "/" + layer + ".shp";
-            if (!QFileInfo::exists(src)) { appendLog("[SKIP] " + layer + ".shp not found"); continue; }
-
-            // Remove existing output sidecar files so -overwrite works cleanly
-            for (const QString& ext : { ".shp", ".shx", ".dbf", ".prj", ".cpg" })
-                QFile::remove(export_dir + "/" + layer + ext);
-
+            const QString src = src_dir + "/" + fname;
+            const QString dst = dst_dir + "/" + fname;
+            if (!QFileInfo::exists(src)) continue;
             QStringList args;
-            args << "-f"        << "ESRI Shapefile"
-                 << "-a_srs"    << "EPSG:4326"      // assign CRS (not reproject) — same as QGIS
-                 << "-lco"      << "ENCODING=UTF-8"  // UTF-8 encoding
-                 << "-lco"      << "RESIZE=NO"       // no DBF resize
-                 << "-overwrite"
-                 << dst << src;
-
-            if (runProc(ogr2ogr, args, layer + ".shp")) ok_count++;
+            args << "-of" << "GTiff" << "-a_srs" << "EPSG:4326"
+                 << "-co" << "COMPRESS=LZW" << "-co" << "TILED=YES"
+                 << src << dst;
+            if (runProc(gdal_translate, args, fname)) n++;
         }
-    }
-    else
+
+        // Shapefiles
+        if (QFileInfo::exists(ogr2ogr))
+        {
+            const QStringList shps = { "roads", "railways", "buildings", "vegetation", "water" };
+            for (const QString& layer : shps)
+            {
+                const QString src = src_dir + "/" + layer + ".shp";
+                const QString dst = dst_dir + "/" + layer + ".shp";
+                if (!QFileInfo::exists(src)) continue;
+                for (const QString& ext : { ".shp", ".shx", ".dbf", ".prj", ".cpg" })
+                    QFile::remove(dst_dir + "/" + layer + ext);
+                QStringList args;
+                args << "-f" << "ESRI Shapefile"
+                     << "-a_srs" << "EPSG:4326"
+                     << "-lco" << "ENCODING=UTF-8"
+                     << "-lco" << "RESIZE=NO"
+                     << "-overwrite" << dst << src;
+                if (runProc(ogr2ogr, args, layer + ".shp")) n++;
+            }
+        }
+        return n;
+    };
+
+    // --- Collect directories to process ---
+    // 1. Base output dir itself (single-area runs)
+    // 2. All chunk_R_C subfolders (split runs)
+    QStringList src_dirs;
+    src_dirs << base_out;
+
+    QDir base_qdir(base_out);
+    const QStringList chunk_dirs = base_qdir.entryList(
+        QStringList() << "chunk_*", QDir::Dirs | QDir::NoDotAndDotDot, QDir::Name);
+    for (const QString& cd : chunk_dirs)
+        src_dirs << base_out + "/" + cd;
+
+    appendLog(QString("=== Unigine Export: processing %1 director(ies) ===").arg(src_dirs.size()));
+
+    int total_ok = 0;
+    for (const QString& src_dir : src_dirs)
     {
-        appendLog("[SKIP] ogr2ogr.exe not found — shapefiles not re-exported");
+        const bool is_chunk = src_dir != base_out;
+        const QString label = is_chunk ? QFileInfo(src_dir).fileName() : "base";
+        appendLog("--- " + label + " ---");
+        const QString dst_dir = src_dir + "/UnigineExport";
+        total_ok += exportDir(src_dir, dst_dir);
     }
 
-    if (ok_count > 0)
+    if (total_ok > 0)
     {
-        appendLog(QString("=== Unigine Export done: %1 file(s) → %2 ===")
-                  .arg(ok_count).arg(export_dir));
-        QMessageBox::information(this, "Unigine Export Complete",
-            QString("%1 file(s) exported to:\n%2").arg(ok_count).arg(export_dir));
+        const bool has_chunks = src_dirs.size() > 1;
+        const QString msg = has_chunks
+            ? QString("%1 file(s) exported across %2 chunk folders.\nEach chunk → chunk_R_C/UnigineExport/\n\nUse 'Gather All Chunks' to merge into one folder.")
+              .arg(total_ok).arg(src_dirs.size())
+            : QString("%1 file(s) exported to:\n%2/UnigineExport/").arg(total_ok).arg(base_out);
+        appendLog("=== Unigine Export done: " + QString::number(total_ok) + " file(s) ===");
+        if (btn_gather_ && has_chunks) btn_gather_->setEnabled(true);
+        QMessageBox::information(this, "Unigine Export Complete", msg);
     }
     else
     {
         appendLog("=== Unigine Export failed — no files written ===");
     }
+}
+
+// ---------------------------------------------------------------------------
+void GeoTerrainPanel::onGatherExport()
+{
+    const QString base_out = edit_output_dir_ ? edit_output_dir_->text()
+                                              : QDir::homePath() + "/GeoTerrainExport";
+
+    const QString gather_dir = base_out + "/GatheredExport";
+    QDir().mkpath(gather_dir);
+
+    QDir base_qdir(base_out);
+    const QStringList chunk_names = base_qdir.entryList(
+        QStringList() << "chunk_*", QDir::Dirs | QDir::NoDotAndDotDot, QDir::Name);
+
+    if (chunk_names.isEmpty())
+    {
+        appendLog("[Gather] No chunk_* folders found in " + base_out);
+        return;
+    }
+
+    appendLog("=== Gather: collecting into " + gather_dir + " ===");
+
+    int total = 0, skipped = 0;
+    for (const QString& chunk_name : chunk_names)
+    {
+        const QString src_export = base_out + "/" + chunk_name + "/UnigineExport";
+        if (!QDir(src_export).exists())
+        {
+            appendLog("[Gather] No UnigineExport/ in " + chunk_name + " — skipping");
+            ++skipped;
+            continue;
+        }
+
+        const QStringList files = QDir(src_export).entryList(QDir::Files, QDir::Name);
+        for (const QString& fname : files)
+        {
+            const QString src  = src_export + "/" + fname;
+            const QString dst  = gather_dir + "/" + chunk_name + "_" + fname;
+
+            // Remove stale destination so QFile::copy succeeds
+            QFile::remove(dst);
+            if (QFile::copy(src, dst))
+            {
+                ++total;
+            }
+            else
+            {
+                appendLog("[Gather] WARN: failed to copy " + fname + " from " + chunk_name);
+            }
+        }
+        appendLog("  [" + chunk_name + "] " + QString::number(files.size()) + " file(s) gathered");
+    }
+
+    appendLog(QString("=== Gather complete: %1 file(s) from %2 chunk(s) (%3 skipped) ===")
+              .arg(total).arg(chunk_names.size() - skipped).arg(skipped));
+
+    if (total > 0)
+    {
+        QMessageBox::information(this, "Gather Complete",
+            QString("%1 file(s) gathered into:\n%2\n\nNaming: chunk_R_C_filename.tif")
+            .arg(total).arg(gather_dir));
+    }
+}
+
+// ---------------------------------------------------------------------------
+void GeoTerrainPanel::onSearchPlace()
+{
+    if (!edit_search_ || !map_panel_) return;
+    const QString query = edit_search_->text().trimmed();
+    if (query.isEmpty()) return;
+
+    if (!geocode_nam_)
+        geocode_nam_ = new QNetworkAccessManager(this);
+
+    QUrl url("https://nominatim.openstreetmap.org/search");
+    QUrlQuery q;
+    q.addQueryItem("q",      query);
+    q.addQueryItem("format", "json");
+    q.addQueryItem("limit",  "1");
+    url.setQuery(q);
+
+    QNetworkRequest req(url);
+    req.setRawHeader("User-Agent", "GeoTerrainEditorPlugin/1.0");
+
+    QNetworkReply* reply = geocode_nam_->get(req);
+    connect(reply, &QNetworkReply::finished, this, [this, reply, query]()
+    {
+        reply->deleteLater();
+        if (reply->error() != QNetworkReply::NoError)
+        {
+            appendLog("[Search] Network error: " + reply->errorString());
+            return;
+        }
+        const QByteArray data = reply->readAll();
+        const QJsonDocument doc = QJsonDocument::fromJson(data);
+        if (!doc.isArray() || doc.array().isEmpty())
+        {
+            appendLog("[Search] No results for: " + query);
+            return;
+        }
+        const QJsonObject obj = doc.array().first().toObject();
+        const double lat = obj["lat"].toString().toDouble();
+        const double lon = obj["lon"].toString().toDouble();
+        const QString name = obj["display_name"].toString();
+        appendLog("[Search] Found: " + name);
+        map_panel_->centerOn(lat, lon, 13);
+    });
+}
+
+// ---------------------------------------------------------------------------
+void GeoTerrainPanel::onGpkgLayerChanged(int index)
+{
+    if (!map_panel_ || gpkg_path_.isEmpty()) return;
+    if (!combo_gpkg_layer_ || index < 0 || index >= combo_gpkg_layer_->count()) return;
+
+    const int layer_idx = combo_gpkg_layer_->itemData(index).toInt();
+
+    GDALAllRegister();
+    GDALDataset* ds = static_cast<GDALDataset*>(
+        GDALOpenEx(gpkg_path_.toUtf8().constData(),
+                   GDAL_OF_VECTOR | GDAL_OF_READONLY, nullptr, nullptr, nullptr));
+    if (!ds) return;
+
+    OGRLayer* lyr = ds->GetLayer(layer_idx);
+    if (!lyr) { GDALClose(ds); return; }
+
+    // Always reproject to EPSG:4326
+    OGRSpatialReference wgs84;
+    wgs84.importFromEPSG(4326);
+    wgs84.SetAxisMappingStrategy(OAMS_TRADITIONAL_GIS_ORDER);
+    const OGRSpatialReference* src_srs_const = lyr->GetSpatialRef();
+    OGRCoordinateTransformation* ct = nullptr;
+    if (src_srs_const)
+    {
+        OGRSpatialReference src_copy;
+        src_copy.CopyGeogCSFrom(src_srs_const);
+        src_copy = *src_srs_const;
+        src_copy.SetAxisMappingStrategy(OAMS_TRADITIONAL_GIS_ORDER);
+        ct = OGRCreateCoordinateTransformation(&src_copy, &wgs84);
+    }
+
+    OverlayLayer overlay;
+    overlay.name  = combo_gpkg_layer_->currentText();
+    overlay.color = QColor(255, 165, 0);  // orange
+
+    lyr->ResetReading();
+    constexpr int MAX_FEATURES = 50000;
+    int feat_count = 0;
+
+    // Recursive helper — reads X/Y after transform (guaranteed lon/lat)
+    std::function<void(OGRGeometry*)> extractGeom = [&](OGRGeometry* geom)
+    {
+        if (!geom) return;
+        const OGRwkbGeometryType gt = wkbFlatten(geom->getGeometryType());
+
+        if (gt == wkbLineString || gt == wkbLinearRing)
+        {
+            OGRLineString* ls = static_cast<OGRLineString*>(geom);
+            const int np = ls->getNumPoints();
+            if (np < 2) return;
+            OverlayRing ring;
+            ring.closed = (gt == wkbLinearRing);
+            ring.points.reserve(np);
+            for (int i = 0; i < np; ++i)
+            {
+                const double x = ls->getX(i), y = ls->getY(i);
+                // Sanity check — valid lon/lat range
+                if (x < -180.0 || x > 180.0 || y < -90.0 || y > 90.0) return;
+                ring.points << QPointF(x, y);
+            }
+            if (ring.points.size() >= 2)
+                overlay.rings << ring;
+        }
+        else if (gt == wkbPolygon)
+        {
+            OGRPolygon* poly = static_cast<OGRPolygon*>(geom);
+            if (OGRLinearRing* ext = poly->getExteriorRing())
+            {
+                const int np = ext->getNumPoints();
+                OverlayRing ring;
+                ring.closed = true;
+                ring.points.reserve(np);
+                bool valid = true;
+                for (int i = 0; i < np; ++i)
+                {
+                    const double x = ext->getX(i), y = ext->getY(i);
+                    if (x < -180.0 || x > 180.0 || y < -90.0 || y > 90.0)
+                        { valid = false; break; }
+                    ring.points << QPointF(x, y);
+                }
+                if (valid && ring.points.size() >= 2)
+                    overlay.rings << ring;
+            }
+        }
+        else if (gt == wkbMultiLineString || gt == wkbMultiPolygon ||
+                 gt == wkbGeometryCollection)
+        {
+            OGRGeometryCollection* col = static_cast<OGRGeometryCollection*>(geom);
+            for (int i = 0; i < col->getNumGeometries(); ++i)
+                extractGeom(col->getGeometryRef(i));
+        }
+    };
+
+    OGRFeature* feat;
+    while ((feat = lyr->GetNextFeature()) != nullptr && feat_count < MAX_FEATURES)
+    {
+        OGRGeometry* geom = feat->GetGeometryRef();
+        if (geom)
+        {
+            // Clone so transform doesn't mutate the feature's geometry
+            OGRGeometry* clone = geom->clone();
+            if (ct) clone->transform(ct);
+            extractGeom(clone);
+            OGRGeometryFactory::destroyGeometry(clone);
+        }
+        OGRFeature::DestroyFeature(feat);
+        ++feat_count;
+    }
+
+    if (ct) OCTDestroyCoordinateTransformation(ct);
+    GDALClose(ds);
+
+    map_panel_->setOverlayLayers({ overlay });
+    appendLog(QString("[GPKG] Layer '%1' loaded: %2 features, %3 rings")
+              .arg(overlay.name).arg(feat_count).arg(overlay.rings.size()));
+
+    // Cache extent and update map tab layer bar
+    gpkg_ext_minLat_ =  1e9; gpkg_ext_maxLat_ = -1e9;
+    gpkg_ext_minLon_ =  1e9; gpkg_ext_maxLon_ = -1e9;
+    for (const OverlayRing& r : overlay.rings)
+        for (const QPointF& pt : r.points)
+        {
+            gpkg_ext_minLon_ = std::min(gpkg_ext_minLon_, pt.x());
+            gpkg_ext_maxLon_ = std::max(gpkg_ext_maxLon_, pt.x());
+            gpkg_ext_minLat_ = std::min(gpkg_ext_minLat_, pt.y());
+            gpkg_ext_maxLat_ = std::max(gpkg_ext_maxLat_, pt.y());
+        }
+
+    if (label_layer_info_)
+        label_layer_info_->setText(QString("Layer: %1  (%2 features)")
+                                   .arg(overlay.name).arg(feat_count));
+    if (btn_focus_layer_)
+        btn_focus_layer_->setEnabled(gpkg_ext_minLat_ < gpkg_ext_maxLat_);
+    if (btn_sel_bounds_)
+        btn_sel_bounds_->setEnabled(gpkg_ext_minLat_ < gpkg_ext_maxLat_);
+
+    // Auto-centre map on layer extent
+    if (gpkg_ext_minLat_ < gpkg_ext_maxLat_)
+        map_panel_->centerOn(
+            (gpkg_ext_minLat_ + gpkg_ext_maxLat_) * 0.5,
+            (gpkg_ext_minLon_ + gpkg_ext_maxLon_) * 0.5, 13);
 }
 
 // ---------------------------------------------------------------------------
