@@ -1,55 +1,50 @@
 #pragma once
 
 #include "GeoBounds.h"
+#include "domain/Result.h"
+#include "infrastructure/RunContext.h"
 
-#include <functional>
 #include <string>
 #include <vector>
 
-// Downloads OSM vector data via Overpass API and converts it into
-// raw in-memory geometry lists ready for rasterization.
 class OSMParser
 {
 public:
     struct Way
     {
         enum class Tag { Road, Railway, Building, Vegetation, Water, Unknown };
-        Tag         tag      = Tag::Unknown;
-        std::string subtype;   // e.g. "residential", "rail", "yes", "forest"
-        std::string name;      // OSM name tag if present
-        std::vector<std::pair<double, double>> nodes; // (lat, lon) pairs
+        Tag tag = Tag::Unknown;
+        std::string subtype;
+        std::string name;
+        std::vector<std::pair<double, double>> nodes;
     };
 
     struct ParseResult
     {
         std::vector<Way> ways;
-        bool             success = false;
-        std::string      error;
+        bool success = false;
+        std::string error;
     };
 
     struct Config
     {
         std::string overpass_url = "https://overpass-api.de/api/interpreter";
-        long        timeout_s    = 120;
+        long timeout_s = 120;
     };
 
-    using ProgressCallback = std::function<void(const std::string& message, int percent)>;
-
-    // Synchronous fetch + parse — call from worker thread.
-    ParseResult fetch(const GeoBounds& bounds,
-                      const Config&    config,
-                      ProgressCallback progress_cb);
+    Result<ParseResult> fetch(const GeoBounds& bounds,
+                              const Config&    config,
+                              RunContext&      context);
 
 private:
-    ParseResult parseJson(const std::string& json_str,
-                           ProgressCallback   progress_cb);
+    Result<ParseResult> parseJson(const std::string& json_str, RunContext& context);
 
     static Way::Tag classifyTags(const std::string& highway,
-                                  const std::string& building,
-                                  const std::string& landuse,
-                                  const std::string& natural_tag,
-                                  const std::string& leisure,
-                                  const std::string& railway,
-                                  const std::string& waterway,
-                                  std::string&       out_subtype);
+                                 const std::string& building,
+                                 const std::string& landuse,
+                                 const std::string& natural_tag,
+                                 const std::string& leisure,
+                                 const std::string& railway,
+                                 const std::string& waterway,
+                                 std::string&       out_subtype);
 };

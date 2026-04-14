@@ -7,53 +7,60 @@
 
 #include <algorithm>
 #include <cmath>
-#include <cstring>
 #include <vector>
 
-// ---------------------------------------------------------------------------
-void MaskGenerator::latLonToPixel(double lat, double lon,
-                                   const GeoBounds& bounds,
-                                   int width, int height,
-                                   int& px, int& py)
+namespace
 {
-    px = static_cast<int>((lon - bounds.west)  / bounds.width()  * width);
+void report(RunContext& context, const std::string& message, int percent)
+{
+    if (context.progress)
+        context.progress(message, percent);
+}
+
+Result<MaskArtifact> cancelledMask()
+{
+    return Result<MaskArtifact>::fail(999, "Cancelled.");
+}
+}
+
+void MaskGenerator::latLonToPixel(double lat, double lon, const GeoBounds& bounds,
+                                  int width, int height, int& px, int& py)
+{
+    px = static_cast<int>((lon - bounds.west) / bounds.width() * width);
     py = static_cast<int>((bounds.north - lat) / bounds.height() * height);
-    px = std::max(0, std::min(px, width  - 1));
+    px = std::max(0, std::min(px, width - 1));
     py = std::max(0, std::min(py, height - 1));
 }
 
-// ---------------------------------------------------------------------------
-// Simple scanline polygon fill (for closed rings)
-void MaskGenerator::rasterizePolygon(std::vector<uint8_t>& buf,
-                                      int width, int height,
-                                      const GeoBounds& bounds,
-                                      const std::vector<std::pair<double,double>>& ring,
-                                      uint8_t value)
+void MaskGenerator::rasterizePolygon(std::vector<uint8_t>& buf, int width, int height,
+                                     const GeoBounds& bounds,
+                                     const std::vector<std::pair<double, double>>& ring,
+                                     uint8_t value)
 {
-    if (ring.size() < 3) return;
+    if (ring.size() < 3)
+        return;
 
-    // Convert all nodes to pixel coords
-    std::vector<std::pair<int,int>> pts;
+    std::vector<std::pair<int, int>> pts;
     pts.reserve(ring.size());
-    for (const auto& [lat, lon] : ring)
+    for (const auto& node : ring)
     {
-        int px, py;
-        latLonToPixel(lat, lon, bounds, width, height, px, py);
+        int px = 0;
+        int py = 0;
+        latLonToPixel(node.first, node.second, bounds, width, height, px, py);
         pts.emplace_back(px, py);
     }
 
-    // Bounding box of polygon
-    int y_min = height, y_max = 0;
-    for (const auto& [x, y] : pts)
+    int y_min = height;
+    int y_max = 0;
+    for (const auto& pt : pts)
     {
-        y_min = std::min(y_min, y);
-        y_max = std::max(y_max, y);
+        y_min = std::min(y_min, pt.second);
+        y_max = std::max(y_max, pt.second);
     }
     y_min = std::max(y_min, 0);
     y_max = std::min(y_max, height - 1);
 
     const int n = static_cast<int>(pts.size());
-
     for (int scanline = y_min; scanline <= y_max; ++scanline)
     {
         std::vector<int> intersects;
@@ -63,15 +70,13 @@ void MaskGenerator::rasterizePolygon(std::vector<uint8_t>& buf,
             const int yj = pts[j].second;
             const int xi = pts[i].first;
             const int xj = pts[j].first;
-
-            if (((yi <= scanline && yj > scanline) || (yj <= scanline && yi > scanline)))
+            if ((yi <= scanline && yj > scanline) || (yj <= scanline && yi > scanline))
             {
                 const int x = xi + (scanline - yi) * (xj - xi) / (yj - yi);
                 intersects.push_back(x);
             }
         }
         std::sort(intersects.begin(), intersects.end());
-
         for (int k = 0; k + 1 < static_cast<int>(intersects.size()); k += 2)
         {
             const int x0 = std::max(0, intersects[k]);
@@ -82,14 +87,13 @@ void MaskGenerator::rasterizePolygon(std::vector<uint8_t>& buf,
     }
 }
 
-// ---------------------------------------------------------------------------
-void MaskGenerator::rasterizeLine(std::vector<uint8_t>& buf,
-                                   int width, int height,
-                                   const GeoBounds& bounds,
-                                   const std::vector<std::pair<double,double>>& pts,
-                                   int radius_px, uint8_t value)
+void MaskGenerator::rasterizeLine(std::vector<uint8_t>& buf, int width, int height,
+                                  const GeoBounds& bounds,
+                                  const std::vector<std::pair<double, double>>& pts,
+                                  int radius_px, uint8_t value)
 {
-    if (pts.size() < 2) return;
+    if (pts.size() < 2)
+        return;
 
     auto plot_circle = [&](int cx, int cy)
     {
@@ -108,17 +112,15 @@ void MaskGenerator::rasterizeLine(std::vector<uint8_t>& buf,
         }
     };
 
-    // Bresenham-based thick line via circle stamps
     for (size_t i = 0; i + 1 < pts.size(); ++i)
     {
-        int x0, y0, x1, y1;
-        latLonToPixel(pts[i].first,     pts[i].second,     bounds, width, height, x0, y0);
-        latLonToPixel(pts[i+1].first,   pts[i+1].second,   bounds, width, height, x1, y1);
+        int x0 = 0, y0 = 0, x1 = 0, y1 = 0;
+        latLonToPixel(pts[i].first, pts[i].second, bounds, width, height, x0, y0);
+        latLonToPixel(pts[i + 1].first, pts[i + 1].second, bounds, width, height, x1, y1);
 
         const int dx = std::abs(x1 - x0);
         const int dy = std::abs(y1 - y0);
         const int steps = std::max(dx, dy);
-
         for (int s = 0; s <= steps; ++s)
         {
             const int sx = (steps > 0) ? x0 + s * (x1 - x0) / steps : x0;
@@ -128,31 +130,22 @@ void MaskGenerator::rasterizeLine(std::vector<uint8_t>& buf,
     }
 }
 
-// ---------------------------------------------------------------------------
-bool MaskGenerator::generate(const GeoBounds&              bounds,
-                               const OSMParser::ParseResult& osm,
-                               const Config&                 config,
-                               ProgressCallback              progress_cb)
+Result<MaskArtifact> MaskGenerator::generate(const GeoBounds& bounds, const OSMParser::ParseResult& osm,
+                                             const Config& config, RunContext& context)
 {
+    if (context.isCancelled())
+        return cancelledMask();
     if (!bounds.isValid())
-    {
-        if (progress_cb) progress_cb("ERROR: Invalid bounds for mask generation", 0);
-        return false;
-    }
+        return Result<MaskArtifact>::fail(1, "Invalid bounds for mask generation.");
 
-    if (!osm.success)
-    {
-        if (progress_cb) progress_cb("WARNING: OSM parse failed — generating empty mask", 10);
-    }
-
-    int out_w = 0, out_h = 0;
+    int out_w = 0;
+    int out_h = 0;
     GeoBounds ref_bounds = bounds;
 
     if (!config.ref_tif_path.empty())
     {
         GDALAllRegister();
-        GDALDataset* ref_ds = static_cast<GDALDataset*>(
-            GDALOpen(config.ref_tif_path.c_str(), GA_ReadOnly));
+        GDALDataset* ref_ds = static_cast<GDALDataset*>(GDALOpen(config.ref_tif_path.c_str(), GA_ReadOnly));
         if (ref_ds)
         {
             double gt[6];
@@ -160,9 +153,9 @@ bool MaskGenerator::generate(const GeoBounds&              bounds,
             {
                 out_w = ref_ds->GetRasterXSize();
                 out_h = ref_ds->GetRasterYSize();
-                ref_bounds.west  = gt[0];
+                ref_bounds.west = gt[0];
                 ref_bounds.north = gt[3];
-                ref_bounds.east  = gt[0] + gt[1] * out_w;
+                ref_bounds.east = gt[0] + gt[1] * out_w;
                 ref_bounds.south = gt[3] + gt[5] * out_h;
             }
             GDALClose(ref_ds);
@@ -173,68 +166,35 @@ bool MaskGenerator::generate(const GeoBounds&              bounds,
     {
         constexpr double DEG_PER_M = 1.0 / 111320.0;
         const double pixel_deg = config.resolution_m * DEG_PER_M;
-        out_w = std::max(1, static_cast<int>(std::ceil(bounds.width()  / pixel_deg)));
+        out_w = std::max(1, static_cast<int>(std::ceil(bounds.width() / pixel_deg)));
         out_h = std::max(1, static_cast<int>(std::ceil(bounds.height() / pixel_deg)));
     }
 
-    if (progress_cb)
-        progress_cb("Mask raster size: " + std::to_string(out_w) + "x" + std::to_string(out_h), 5);
-
-    // Allocate five single-band buffers
     const size_t sz = static_cast<size_t>(out_w) * out_h;
     std::vector<uint8_t> band_road(sz, 0);
     std::vector<uint8_t> band_bldg(sz, 0);
     std::vector<uint8_t> band_veg(sz, 0);
     std::vector<uint8_t> band_rail(sz, 0);
     std::vector<uint8_t> band_water(sz, 0);
-
-    // Per-subtype vegetation RGB buffers for vegetation_mask.tif
-    // Indexed by subtype category 0-5
-    struct VegType { uint8_t r, g, b; };
-    // 0=forest/wood  1=park/garden  2=grass/meadow  3=farmland  4=scrub/heath  5=other
-    static const VegType VEG_COLORS[6] = {
-        { 34, 139,  34},   // 0 forest    — dark green
-        {  0, 200,  80},   // 1 park      — medium green
-        {144, 238,  80},   // 2 grass     — light green
-        {200, 220,  60},   // 3 farmland  — yellow-green
-        {107, 142,  35},   // 4 scrub     — olive
-        {180, 230, 130},   // 5 other veg — pale green
-    };
-    auto vegCategory = [](const std::string& sub) -> int
-    {
-        if (sub == "forest" || sub == "wood")                              return 0;
-        if (sub == "park"   || sub == "garden" || sub == "nature_reserve"
-            || sub == "recreation_ground" || sub == "cemetery")            return 1;
-        if (sub == "grass"  || sub == "meadow" || sub == "village_green"
-            || sub == "greenfield")                                        return 2;
-        if (sub == "farmland" || sub == "farmyard" || sub == "orchard"
-            || sub == "vineyard" || sub == "allotments")                   return 3;
-        if (sub == "scrub"  || sub == "heath"  || sub == "wetland"
-            || sub == "fell" || sub == "tundra")                           return 4;
-        return 5;
-    };
-    // Per-category mask buffers (just presence, used for RGB composite)
     std::vector<std::vector<uint8_t>> veg_cat(6, std::vector<uint8_t>(sz, 0));
 
-    // Pixel size from actual output dimensions
-    const double px_deg_x = ref_bounds.width()  / out_w;
+    const double px_deg_x = ref_bounds.width() / out_w;
     const double px_deg_y = ref_bounds.height() / out_h;
-    const double px_deg   = std::min(px_deg_x, px_deg_y);
+    const double px_deg = std::min(px_deg_x, px_deg_y);
     constexpr double DEG_PER_M = 1.0 / 111320.0;
-    const int road_radius_px = std::max(1, static_cast<int>(
-        config.road_width_m * DEG_PER_M / px_deg * 0.5));
+    const int road_radius_px = std::max(1, static_cast<int>(config.road_width_m * DEG_PER_M / px_deg * 0.5));
 
-    int way_count = 0;
     const int total_ways = static_cast<int>(osm.ways.size());
-
-    for (const auto& way : osm.ways)
+    for (int i = 0; i < total_ways; ++i)
     {
-        way_count++;
-        if (progress_cb && way_count % 200 == 0)
+        if (context.isCancelled())
+            return cancelledMask();
+
+        const auto& way = osm.ways[i];
+        if (i % 200 == 0)
         {
-            const int pct = 10 + (way_count * 75) / std::max(1, total_ways);
-            progress_cb("Rasterizing way " + std::to_string(way_count)
-                        + "/" + std::to_string(total_ways), pct);
+            const int pct = 10 + (i * 75) / std::max(1, total_ways);
+            report(context, "Rasterizing way " + std::to_string(i) + "/" + std::to_string(total_ways), pct);
         }
 
         switch (way.tag)
@@ -250,8 +210,15 @@ bool MaskGenerator::generate(const GeoBounds&              bounds,
             break;
         case OSMParser::Way::Tag::Vegetation:
             rasterizePolygon(band_veg, out_w, out_h, ref_bounds, way.nodes, 255);
-            rasterizePolygon(veg_cat[vegCategory(way.subtype)],
-                             out_w, out_h, ref_bounds, way.nodes, 255);
+            {
+                int category = 5;
+                if (way.subtype == "forest" || way.subtype == "wood") category = 0;
+                else if (way.subtype == "park" || way.subtype == "garden" || way.subtype == "nature_reserve") category = 1;
+                else if (way.subtype == "grass" || way.subtype == "meadow" || way.subtype == "village_green") category = 2;
+                else if (way.subtype == "farmland" || way.subtype == "farmyard" || way.subtype == "orchard") category = 3;
+                else if (way.subtype == "scrub" || way.subtype == "heath" || way.subtype == "wetland") category = 4;
+                rasterizePolygon(veg_cat[category], out_w, out_h, ref_bounds, way.nodes, 255);
+            }
             break;
         case OSMParser::Way::Tag::Water:
             rasterizePolygon(band_water, out_w, out_h, ref_bounds, way.nodes, 255);
@@ -261,29 +228,17 @@ bool MaskGenerator::generate(const GeoBounds&              bounds,
         }
     }
 
-    if (progress_cb) progress_cb("Writing mask GeoTIFF...", 88);
-
-    // Write 5-band GeoTIFF
     GDALAllRegister();
     GDALDriver* driver = GetGDALDriverManager()->GetDriverByName("GTiff");
     if (!driver)
-    {
-        if (progress_cb) progress_cb("ERROR: GTiff driver not available", 0);
-        return false;
-    }
+        return Result<MaskArtifact>::fail(2, "GTiff driver not available.");
 
     char** opts = nullptr;
     opts = CSLSetNameValue(opts, "COMPRESS", "LZW");
-
-    GDALDataset* ds = driver->Create(config.output_path.c_str(),
-                                      out_w, out_h, 5, GDT_Byte, opts);
+    GDALDataset* ds = driver->Create(config.output_path.c_str(), out_w, out_h, 5, GDT_Byte, opts);
     CSLDestroy(opts);
-
     if (!ds)
-    {
-        if (progress_cb) progress_cb("ERROR: Cannot create mask GeoTIFF: " + config.output_path, 0);
-        return false;
-    }
+        return Result<MaskArtifact>::fail(3, "Cannot create mask GeoTIFF.");
 
     double gt[6] = { ref_bounds.west, px_deg_x, 0.0, ref_bounds.north, 0.0, -px_deg_y };
     ds->SetGeoTransform(gt);
@@ -300,118 +255,86 @@ bool MaskGenerator::generate(const GeoBounds&              bounds,
     ds->GetRasterBand(3)->SetDescription("Vegetation");
     ds->GetRasterBand(4)->SetDescription("Railways");
     ds->GetRasterBand(5)->SetDescription("Water");
-
-    ds->GetRasterBand(1)->RasterIO(GF_Write, 0, 0, out_w, out_h,
-                                    band_road.data(),  out_w, out_h, GDT_Byte, 0, 0);
-    ds->GetRasterBand(2)->RasterIO(GF_Write, 0, 0, out_w, out_h,
-                                    band_bldg.data(),  out_w, out_h, GDT_Byte, 0, 0);
-    ds->GetRasterBand(3)->RasterIO(GF_Write, 0, 0, out_w, out_h,
-                                    band_veg.data(),   out_w, out_h, GDT_Byte, 0, 0);
-    ds->GetRasterBand(4)->RasterIO(GF_Write, 0, 0, out_w, out_h,
-                                    band_rail.data(),  out_w, out_h, GDT_Byte, 0, 0);
-    ds->GetRasterBand(5)->RasterIO(GF_Write, 0, 0, out_w, out_h,
-                                    band_water.data(), out_w, out_h, GDT_Byte, 0, 0);
+    ds->GetRasterBand(1)->RasterIO(GF_Write, 0, 0, out_w, out_h, band_road.data(), out_w, out_h, GDT_Byte, 0, 0);
+    ds->GetRasterBand(2)->RasterIO(GF_Write, 0, 0, out_w, out_h, band_bldg.data(), out_w, out_h, GDT_Byte, 0, 0);
+    ds->GetRasterBand(3)->RasterIO(GF_Write, 0, 0, out_w, out_h, band_veg.data(), out_w, out_h, GDT_Byte, 0, 0);
+    ds->GetRasterBand(4)->RasterIO(GF_Write, 0, 0, out_w, out_h, band_rail.data(), out_w, out_h, GDT_Byte, 0, 0);
+    ds->GetRasterBand(5)->RasterIO(GF_Write, 0, 0, out_w, out_h, band_water.data(), out_w, out_h, GDT_Byte, 0, 0);
     GDALClose(ds);
 
-    // Log per-band pixel counts so user can verify data presence
-    auto countNonZero = [](const std::vector<uint8_t>& b)
-    {
-        int n = 0;
-        for (uint8_t v : b) if (v) ++n;
-        return n;
-    };
-    if (progress_cb)
-    {
-        progress_cb("Mask pixels — Roads:"      + std::to_string(countNonZero(band_road))  +
-                    " Buildings:"               + std::to_string(countNonZero(band_bldg))  +
-                    " Vegetation:"              + std::to_string(countNonZero(band_veg))   +
-                    " Railways:"                + std::to_string(countNonZero(band_rail))  +
-                    " Water:"                   + std::to_string(countNonZero(band_water)), 89);
-    }
-
-    // --- Write RGB colour preview: mask_preview.tif ---
-    // Roads=Red(255,0,0), Buildings=Yellow(255,255,0),
-    // Vegetation=Green(0,200,0), Railways=Blue(0,0,255), Water=Cyan(0,220,255)
     {
         const std::string preview_path =
             config.output_path.substr(0, config.output_path.rfind('.')) + "_preview.tif";
-
-        GDALDataset* pds = driver->Create(preview_path.c_str(), out_w, out_h, 3, GDT_Byte, nullptr);
-        if (pds)
+        GDALDataset* preview_ds = driver->Create(preview_path.c_str(), out_w, out_h, 3, GDT_Byte, nullptr);
+        if (preview_ds)
         {
-            pds->SetGeoTransform(gt);
-            OGRSpatialReference psrs;
-            psrs.importFromEPSG(4326);
-            char* pwkt = nullptr;
-            psrs.exportToWkt(&pwkt);
-            pds->SetProjection(pwkt);
-            CPLFree(pwkt);
+            preview_ds->SetGeoTransform(gt);
+            OGRSpatialReference preview_srs;
+            preview_srs.importFromEPSG(4326);
+            char* preview_wkt = nullptr;
+            preview_srs.exportToWkt(&preview_wkt);
+            preview_ds->SetProjection(preview_wkt);
+            CPLFree(preview_wkt);
 
             std::vector<uint8_t> pr(sz, 0), pg(sz, 0), pb(sz, 0);
             for (size_t i = 0; i < sz; ++i)
             {
-                if (band_water[i])  { pr[i] = 0;   pg[i] = 220; pb[i] = 255; } // Cyan
-                if (band_veg[i])    { pr[i] = 0;   pg[i] = 200; pb[i] = 0;   } // Green
-                if (band_bldg[i])   { pr[i] = 255; pg[i] = 255; pb[i] = 0;   } // Yellow
-                if (band_rail[i])   { pr[i] = 0;   pg[i] = 0;   pb[i] = 255; } // Blue
-                if (band_road[i])   { pr[i] = 255; pg[i] = 0;   pb[i] = 0;   } // Red
+                if (band_water[i]) { pr[i] = 0; pg[i] = 220; pb[i] = 255; }
+                if (band_veg[i]) { pr[i] = 0; pg[i] = 200; pb[i] = 0; }
+                if (band_bldg[i]) { pr[i] = 255; pg[i] = 255; pb[i] = 0; }
+                if (band_rail[i]) { pr[i] = 0; pg[i] = 0; pb[i] = 255; }
+                if (band_road[i]) { pr[i] = 255; pg[i] = 0; pb[i] = 0; }
             }
-            pds->GetRasterBand(1)->RasterIO(GF_Write, 0, 0, out_w, out_h,
-                pr.data(), out_w, out_h, GDT_Byte, 0, 0);
-            pds->GetRasterBand(2)->RasterIO(GF_Write, 0, 0, out_w, out_h,
-                pg.data(), out_w, out_h, GDT_Byte, 0, 0);
-            pds->GetRasterBand(3)->RasterIO(GF_Write, 0, 0, out_w, out_h,
-                pb.data(), out_w, out_h, GDT_Byte, 0, 0);
-            GDALClose(pds);
-            if (progress_cb) progress_cb("Mask preview saved: " + preview_path, 91);
+            preview_ds->GetRasterBand(1)->RasterIO(GF_Write, 0, 0, out_w, out_h, pr.data(), out_w, out_h, GDT_Byte, 0, 0);
+            preview_ds->GetRasterBand(2)->RasterIO(GF_Write, 0, 0, out_w, out_h, pg.data(), out_w, out_h, GDT_Byte, 0, 0);
+            preview_ds->GetRasterBand(3)->RasterIO(GF_Write, 0, 0, out_w, out_h, pb.data(), out_w, out_h, GDT_Byte, 0, 0);
+            GDALClose(preview_ds);
+            GdalUtils::fixCrsTag(preview_path);
         }
     }
 
-    // --- Write vegetation_mask.tif — RGB, one colour per vegetation type ---
     {
+        static const struct { uint8_t r, g, b; } colors[6] = {
+            { 34, 139, 34 }, { 0, 200, 80 }, { 144, 238, 80 },
+            { 200, 220, 60 }, { 107, 142, 35 }, { 180, 230, 130 }
+        };
         const std::string veg_path =
             config.output_path.substr(0, config.output_path.rfind('/') + 1) + "vegetation_mask.tif";
-
-        GDALDataset* vds = driver->Create(veg_path.c_str(), out_w, out_h, 3, GDT_Byte, nullptr);
-        if (vds)
+        GDALDataset* veg_ds = driver->Create(veg_path.c_str(), out_w, out_h, 3, GDT_Byte, nullptr);
+        if (veg_ds)
         {
-            vds->SetGeoTransform(gt);
-            OGRSpatialReference vsrs;
-            vsrs.importFromEPSG(4326);
-            char* vwkt = nullptr;
-            vsrs.exportToWkt(&vwkt);
-            vds->SetProjection(vwkt);
-            CPLFree(vwkt);
+            veg_ds->SetGeoTransform(gt);
+            OGRSpatialReference veg_srs;
+            veg_srs.importFromEPSG(4326);
+            char* veg_wkt = nullptr;
+            veg_srs.exportToWkt(&veg_wkt);
+            veg_ds->SetProjection(veg_wkt);
+            CPLFree(veg_wkt);
 
             std::vector<uint8_t> vr(sz, 0), vg(sz, 0), vb(sz, 0);
-            // Paint in reverse priority (category 0 = forest = highest priority, painted last)
-            for (int cat = 5; cat >= 0; --cat)
+            for (int category = 5; category >= 0; --category)
             {
-                const VegType& col = VEG_COLORS[cat];
                 for (size_t i = 0; i < sz; ++i)
                 {
-                    if (veg_cat[cat][i])
+                    if (veg_cat[category][i])
                     {
-                        vr[i] = col.r;
-                        vg[i] = col.g;
-                        vb[i] = col.b;
+                        vr[i] = colors[category].r;
+                        vg[i] = colors[category].g;
+                        vb[i] = colors[category].b;
                     }
                 }
             }
-            vds->GetRasterBand(1)->RasterIO(GF_Write, 0, 0, out_w, out_h,
-                vr.data(), out_w, out_h, GDT_Byte, 0, 0);
-            vds->GetRasterBand(2)->RasterIO(GF_Write, 0, 0, out_w, out_h,
-                vg.data(), out_w, out_h, GDT_Byte, 0, 0);
-            vds->GetRasterBand(3)->RasterIO(GF_Write, 0, 0, out_w, out_h,
-                vb.data(), out_w, out_h, GDT_Byte, 0, 0);
-            GDALClose(vds);
+            veg_ds->GetRasterBand(1)->RasterIO(GF_Write, 0, 0, out_w, out_h, vr.data(), out_w, out_h, GDT_Byte, 0, 0);
+            veg_ds->GetRasterBand(2)->RasterIO(GF_Write, 0, 0, out_w, out_h, vg.data(), out_w, out_h, GDT_Byte, 0, 0);
+            veg_ds->GetRasterBand(3)->RasterIO(GF_Write, 0, 0, out_w, out_h, vb.data(), out_w, out_h, GDT_Byte, 0, 0);
+            GDALClose(veg_ds);
             GdalUtils::fixCrsTag(veg_path);
-            if (progress_cb) progress_cb("Vegetation mask saved: " + veg_path, 93);
         }
     }
 
-    if (progress_cb) progress_cb("Tagging mask CRS: EPSG:4326...", 92);
     GdalUtils::fixCrsTag(config.output_path);
-    if (progress_cb) progress_cb("Mask saved: " + config.output_path, 95);
-    return true;
+    report(context, "Mask saved: " + config.output_path, 95);
+    MaskArtifact artifact;
+    artifact.output_path = config.output_path;
+    return Result<MaskArtifact>::ok(artifact);
 }

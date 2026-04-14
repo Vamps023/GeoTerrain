@@ -2,18 +2,19 @@
 
 #include <gdal_priv.h>
 #include <ogrsf_frmts.h>
-#include <ogr_spatialref.h>
 
-#include <map>
-#include <string>
 #include <vector>
 
-// ---------------------------------------------------------------------------
-// Helper: create or open a layer inside a datasource
-static OGRLayer* getOrCreateLayer(GDALDataset* ds,
-                                   const char*  name,
-                                   OGRwkbGeometryType geom_type,
-                                   OGRSpatialReference* srs)
+namespace
+{
+void report(RunContext& context, const std::string& message, int percent)
+{
+    if (context.progress)
+        context.progress(message, percent);
+}
+
+OGRLayer* getOrCreateLayer(GDALDataset* ds, const char* name, OGRwkbGeometryType geom_type,
+                           OGRSpatialReference* srs)
 {
     OGRLayer* layer = ds->GetLayerByName(name);
     if (layer)
@@ -22,7 +23,6 @@ static OGRLayer* getOrCreateLayer(GDALDataset* ds,
     if (!layer)
         return nullptr;
 
-    // Add standard attribute fields
     OGRFieldDefn fld_subtype("subtype", OFTString);
     fld_subtype.SetWidth(64);
     layer->CreateField(&fld_subtype);
@@ -30,29 +30,22 @@ static OGRLayer* getOrCreateLayer(GDALDataset* ds,
     OGRFieldDefn fld_name("name", OFTString);
     fld_name.SetWidth(128);
     layer->CreateField(&fld_name);
-
     return layer;
 }
 
-// ---------------------------------------------------------------------------
-// Write one way as a LineString or Polygon feature into a layer
-static void writeWay(OGRLayer* layer,
-                     const OSMParser::Way& way,
-                     bool as_polygon)
+void writeWay(OGRLayer* layer, const OSMParser::Way& way, bool as_polygon)
 {
     if (way.nodes.size() < 2)
         return;
-
     OGRFeature* feat = OGRFeature::CreateFeature(layer->GetLayerDefn());
     feat->SetField("subtype", way.subtype.c_str());
-    feat->SetField("name",    way.name.c_str());
-
+    feat->SetField("name", way.name.c_str());
     if (as_polygon && way.nodes.size() >= 3)
     {
         OGRPolygon poly;
         OGRLinearRing ring;
-        for (const auto& [lat, lon] : way.nodes)
-            ring.addPoint(lon, lat);
+        for (const auto& node : way.nodes)
+            ring.addPoint(node.second, node.first);
         ring.closeRings();
         poly.addRing(&ring);
         feat->SetGeometry(&poly);
@@ -60,86 +53,66 @@ static void writeWay(OGRLayer* layer,
     else
     {
         OGRLineString line;
-        for (const auto& [lat, lon] : way.nodes)
-            line.addPoint(lon, lat);
+        for (const auto& node : way.nodes)
+            line.addPoint(node.second, node.first);
         feat->SetGeometry(&line);
     }
-
     layer->CreateFeature(feat);
     OGRFeature::DestroyFeature(feat);
 }
+}
 
-// ---------------------------------------------------------------------------
-int ShapefileExporter::exportAll(const OSMParser::ParseResult& osm,
-                                  const Config&                 config,
-                                  ProgressCallback              progress_cb)
+Result<VectorExportSummary> ShapefileExporter::exportAll(const OSMParser::ParseResult& osm,
+                                                        const Config& config, RunContext& context)
 {
     if (!osm.success || osm.ways.empty())
-    {
-        if (progress_cb) progress_cb("SHP export: no OSM data to export", 0);
-        return 0;
-    }
+        return Result<VectorExportSummary>::ok(VectorExportSummary{});
 
     GDALAllRegister();
     GDALDriver* drv = GetGDALDriverManager()->GetDriverByName("ESRI Shapefile");
     if (!drv)
-    {
-        if (progress_cb) progress_cb("ERROR: ESRI Shapefile GDAL driver not found", 0);
-        return 0;
-    }
+        return Result<VectorExportSummary>::fail(1, "ESRI Shapefile driver not found.");
 
     OGRSpatialReference srs;
     srs.importFromEPSG(4326);
 
-    // One datasource per layer (Shapefile driver = one file per dataset)
     struct LayerDef
     {
         OSMParser::Way::Tag tag;
-        const char*         filename;
-        OGRwkbGeometryType  geom;
-        bool                as_polygon;
+        const char* filename;
+        OGRwkbGeometryType geom;
+        bool as_polygon;
     };
 
     const std::vector<LayerDef> layers = {
-        { OSMParser::Way::Tag::Road,       "roads",      wkbLineString, false },
-        { OSMParser::Way::Tag::Railway,    "railways",   wkbLineString, false },
-        { OSMParser::Way::Tag::Building,   "buildings",  wkbPolygon,    true  },
-        { OSMParser::Way::Tag::Vegetation, "vegetation", wkbPolygon,    true  },
-        { OSMParser::Way::Tag::Water,      "water",      wkbPolygon,    true  },
+        { OSMParser::Way::Tag::Road, "roads", wkbLineString, false },
+        { OSMParser::Way::Tag::Railway, "railways", wkbLineString, false },
+        { OSMParser::Way::Tag::Building, "buildings", wkbPolygon, true },
+        { OSMParser::Way::Tag::Vegetation, "vegetation", wkbPolygon, true },
+        { OSMParser::Way::Tag::Water, "water", wkbPolygon, true },
     };
 
-    int total_features = 0;
-
+    VectorExportSummary summary;
     for (const auto& ld : layers)
     {
-        // Collect ways for this layer
         std::vector<const OSMParser::Way*> matching;
         for (const auto& way : osm.ways)
+        {
             if (way.tag == ld.tag)
                 matching.push_back(&way);
-
+        }
         if (matching.empty())
             continue;
 
         const std::string path = config.output_dir + "/" + ld.filename + ".shp";
-
-        // Delete existing file first (Shapefile driver won't overwrite)
         VSIUnlink(path.c_str());
-        const std::string dbf = config.output_dir + "/" + ld.filename + ".dbf";
-        const std::string shx = config.output_dir + "/" + ld.filename + ".shx";
-        const std::string prj = config.output_dir + "/" + ld.filename + ".prj";
-        VSIUnlink(dbf.c_str());
-        VSIUnlink(shx.c_str());
-        VSIUnlink(prj.c_str());
+        VSIUnlink((config.output_dir + "/" + ld.filename + ".dbf").c_str());
+        VSIUnlink((config.output_dir + "/" + ld.filename + ".shx").c_str());
+        VSIUnlink((config.output_dir + "/" + ld.filename + ".prj").c_str());
 
         GDALDataset* ds = drv->Create(path.c_str(), 0, 0, 0, GDT_Unknown, nullptr);
         if (!ds)
-        {
-            if (progress_cb)
-                progress_cb("ERROR: Cannot create " + path, 0);
             continue;
-        }
-
         OGRLayer* layer = getOrCreateLayer(ds, ld.filename, ld.geom, &srs);
         if (!layer)
         {
@@ -150,21 +123,18 @@ int ShapefileExporter::exportAll(const OSMParser::ParseResult& osm,
         int count = 0;
         for (const auto* way : matching)
         {
+            if (context.isCancelled())
+            {
+                GDALClose(ds);
+                return Result<VectorExportSummary>::fail(999, "Cancelled.");
+            }
             writeWay(layer, *way, ld.as_polygon);
-            count++;
+            ++count;
         }
-
         GDALClose(ds);
-        total_features += count;
-
-        if (progress_cb)
-            progress_cb("SHP [" + std::string(ld.filename) + ".shp] — " +
-                        std::to_string(count) + " features", 0);
+        summary.total_features += count;
+        report(context, "SHP [" + std::string(ld.filename) + ".shp] - " + std::to_string(count) + " features", 72);
     }
 
-    if (progress_cb)
-        progress_cb("=== Shapefiles exported: " + std::to_string(total_features) +
-                    " total features to " + config.output_dir + " ===", 0);
-
-    return total_features;
+    return Result<VectorExportSummary>::ok(summary);
 }

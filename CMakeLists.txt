@@ -1,6 +1,8 @@
 cmake_minimum_required(VERSION 3.16)
 
 project(GeoTerrainEditorPlugin)
+option(GEOTERRAIN_ENABLE_DEPLOY "Deploy plugin files after build" ON)
+option(GEOTERRAIN_BUILD_TESTS "Build non-UI refactor tests" ON)
 
 set(vendor_name Vamps)
 set(target_name GeoTerrain)
@@ -27,6 +29,7 @@ set(UNIGINE_LIB_DIR "${UNIGINE_SDK_DIR}/lib")
 
 # Deploy path
 set(DEPLOY_DIR "C:/Users/snare.ext/Documents/UNIGINE Projects/unigine_project_3/bin/plugins/${vendor_name}/${target_name}")
+set(LOCAL_RUNTIME_DIR "${CMAKE_BINARY_DIR}/bin")
 
 set(binary_name ${target_name}_editorplugin)
 string(APPEND binary_name "_double")
@@ -34,6 +37,7 @@ string(APPEND binary_name "_x64")
 
 # GDAL (set GDAL_DIR or provide paths here)
 set(OSGEO4W_DIR "C:/Users/snare.ext/AppData/Local/Programs/OSGeo4W")
+set(QGIS_ROOT "C:/Users/snare.ext/Documents/Sogeclair Rail Simulation/Track Editor/cots/qgis" CACHE PATH "QGIS installation root")
 
 set(GDAL_INCLUDE_DIR "${OSGEO4W_DIR}/include" CACHE PATH "GDAL include directory")
 set(GDAL_LIB        "${OSGEO4W_DIR}/lib/gdal_i.lib" CACHE FILEPATH "GDAL import library")
@@ -63,8 +67,18 @@ set(SOURCES
     source/OSMParser.cpp
     source/ShapefileExporter.cpp
     source/MaskGenerator.cpp
-    source/TerrainPipeline.cpp
     source/GdalUtils.cpp
+    source/domain/Validation.cpp
+    source/application/ChunkPlanner.cpp
+    source/application/ExportCoordinator.cpp
+    source/application/GenerationCoordinator.cpp
+    source/application/GeoTerrainController.cpp
+    source/infrastructure/ManifestWriter.cpp
+    source/infrastructure/OverlayLoader.cpp
+    source/ui/MapSelectionSection.cpp
+    source/ui/SourceSettingsSection.cpp
+    source/ui/GenerationSettingsSection.cpp
+    source/ui/RunConsoleSection.cpp
 )
 
 set(HEADERS
@@ -76,9 +90,22 @@ set(HEADERS
     source/OSMParser.h
     source/ShapefileExporter.h
     source/MaskGenerator.h
-    source/TerrainPipeline.h
     source/GeoBounds.h
     source/GdalUtils.h
+    source/domain/Result.h
+    source/domain/GenerationTypes.h
+    source/domain/Validation.h
+    source/application/ChunkPlanner.h
+    source/application/ExportCoordinator.h
+    source/application/GenerationCoordinator.h
+    source/application/GeoTerrainController.h
+    source/infrastructure/RunContext.h
+    source/infrastructure/ManifestWriter.h
+    source/infrastructure/OverlayLoader.h
+    source/ui/MapSelectionSection.h
+    source/ui/SourceSettingsSection.h
+    source/ui/GenerationSettingsSection.h
+    source/ui/RunConsoleSection.h
 )
 
 add_library(${target_name} SHARED ${SOURCES} ${HEADERS})
@@ -96,15 +123,34 @@ target_link_libraries(${target_name}
 
 set_target_properties(${target_name} PROPERTIES
     OUTPUT_NAME ${binary_name}$<$<CONFIG:Debug>:d>
-    RUNTIME_OUTPUT_DIRECTORY_RELEASE "${DEPLOY_DIR}"
-    RUNTIME_OUTPUT_DIRECTORY_DEBUG   "${DEPLOY_DIR}"
+    RUNTIME_OUTPUT_DIRECTORY_RELEASE "${LOCAL_RUNTIME_DIR}"
+    RUNTIME_OUTPUT_DIRECTORY_DEBUG   "${LOCAL_RUNTIME_DIR}"
+    ARCHIVE_OUTPUT_DIRECTORY_RELEASE "${CMAKE_BINARY_DIR}"
+    ARCHIVE_OUTPUT_DIRECTORY_DEBUG   "${CMAKE_BINARY_DIR}"
 )
 
-# Post-build: copy plugin JSON
-add_custom_command(TARGET ${target_name} POST_BUILD
-    COMMAND ${CMAKE_COMMAND} -E make_directory "${DEPLOY_DIR}"
-    COMMAND ${CMAKE_COMMAND} -E copy_if_different
-        "${CMAKE_CURRENT_SOURCE_DIR}/source/GeoTerrainEditorPlugin.json"
-        "${DEPLOY_DIR}/GeoTerrainEditorPlugin.json"
-    COMMENT "Deploying plugin metadata"
-)
+if(GEOTERRAIN_ENABLE_DEPLOY)
+    add_custom_command(TARGET ${target_name} POST_BUILD
+        COMMAND ${CMAKE_COMMAND} -E make_directory "${DEPLOY_DIR}"
+        COMMAND ${CMAKE_COMMAND} -E copy_if_different
+            "$<TARGET_FILE:${target_name}>"
+            "${DEPLOY_DIR}/$<TARGET_FILE_NAME:${target_name}>"
+        COMMAND ${CMAKE_COMMAND} -E copy_if_different
+            "${CMAKE_CURRENT_SOURCE_DIR}/source/GeoTerrainEditorPlugin.json"
+            "${DEPLOY_DIR}/GeoTerrainEditorPlugin.json"
+        COMMENT "Deploying plugin files"
+    )
+endif()
+
+if(GEOTERRAIN_BUILD_TESTS)
+    enable_testing()
+    add_executable(GeoTerrainCoreTests
+        tests/GeoTerrainCoreTests.cpp
+        source/domain/Validation.cpp
+        source/application/ChunkPlanner.cpp
+    )
+    target_include_directories(GeoTerrainCoreTests PRIVATE
+        ${CMAKE_CURRENT_SOURCE_DIR}/source
+    )
+    add_test(NAME GeoTerrainCoreTests COMMAND GeoTerrainCoreTests)
+endif()
