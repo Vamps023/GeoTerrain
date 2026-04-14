@@ -11,7 +11,9 @@
 #include "ChunkPlanner.h"
 #include "ExportCoordinator.h"
 #include "GenerationCoordinator.h"
+#include "SandwormExporter.h"
 
+#include <QFileInfo>
 #include <QJsonArray>
 #include <QJsonDocument>
 #include <QJsonObject>
@@ -62,6 +64,7 @@ GeoTerrainController::GeoTerrainController(GeoTerrainPanel* panel, QObject* pare
     , panel_(panel)
     , generation_(new GenerationCoordinator(this))
     , export_(new ExportCoordinator())
+    , sandworm_(new SandwormExporter())
 {
     auto* map = panel_->mapSection();
     auto* source = panel_->sourceSection();
@@ -81,10 +84,11 @@ GeoTerrainController::GeoTerrainController(GeoTerrainPanel* panel, QObject* pare
     connect(source, &SourceSettingsSection::vectorPathSelected, this, &GeoTerrainController::onVectorPathSelected);
     connect(source, &SourceSettingsSection::vectorLayerIndexChanged, this, &GeoTerrainController::onVectorLayerChanged);
 
-    connect(console, &RunConsoleSection::generateRequested, this, &GeoTerrainController::onGenerate);
-    connect(console, &RunConsoleSection::cancelRequested, this, &GeoTerrainController::onCancel);
-    connect(console, &RunConsoleSection::exportRequested, this, &GeoTerrainController::onExport);
-    connect(console, &RunConsoleSection::gatherRequested, this, &GeoTerrainController::onGather);
+    connect(console, &RunConsoleSection::generateRequested,  this, &GeoTerrainController::onGenerate);
+    connect(console, &RunConsoleSection::cancelRequested,    this, &GeoTerrainController::onCancel);
+    connect(console, &RunConsoleSection::exportRequested,    this, &GeoTerrainController::onExport);
+    connect(console, &RunConsoleSection::gatherRequested,    this, &GeoTerrainController::onGather);
+    connect(console, &RunConsoleSection::sandwormRequested,  this, &GeoTerrainController::onCreateSandworm);
 
     connect(generation_, &GenerationCoordinator::logMessage, panel_, &GeoTerrainPanel::appendLog);
     connect(generation_, &GenerationCoordinator::progressChanged, this, &GeoTerrainController::onProgress);
@@ -378,7 +382,34 @@ void GeoTerrainController::onGather()
     if (!result.success)
         panel_->appendLog("[Gather] " + QString::fromStdString(result.message));
     else
+    {
         panel_->appendLog(QString("[Gather] Copied %1 file(s).").arg(result.value));
+        panel_->setSandwormEnabled(true);
+    }
+}
+
+void GeoTerrainController::onCreateSandworm()
+{
+    const QString output_dir = panel_->settingsSection()->outputDirEdit()->text();
+    if (output_dir.isEmpty())
+    {
+        panel_->appendLog("[Sandworm] No output directory set.");
+        return;
+    }
+
+    // Derive a project name from the output folder
+    const QString project_name = QFileInfo(output_dir).fileName();
+
+    auto result = sandworm_->createProject(
+        output_dir,
+        current_bounds_,
+        project_name,
+        [this](const QString& line) { panel_->appendLog(line); });
+
+    if (!result.success)
+        panel_->appendLog("[Sandworm] FAILED: " + QString::fromStdString(result.message));
+    else
+        panel_->appendLog("[Sandworm] Done — open in Sandworm: " + result.value);
 }
 
 void GeoTerrainController::onProgress(int percent)
@@ -390,9 +421,14 @@ void GeoTerrainController::onFinished(int status, const QString& message)
 {
     panel_->appendLog(message);
     panel_->setControlsEnabled(true);
-    panel_->setExportEnabled(status == static_cast<int>(JobStatus::Succeeded) ||
-                             status == static_cast<int>(JobStatus::PartiallySucceeded));
-    panel_->setGatherEnabled(panel_->settingsSection()->chunkSizeSpin()->value() >= 1.0);
+    const bool ok = (status == static_cast<int>(JobStatus::Succeeded) ||
+                     status == static_cast<int>(JobStatus::PartiallySucceeded));
+    panel_->setExportEnabled(ok);
+    const bool chunked = panel_->settingsSection()->chunkSizeSpin()->value() >= 1.0;
+    panel_->setGatherEnabled(chunked);
+    // Enable Sandworm for single-chunk runs immediately; multi-chunk after Gather
+    if (ok && !chunked)
+        panel_->setSandwormEnabled(true);
 }
 
 void GeoTerrainController::applyMapMode(int mode, bool use_fallback)

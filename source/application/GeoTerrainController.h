@@ -8,6 +8,7 @@
 class GeoTerrainPanel;
 class GenerationCoordinator;
 class ExportCoordinator;
+class SandwormExporter;
 
 class GeoTerrainController : public QObject
 {
@@ -31,6 +32,7 @@ private slots:
     void onCancel();
     void onExport();
     void onGather();
+    void onCreateSandworm();
     void onProgress(int percent);
     void onFinished(int status, const QString& message);
 
@@ -44,6 +46,7 @@ private:
     GeoTerrainPanel* panel_ = nullptr;
     GenerationCoordinator* generation_ = nullptr;
     ExportCoordinator* export_ = nullptr;
+    SandwormExporter* sandworm_ = nullptr;
     GeoBounds current_bounds_;
     GeoBounds layer_extent_;
     QString vector_path_;

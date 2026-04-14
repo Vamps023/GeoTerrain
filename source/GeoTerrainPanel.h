@@ -34,6 +34,7 @@ public:
     void setProgress(int percent);
     void setExportEnabled(bool enabled);
     void setGatherEnabled(bool enabled);
+    void setSandwormEnabled(bool enabled);
     void showGenerateTab();
 
 signals:

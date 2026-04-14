@@ -98,6 +98,11 @@ void GeoTerrainPanel::setGatherEnabled(bool enabled)
     console_section_->setGatherEnabled(enabled);
 }
 
+void GeoTerrainPanel::setSandwormEnabled(bool enabled)
+{
+    console_section_->setSandwormEnabled(enabled);
+}
+
 void GeoTerrainPanel::showGenerateTab()
 {
     tabs_->setCurrentWidget(console_section_);

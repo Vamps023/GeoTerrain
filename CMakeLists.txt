@@ -72,6 +72,7 @@ set(SOURCES
     source/application/ChunkPlanner.cpp
     source/application/ExportCoordinator.cpp
     source/application/GenerationCoordinator.cpp
+    source/application/SandwormExporter.cpp
     source/application/GeoTerrainController.cpp
     source/infrastructure/ManifestWriter.cpp
     source/infrastructure/OverlayLoader.cpp
@@ -98,6 +99,7 @@ set(HEADERS
     source/application/ChunkPlanner.h
     source/application/ExportCoordinator.h
     source/application/GenerationCoordinator.h
+    source/application/SandwormExporter.h
     source/application/GeoTerrainController.h
     source/infrastructure/RunContext.h
     source/infrastructure/ManifestWriter.h
