@@ -22,6 +22,41 @@
 #include <QUrl>
 #include <QUrlQuery>
 
+namespace
+{
+constexpr int kStreetMode = 0;
+constexpr int kSatelliteMode = 1;
+
+QString mapStyleName(int mode, bool use_fallback)
+{
+    if (mode == kSatelliteMode)
+        return use_fallback ? "Satellite (USGS fallback)" : "Satellite";
+    return "Street";
+}
+
+QString mapStyleUrl(int mode, bool use_fallback)
+{
+    if (mode == kSatelliteMode)
+    {
+        return use_fallback
+            ? "https://basemap.nationalmap.gov/ArcGIS/rest/services/USGSImageryOnly/MapServer/tile/{z}/{y}/{x}"
+            : "https://services.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}";
+    }
+    return "https://tile.openstreetmap.org/{z}/{x}/{y}.png";
+}
+
+QString mapStatusText(int mode, bool use_fallback)
+{
+    if (mode == kSatelliteMode)
+    {
+        return use_fallback
+            ? "Satellite preview active (fallback source)"
+            : "Satellite preview active";
+    }
+    return "Street preview active";
+}
+}
+
 GeoTerrainController::GeoTerrainController(GeoTerrainPanel* panel, QObject* parent)
     : QObject(parent)
     , panel_(panel)
@@ -38,13 +73,10 @@ GeoTerrainController::GeoTerrainController(GeoTerrainPanel* panel, QObject* pare
     connect(map, &MapSelectionSection::searchRequested, this, &GeoTerrainController::onSearchPlace);
     connect(map, &MapSelectionSection::focusLayerRequested, this, &GeoTerrainController::onFocusLayer);
     connect(map, &MapSelectionSection::selectLayerBoundsRequested, this, &GeoTerrainController::onSelectLayerBounds);
-    connect(map, &MapSelectionSection::satelliteToggleRequested, this, [this]()
-    {
-        satellite_mode_ = !satellite_mode_;
-        panel_->mapSection()->mapPanel()->setTileUrl(satellite_mode_
-            ? "https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}"
-            : "https://tile.openstreetmap.org/{z}/{x}/{y}.png");
-    });
+    connect(map, &MapSelectionSection::mapModeChanged, this, &GeoTerrainController::onMapModeChanged);
+    connect(map->mapPanel(), &MapPanel::logMessage, panel_, &GeoTerrainPanel::appendLog);
+    connect(map->mapPanel(), &MapPanel::tileSourceProblem,
+            this, &GeoTerrainController::onMapTileSourceProblem);
 
     connect(source, &SourceSettingsSection::vectorPathSelected, this, &GeoTerrainController::onVectorPathSelected);
     connect(source, &SourceSettingsSection::vectorLayerIndexChanged, this, &GeoTerrainController::onVectorLayerChanged);
@@ -58,8 +90,7 @@ GeoTerrainController::GeoTerrainController(GeoTerrainPanel* panel, QObject* pare
     connect(generation_, &GenerationCoordinator::progressChanged, this, &GeoTerrainController::onProgress);
     connect(generation_, &GenerationCoordinator::finished, this, &GeoTerrainController::onFinished);
 
-    panel_->mapSection()->mapPanel()->setTileUrl(
-        "https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}");
+    applyMapMode(kSatelliteMode, false);
 }
 
 GenerationRequest GeoTerrainController::buildRequest() const
@@ -275,6 +306,35 @@ void GeoTerrainController::onSelectLayerBounds()
     updateBoundsLabel();
 }
 
+void GeoTerrainController::onMapModeChanged(int mode)
+{
+    applyMapMode(mode, false);
+}
+
+void GeoTerrainController::onMapTileSourceProblem(const QString& source_name, const QString& detail)
+{
+    if (map_mode_ == kSatelliteMode && !using_satellite_fallback_)
+    {
+        panel_->appendLog(QString("[Map] %1 preview failed, switching to the fallback satellite source.")
+            .arg(source_name));
+        applyMapMode(kSatelliteMode, true);
+        return;
+    }
+
+    if (map_mode_ == kSatelliteMode)
+    {
+        panel_->mapSection()->setMapStatus(
+            "Satellite preview is unavailable right now. Switch to Street mode or keep working with selection tools.",
+            true);
+        panel_->appendLog(QString("[Map] Satellite fallback is also having trouble: %1").arg(detail));
+        return;
+    }
+
+    panel_->mapSection()->setMapStatus(
+        QString("%1 preview is having trouble.").arg(source_name),
+        true);
+}
+
 void GeoTerrainController::onGenerate()
 {
     if (generation_->isRunning())
@@ -333,4 +393,22 @@ void GeoTerrainController::onFinished(int status, const QString& message)
     panel_->setExportEnabled(status == static_cast<int>(JobStatus::Succeeded) ||
                              status == static_cast<int>(JobStatus::PartiallySucceeded));
     panel_->setGatherEnabled(panel_->settingsSection()->chunkSizeSpin()->value() >= 1.0);
+}
+
+void GeoTerrainController::applyMapMode(int mode, bool use_fallback)
+{
+    if (mode != kSatelliteMode)
+        use_fallback = false;
+
+    map_mode_ = (mode == kStreetMode) ? kStreetMode : kSatelliteMode;
+    using_satellite_fallback_ = use_fallback;
+
+    auto* map_section = panel_->mapSection();
+    map_section->setMapMode(map_mode_);
+    map_section->mapPanel()->setTileUrl(
+        mapStyleUrl(map_mode_, using_satellite_fallback_),
+        mapStyleName(map_mode_, using_satellite_fallback_));
+    map_section->setMapStatus(
+        mapStatusText(map_mode_, using_satellite_fallback_),
+        using_satellite_fallback_);
 }

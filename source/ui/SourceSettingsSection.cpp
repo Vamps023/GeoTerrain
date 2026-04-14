@@ -84,9 +84,15 @@ SourceSettingsSection::SourceSettingsSection(QWidget* parent)
 
     auto* tms_gl = makeGroup("TMS Imagery");
     edit_tms_url_ = new QLineEdit(
-        "https://clarity.maptiles.arcgis.com/arcgis/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}",
+        "https://services.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}",
         inner);
     addRow(tms_gl, "TMS URL:", edit_tms_url_);
+    auto* tms_hint = new QLabel(
+        "Used for generated albedo output. The map preview style is controlled on the Map tab.",
+        inner);
+    tms_hint->setWordWrap(true);
+    tms_hint->setStyleSheet("color: #9aa4ad;");
+    tms_gl->addWidget(tms_hint);
 
     auto* osm_gl = makeGroup("OSM / Overpass");
     edit_overpass_url_ = new QLineEdit("https://overpass-api.de/api/interpreter", inner);

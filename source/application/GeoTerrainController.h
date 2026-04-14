@@ -3,6 +3,7 @@
 #include "../domain/GenerationTypes.h"
 
 #include <QObject>
+#include <QString>
 
 class GeoTerrainPanel;
 class GenerationCoordinator;
@@ -24,6 +25,8 @@ private slots:
     void onVectorLayerChanged(int index);
     void onFocusLayer();
     void onSelectLayerBounds();
+    void onMapModeChanged(int mode);
+    void onMapTileSourceProblem(const QString& source_name, const QString& detail);
     void onGenerate();
     void onCancel();
     void onExport();
@@ -36,6 +39,7 @@ private:
     void updateBoundsLabel();
     void centerOnLayerExtent();
     void loadLayer(int index);
+    void applyMapMode(int mode, bool use_fallback = false);
 
     GeoTerrainPanel* panel_ = nullptr;
     GenerationCoordinator* generation_ = nullptr;
@@ -43,5 +47,6 @@ private:
     GeoBounds current_bounds_;
     GeoBounds layer_extent_;
     QString vector_path_;
-    bool satellite_mode_ = true;
+    int map_mode_ = 1;
+    bool using_satellite_fallback_ = false;
 };

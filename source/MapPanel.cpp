@@ -5,29 +5,27 @@
 #endif
 #include <cmath>
 
-#include <QPainter>
-#include <QPen>
 #include <QBrush>
-#include <QMouseEvent>
-#include <QWheelEvent>
-#include <QNetworkRequest>
-#include <QUrl>
 #include <QFont>
 #include <QFontMetrics>
+#include <QImageReader>
+#include <QMouseEvent>
+#include <QNetworkRequest>
+#include <QPainter>
+#include <QPen>
+#include <QUrl>
+#include <QWheelEvent>
 
-#include <cmath>
 #include <algorithm>
 
 #ifndef M_PI
 #define M_PI 3.14159265358979323846
 #endif
 
-static constexpr double MAX_WORLD_LAT = 85.05112878;
-
-// ---------------------------------------------------------------------------
 MapPanel::MapPanel(QWidget* parent)
     : QWidget(parent)
     , tile_url_template_("https://tile.openstreetmap.org/{z}/{x}/{y}.png")
+    , tile_source_name_("Street")
     , net_manager_(new QNetworkAccessManager(this))
     , refresh_timer_(new QTimer(this))
 {
@@ -35,57 +33,81 @@ MapPanel::MapPanel(QWidget* parent)
     setMouseTracking(true);
     setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Expanding);
 
-    connect(net_manager_, &QNetworkAccessManager::finished,
-            this,         &MapPanel::onTileDownloaded);
+    connect(net_manager_, &QNetworkAccessManager::finished, this, &MapPanel::onTileDownloaded);
 
     refresh_timer_->setInterval(50);
     refresh_timer_->setSingleShot(true);
-    connect(refresh_timer_, &QTimer::timeout, this, [this]{ update(); });
+    connect(refresh_timer_, &QTimer::timeout, this, [this]() { update(); });
 
-    // Start centered on (20, 0) zoom 2
     centerOn(20.0, 0.0, 2);
 }
 
-// ---------------------------------------------------------------------------
-void MapPanel::setTileUrl(const QString& url_template)
+void MapPanel::clearPendingRequests()
+{
+    // Create a copy of pending replies to avoid modifying the map during iteration
+    QList<QNetworkReply*> replies;
+    for (auto it = pending_.begin(); it != pending_.end(); ++it)
+    {
+        if (it.value())
+            replies << it.value();
+    }
+    
+    // Clear the map first to prevent re-entry from finished signal
+    pending_.clear();
+    
+    // Abort and delete each reply (disconnect to prevent double-deletion)
+    for (QNetworkReply* reply : replies)
+    {
+        if (reply)
+        {
+            reply->disconnect();  // Disconnect all signals to prevent re-entry
+            reply->abort();
+            reply->deleteLater();
+        }
+    }
+}
+
+void MapPanel::setTileUrl(const QString& url_template, const QString& source_name)
 {
     tile_url_template_ = url_template;
+    tile_source_name_ = source_name.isEmpty() ? url_template : source_name;
     tile_cache_.clear();
-    pending_.clear();
+    clearPendingRequests();
+    tile_success_count_ = 0;
+    tile_failure_count_ = 0;
+    tile_problem_reported_ = false;
+    jpeg_error_logged_ = false;  // Reset for new tile source
+    requestVisibleTiles();
     update();
 }
 
-// ---------------------------------------------------------------------------
 void MapPanel::centerOn(double lat, double lon, int zoom)
 {
     zoom_ = std::max(0, std::min(zoom, 19));
     QPointF world = latLonToWorld(lat, lon);
-    view_origin_x_ = world.x() - width()  / 2.0;
+    view_origin_x_ = world.x() - width() / 2.0;
     view_origin_y_ = world.y() - height() / 2.0;
     tile_cache_.clear();
     requestVisibleTiles();
     update();
 }
 
-// ---------------------------------------------------------------------------
 void MapPanel::clearSelection()
 {
     has_selection_ = false;
     update();
 }
 
-// ---------------------------------------------------------------------------
 void MapPanel::setSelection(const GeoBounds& bounds)
 {
     sel_start_world_ = latLonToWorld(bounds.north, bounds.west);
-    sel_end_world_   = latLonToWorld(bounds.south, bounds.east);
-    has_selection_   = true;
-    selecting_       = false;
+    sel_end_world_ = latLonToWorld(bounds.south, bounds.east);
+    has_selection_ = true;
+    selecting_ = false;
     update();
     emit selectionChanged(bounds);
 }
 
-// ---------------------------------------------------------------------------
 void MapPanel::setOverlayLayers(const QVector<OverlayLayer>& layers)
 {
     overlay_layers_ = layers;
@@ -98,10 +120,9 @@ void MapPanel::clearOverlay()
     update();
 }
 
-// ---------------------------------------------------------------------------
 void MapPanel::setChunkGrid(const QVector<GeoBounds>& chunks)
 {
-    chunk_grid_    = chunks;
+    chunk_grid_ = chunks;
     chunk_enabled_.fill(true, chunks.size());
     update();
 }
@@ -113,41 +134,40 @@ void MapPanel::clearChunkGrid()
     update();
 }
 
-// ---------------------------------------------------------------------------
 GeoBounds MapPanel::selectedBounds() const
 {
     GeoBounds b;
     if (!has_selection_)
         return b;
 
-    double lat0, lon0, lat1, lon1;
+    double lat0 = 0.0;
+    double lon0 = 0.0;
+    double lat1 = 0.0;
+    double lon1 = 0.0;
     worldToLatLon(sel_start_world_.x(), sel_start_world_.y(), lat0, lon0);
-    worldToLatLon(sel_end_world_.x(),   sel_end_world_.y(),   lat1, lon1);
+    worldToLatLon(sel_end_world_.x(), sel_end_world_.y(), lat1, lon1);
 
-    b.west  = std::min(lon0, lon1);
-    b.east  = std::max(lon0, lon1);
+    b.west = std::min(lon0, lon1);
+    b.east = std::max(lon0, lon1);
     b.south = std::min(lat0, lat1);
     b.north = std::max(lat0, lat1);
     return b;
 }
 
-// ---------------------------------------------------------------------------
-// Coordinate helpers
-// ---------------------------------------------------------------------------
 QPointF MapPanel::latLonToWorld(double lat, double lon) const
 {
-    const double n   = std::pow(2.0, zoom_);
-    const double tx  = (lon + 180.0) / 360.0 * n;
+    const double n = std::pow(2.0, zoom_);
+    const double tx = (lon + 180.0) / 360.0 * n;
     const double lat_r = lat * M_PI / 180.0;
-    const double ty  = (1.0 - std::log(std::tan(lat_r) + 1.0 / std::cos(lat_r)) / M_PI) / 2.0 * n;
+    const double ty = (1.0 - std::log(std::tan(lat_r) + 1.0 / std::cos(lat_r)) / M_PI) / 2.0 * n;
     return QPointF(tx * TILE_SIZE, ty * TILE_SIZE);
 }
 
 void MapPanel::worldToLatLon(double wx, double wy, double& lat, double& lon) const
 {
-    const double n   = std::pow(2.0, zoom_);
-    const double tx  = wx / TILE_SIZE;
-    const double ty  = wy / TILE_SIZE;
+    const double n = std::pow(2.0, zoom_);
+    const double tx = wx / TILE_SIZE;
+    const double ty = wy / TILE_SIZE;
     lon = tx / n * 360.0 - 180.0;
     const double sinh_val = std::sinh(M_PI * (1.0 - 2.0 * ty / n));
     lat = std::atan(sinh_val) * 180.0 / M_PI;
@@ -163,20 +183,36 @@ QPointF MapPanel::widgetToWorld(const QPointF& pt) const
     return QPointF(pt.x() + view_origin_x_, pt.y() + view_origin_y_);
 }
 
-// ---------------------------------------------------------------------------
 QString MapPanel::tileKey(int z, int x, int y) const
 {
     return QString("%1/%2/%3").arg(z).arg(x).arg(y);
 }
 
-// ---------------------------------------------------------------------------
+void MapPanel::logImageFormats()
+{
+    if (image_formats_logged_)
+        return;
+    
+    image_formats_logged_ = true;
+    QList<QByteArray> formats = QImageReader::supportedImageFormats();
+    QStringList format_strings;
+    for (const QByteArray& format : formats)
+        format_strings << QString(format);
+    
+    emit logMessage(QString("[Map] Qt supports image formats: %1").arg(format_strings.join(", ")));
+    
+    // Check for JPEG specifically since ArcGIS tiles are JPEG
+    bool has_jpeg = formats.contains("jpeg") || formats.contains("jpg");
+    if (!has_jpeg)
+        emit logMessage("[Map] WARNING: JPEG support not available - satellite tiles may not decode");
+}
+
 void MapPanel::requestVisibleTiles()
 {
     const int max_tile = static_cast<int>(std::pow(2.0, zoom_)) - 1;
-
     const int tile_x0 = std::max(0, static_cast<int>(std::floor(view_origin_x_ / TILE_SIZE)));
     const int tile_y0 = std::max(0, static_cast<int>(std::floor(view_origin_y_ / TILE_SIZE)));
-    const int tile_x1 = std::min(max_tile, static_cast<int>(std::floor((view_origin_x_ + width())  / TILE_SIZE)));
+    const int tile_x1 = std::min(max_tile, static_cast<int>(std::floor((view_origin_x_ + width()) / TILE_SIZE)));
     const int tile_y1 = std::min(max_tile, static_cast<int>(std::floor((view_origin_y_ + height()) / TILE_SIZE)));
 
     for (int ty = tile_y0; ty <= tile_y1; ++ty)
@@ -192,9 +228,14 @@ void MapPanel::requestVisibleTiles()
             url.replace("{x}", QString::number(tx));
             url.replace("{y}", QString::number(ty));
 
-            QNetworkRequest req;
-            req.setUrl(QUrl(url));
+            const QUrl request_url(url);
+            QNetworkRequest req(request_url);
             req.setRawHeader("User-Agent", "GeoTerrainEditorPlugin/1.0");
+            req.setRawHeader("Accept", "image/*,*/*;q=0.8");
+            if (request_url.host().contains("arcgisonline.com"))
+                req.setRawHeader("Referer", "https://www.arcgis.com/");
+            else if (request_url.host().contains("nationalmap.gov"))
+                req.setRawHeader("Referer", "https://www.usgs.gov/");
             req.setAttribute(QNetworkRequest::User, key);
 
             QNetworkReply* reply = net_manager_->get(req);
@@ -203,40 +244,121 @@ void MapPanel::requestVisibleTiles()
     }
 }
 
-// ---------------------------------------------------------------------------
 void MapPanel::onTileDownloaded(QNetworkReply* reply)
 {
+    // Defensive null check
+    if (!reply)
+        return;
+    
+    // Get the key before removing from pending map
     const QString key = reply->request().attribute(QNetworkRequest::User).toString();
     pending_.remove(key);
 
     if (reply->error() == QNetworkReply::NoError)
     {
+        QByteArray data = reply->readAll();
         QPixmap pix;
-        if (pix.loadFromData(reply->readAll()))
+        
+        // Log image formats on first successful download attempt
+        logImageFormats();
+        
+        if (pix.loadFromData(data))
         {
             tile_cache_[key] = pix;
+            ++tile_success_count_;
             if (!refresh_timer_->isActive())
                 refresh_timer_->start();
         }
+        else
+        {
+            ++tile_failure_count_;
+            
+            // Try to determine the image format from the URL
+            QString expected_format = "PNG";
+            if (tile_url_template_.contains("arcgisonline.com") || 
+                tile_url_template_.contains("nationalmap.gov"))
+                expected_format = "JPEG";
+            
+            // Check if JPEG plugin is available for JPEG tiles
+            if (expected_format == "JPEG")
+            {
+                QList<QByteArray> formats = QImageReader::supportedImageFormats();
+                bool has_jpeg = formats.contains("jpeg") || formats.contains("jpg");
+                if (!has_jpeg && !jpeg_error_logged_)
+                {
+                    jpeg_error_logged_ = true;
+                    emit logMessage(QString("[Map] ERROR: Cannot decode %1 tiles - Qt JPEG plugin missing")
+                        .arg(expected_format));
+                    emit logMessage("[Map] SOLUTION: Install Qt JPEG plugin (qjpeg.dll) or use PNG tile sources");
+                }
+                else if (!has_jpeg)
+                {
+                    // JPEG error already logged, don't spam
+                }
+                else if (!jpeg_error_logged_)
+                {
+                    jpeg_error_logged_ = true;
+                    emit logMessage(QString("[Map] ERROR: Failed to decode %1 tile despite JPEG support")
+                        .arg(expected_format));
+                }
+            }
+            else
+            {
+                emit logMessage(QString("[Map] ERROR: Failed to decode %1 tile").arg(expected_format));
+            }
+        }
     }
+    else
+    {
+        ++tile_failure_count_;
+        emit logMessage(QString("[Map] Network error for tile: %1").arg(reply->errorString()));
+    }
+
+    if (!tile_problem_reported_ && tile_success_count_ == 0 && tile_failure_count_ >= 6)
+    {
+        tile_problem_reported_ = true;
+        QString detail;
+        if (reply->error() != QNetworkReply::NoError)
+        {
+            detail = reply->errorString();
+        }
+        else
+        {
+            // Check if it's likely a JPEG plugin issue
+            if (tile_url_template_.contains("arcgisonline.com") || 
+                tile_url_template_.contains("nationalmap.gov"))
+            {
+                QList<QByteArray> formats = QImageReader::supportedImageFormats();
+                bool has_jpeg = formats.contains("jpeg") || formats.contains("jpg");
+                if (!has_jpeg)
+                    detail = "JPEG plugin missing - install Qt JPEG plugin";
+                else
+                    detail = "Tiles downloaded but could not be decoded";
+            }
+            else
+            {
+                detail = "Tiles downloaded but could not be decoded";
+            }
+        }
+        
+        emit logMessage(QString("[Map] %1 preview is having trouble: %2").arg(tile_source_name_, detail));
+        emit tileSourceProblem(tile_source_name_, detail);
+    }
+
     reply->deleteLater();
 }
 
-// ---------------------------------------------------------------------------
 void MapPanel::paintEvent(QPaintEvent*)
 {
     QPainter p(this);
     p.setRenderHint(QPainter::SmoothPixmapTransform, true);
-
-    // --- Background ---
     p.fillRect(rect(), QColor(30, 30, 30));
 
-    // --- Tiles ---
     const int max_tile = static_cast<int>(std::pow(2.0, zoom_)) - 1;
-    const int tile_x0  = static_cast<int>(std::floor(view_origin_x_ / TILE_SIZE));
-    const int tile_y0  = static_cast<int>(std::floor(view_origin_y_ / TILE_SIZE));
-    const int tile_x1  = static_cast<int>(std::floor((view_origin_x_ + width())  / TILE_SIZE));
-    const int tile_y1  = static_cast<int>(std::floor((view_origin_y_ + height()) / TILE_SIZE));
+    const int tile_x0 = static_cast<int>(std::floor(view_origin_x_ / TILE_SIZE));
+    const int tile_y0 = static_cast<int>(std::floor(view_origin_y_ / TILE_SIZE));
+    const int tile_x1 = static_cast<int>(std::floor((view_origin_x_ + width()) / TILE_SIZE));
+    const int tile_y1 = static_cast<int>(std::floor((view_origin_y_ + height()) / TILE_SIZE));
 
     for (int ty = tile_y0; ty <= tile_y1; ++ty)
     {
@@ -265,29 +387,23 @@ void MapPanel::paintEvent(QPaintEvent*)
         }
     }
 
-    // --- Selection rectangle ---
     if ((selecting_ || has_selection_) && sel_start_world_ != sel_end_world_)
     {
         const QPointF w0 = worldToWidget(sel_start_world_.x(), sel_start_world_.y());
-        const QPointF w1 = worldToWidget(sel_end_world_.x(),   sel_end_world_.y());
-
+        const QPointF w1 = worldToWidget(sel_end_world_.x(), sel_end_world_.y());
         const QRectF sel_rect = QRectF(w0, w1).normalized();
 
-        // Semi-transparent fill
         p.setBrush(QColor(0, 120, 215, 50));
         p.setPen(QPen(QColor(0, 180, 255), 2, Qt::SolidLine));
         p.drawRect(sel_rect);
 
-        // Corner handles
         p.setBrush(QColor(0, 180, 255));
         p.setPen(Qt::NoPen);
         const int hsize = 6;
-        for (const QPointF& corner : { sel_rect.topLeft(), sel_rect.topRight(),
-                                        sel_rect.bottomLeft(), sel_rect.bottomRight() })
+        for (const QPointF& corner : { sel_rect.topLeft(), sel_rect.topRight(), sel_rect.bottomLeft(), sel_rect.bottomRight() })
             p.drawEllipse(corner, hsize, hsize);
     }
 
-    // --- Chunk grid overlay ---
     if (!chunk_grid_.isEmpty())
     {
         p.setRenderHint(QPainter::Antialiasing, false);
@@ -299,13 +415,13 @@ void MapPanel::paintEvent(QPaintEvent*)
         for (int i = 0; i < chunk_grid_.size(); ++i)
         {
             const GeoBounds& cb = chunk_grid_[i];
-            const bool enabled  = i < chunk_enabled_.size() && chunk_enabled_[i];
+            const bool enabled = i < chunk_enabled_.size() && chunk_enabled_[i];
 
             const QPointF worldNW = latLonToWorld(cb.north, cb.west);
             const QPointF worldSE = latLonToWorld(cb.south, cb.east);
             const QPointF wNW = worldToWidget(worldNW.x(), worldNW.y());
             const QPointF wSE = worldToWidget(worldSE.x(), worldSE.y());
-            const QRectF  cr  = QRectF(wNW, wSE).normalized();
+            const QRectF cr = QRectF(wNW, wSE).normalized();
 
             if (enabled)
             {
@@ -319,14 +435,10 @@ void MapPanel::paintEvent(QPaintEvent*)
             }
             p.drawRect(cr);
 
-            // Chunk number label
-            const QString lbl = enabled
-                ? QString("C%1").arg(i + 1)
-                : QString("C%1\nSKIP").arg(i + 1);
+            const QString lbl = enabled ? QString("C%1").arg(i + 1) : QString("C%1\nSKIP").arg(i + 1);
             p.setPen(enabled ? QColor(120, 255, 140) : QColor(255, 100, 100));
             p.drawText(cr, Qt::AlignCenter, lbl);
 
-            // Cross-out for disabled
             if (!enabled)
             {
                 p.setPen(QPen(QColor(255, 60, 60, 160), 1));
@@ -335,33 +447,31 @@ void MapPanel::paintEvent(QPaintEvent*)
             }
         }
 
-        // Legend hint
         p.setFont(QFont());
-        p.setBrush(QColor(0,0,0,140));
+        p.setBrush(QColor(0, 0, 0, 140));
         p.setPen(Qt::NoPen);
         const QString hint = "Click chunk to skip/include";
         QFontMetrics hfm(p.font());
         QRect hrect(6, height() - hfm.height() - 14, hfm.horizontalAdvance(hint) + 12, hfm.height() + 8);
         p.drawRoundedRect(hrect, 3, 3);
-        p.setPen(QColor(200,200,200));
+        p.setPen(QColor(200, 200, 200));
         p.drawText(hrect, Qt::AlignCenter, hint);
     }
 
-    // --- Coordinates overlay ---
     if (has_selection_)
     {
         const GeoBounds b = selectedBounds();
         const QString info = QString("N:%1  S:%2  W:%3  E:%4")
             .arg(b.north, 0, 'f', 5).arg(b.south, 0, 'f', 5)
-            .arg(b.west,  0, 'f', 5).arg(b.east,  0, 'f', 5);
+            .arg(b.west, 0, 'f', 5).arg(b.east, 0, 'f', 5);
 
         QFont font = p.font();
         font.setPointSize(9);
         p.setFont(font);
         const QFontMetrics fm(font);
-        const int pad  = 6;
-        const int tw   = fm.horizontalAdvance(info) + pad * 2;
-        const int th   = fm.height() + pad * 2;
+        const int pad = 6;
+        const int tw = fm.horizontalAdvance(info) + pad * 2;
+        const int th = fm.height() + pad * 2;
         const QRect info_rect(6, 6, tw, th);
 
         p.setBrush(QColor(0, 0, 0, 160));
@@ -371,7 +481,6 @@ void MapPanel::paintEvent(QPaintEvent*)
         p.drawText(info_rect, Qt::AlignCenter, info);
     }
 
-    // --- Zoom level indicator ---
     {
         const QString zoom_str = QString("Zoom: %1").arg(zoom_);
         QFont font = p.font();
@@ -388,7 +497,6 @@ void MapPanel::paintEvent(QPaintEvent*)
         p.drawText(zoom_rect, Qt::AlignCenter, zoom_str);
     }
 
-    // --- Vector overlay layers ---
     if (!overlay_layers_.isEmpty())
     {
         p.setRenderHint(QPainter::Antialiasing, true);
@@ -400,12 +508,13 @@ void MapPanel::paintEvent(QPaintEvent*)
             p.setBrush(Qt::NoBrush);
             for (const OverlayRing& ring : layer.rings)
             {
-                if (ring.points.size() < 2) continue;
+                if (ring.points.size() < 2)
+                    continue;
                 QPolygonF poly;
                 poly.reserve(ring.points.size());
                 for (const QPointF& ll : ring.points)
                 {
-                    const QPointF w = latLonToWorld(ll.y(), ll.x()); // y=lat x=lon
+                    const QPointF w = latLonToWorld(ll.y(), ll.x());
                     poly << worldToWidget(w.x(), w.y());
                 }
                 if (ring.closed)
@@ -416,7 +525,6 @@ void MapPanel::paintEvent(QPaintEvent*)
         }
     }
 
-    // --- Instructions ---
     if (!has_selection_)
     {
         p.setPen(QColor(180, 180, 180, 180));
@@ -431,10 +539,8 @@ void MapPanel::paintEvent(QPaintEvent*)
     requestVisibleTiles();
 }
 
-// ---------------------------------------------------------------------------
 void MapPanel::mousePressEvent(QMouseEvent* event)
 {
-    // Check chunk grid toggle first (plain left-click, no shift, no right)
     if (event->button() == Qt::LeftButton &&
         !(event->modifiers() & Qt::ShiftModifier) &&
         !chunk_grid_.isEmpty())
@@ -442,20 +548,19 @@ void MapPanel::mousePressEvent(QMouseEvent* event)
         const QPointF pos = event->pos();
         for (int i = 0; i < chunk_grid_.size(); ++i)
         {
-            const GeoBounds& cb   = chunk_grid_[i];
+            const GeoBounds& cb = chunk_grid_[i];
             const QPointF worldNW = latLonToWorld(cb.north, cb.west);
             const QPointF worldSE = latLonToWorld(cb.south, cb.east);
-            const QPointF wNW     = worldToWidget(worldNW.x(), worldNW.y());
-            const QPointF wSE     = worldToWidget(worldSE.x(), worldSE.y());
-            const QRectF  cr      = QRectF(wNW, wSE).normalized();
+            const QPointF wNW = worldToWidget(worldNW.x(), worldNW.y());
+            const QPointF wSE = worldToWidget(worldSE.x(), worldSE.y());
+            const QRectF cr = QRectF(wNW, wSE).normalized();
 
             if (cr.contains(pos))
             {
                 chunk_enabled_[i] = !chunk_enabled_[i];
-                emit chunkToggled(i, chunk_enabled_[i]);
                 update();
                 event->accept();
-                return;  // don't start pan
+                return;
             }
         }
     }
@@ -463,18 +568,18 @@ void MapPanel::mousePressEvent(QMouseEvent* event)
     if (event->button() == Qt::RightButton ||
         (event->button() == Qt::LeftButton && !(event->modifiers() & Qt::ShiftModifier)))
     {
-        panning_         = true;
-        pan_start_widget_   = event->pos();
+        panning_ = true;
+        pan_start_widget_ = event->pos();
         pan_start_origin_x_ = view_origin_x_;
         pan_start_origin_y_ = view_origin_y_;
         setCursor(Qt::ClosedHandCursor);
     }
     else if (event->button() == Qt::LeftButton && (event->modifiers() & Qt::ShiftModifier))
     {
-        selecting_       = true;
-        has_selection_   = false;
+        selecting_ = true;
+        has_selection_ = false;
         sel_start_world_ = widgetToWorld(event->pos());
-        sel_end_world_   = sel_start_world_;
+        sel_end_world_ = sel_start_world_;
         setCursor(Qt::CrossCursor);
     }
     event->accept();
@@ -507,7 +612,7 @@ void MapPanel::mouseReleaseEvent(QMouseEvent* event)
     }
     else if (selecting_)
     {
-        selecting_     = false;
+        selecting_ = false;
         sel_end_world_ = widgetToWorld(event->pos());
 
         const QPointF delta = sel_end_world_ - sel_start_world_;
@@ -525,12 +630,12 @@ void MapPanel::mouseReleaseEvent(QMouseEvent* event)
 void MapPanel::wheelEvent(QWheelEvent* event)
 {
     const int degrees = event->angleDelta().y() / 8;
-    const int steps   = degrees / 15;
+    const int steps = degrees / 15;
 
-    // Widget position under cursor — keep it fixed during zoom
     const QPointF cursor_widget = event->pos();
-    QPointF cursor_world        = widgetToWorld(cursor_widget);
-    double  lat_at_cursor, lon_at_cursor;
+    QPointF cursor_world = widgetToWorld(cursor_widget);
+    double lat_at_cursor = 0.0;
+    double lon_at_cursor = 0.0;
     worldToLatLon(cursor_world.x(), cursor_world.y(), lat_at_cursor, lon_at_cursor);
 
     const int new_zoom = std::max(0, std::min(19, zoom_ + steps));
@@ -542,9 +647,8 @@ void MapPanel::wheelEvent(QWheelEvent* event)
 
     zoom_ = new_zoom;
     tile_cache_.clear();
-    pending_.clear();
+    clearPendingRequests();
 
-    // Reposition so the cursor lat/lon stays under the mouse
     const QPointF new_world = latLonToWorld(lat_at_cursor, lon_at_cursor);
     view_origin_x_ = new_world.x() - cursor_widget.x();
     view_origin_y_ = new_world.y() - cursor_widget.y();

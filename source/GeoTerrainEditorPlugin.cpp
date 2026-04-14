@@ -6,6 +6,7 @@
 #include <QtWidgets/QApplication>
 #include <QtWidgets/QMainWindow>
 #include <QtWidgets/QMenuBar>
+#include <QCoreApplication>
 
 #include <UnigineLog.h>
 
@@ -18,6 +19,12 @@ bool GeoTerrainEditorPlugin::init()
 {
     try
     {
+        // Add Qt plugin paths to ensure image format plugins (JPEG, etc.) are found
+        // This is critical for satellite tile decoding
+        QCoreApplication::addLibraryPath("C:/Qt/Qt5.12.3/5.12.3/msvc2017_64/plugins");
+        QCoreApplication::addLibraryPath(QCoreApplication::applicationDirPath() + "/../plugins");
+        QCoreApplication::addLibraryPath(QCoreApplication::applicationDirPath() + "/plugins");
+        
         geo_terrain_panel_ = std::make_unique<GeoTerrainPanel>();
 
         setupMenu();

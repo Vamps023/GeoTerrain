@@ -13,10 +13,10 @@ RunConsoleSection::RunConsoleSection(QWidget* parent)
     layout->setContentsMargins(10, 10, 10, 10);
     layout->setSpacing(8);
 
-    auto* summary_grp = new QGroupBox("Pipeline Summary", this);
+    auto* summary_grp = new QGroupBox("Quick Workflow", this);
     auto* summary_layout = new QVBoxLayout(summary_grp);
     auto* summary_lbl = new QLabel(
-        "1. Fetch DEM\n2. Download TMS tiles\n3. Fetch OSM data\n4. Export vectors\n5. Generate masks\n6. Write metadata/manifest",
+        "1. Pick an area on the map\n2. Review sources and output settings\n3. Generate terrain assets\n4. Export for UNIGINE if needed",
         this);
     summary_lbl->setWordWrap(true);
     summary_layout->addWidget(summary_lbl);
@@ -24,16 +24,21 @@ RunConsoleSection::RunConsoleSection(QWidget* parent)
 
     auto* export_grp = new QGroupBox("Export", this);
     auto* export_layout = new QVBoxLayout(export_grp);
-    btn_export_ = new QPushButton("Export for Unigine (via QGIS GDAL)", this);
+    auto* export_hint = new QLabel("Export tools unlock after a successful generation run.", this);
+    export_hint->setWordWrap(true);
+    export_hint->setStyleSheet("color: #9aa4ad;");
+    export_layout->addWidget(export_hint);
+
+    btn_export_ = new QPushButton("Export for UNIGINE", this);
     btn_export_->setEnabled(false);
     export_layout->addWidget(btn_export_);
-    btn_gather_ = new QPushButton("Gather All Chunks into One Folder", this);
+    btn_gather_ = new QPushButton("Gather Chunk Exports", this);
     btn_gather_->setEnabled(false);
     export_layout->addWidget(btn_gather_);
     layout->addWidget(export_grp);
 
     auto* button_row = new QHBoxLayout();
-    btn_generate_ = new QPushButton("Generate Terrain", this);
+    btn_generate_ = new QPushButton("Generate Assets", this);
     button_row->addWidget(btn_generate_);
     btn_cancel_ = new QPushButton("Cancel", this);
     btn_cancel_->setEnabled(false);
@@ -48,7 +53,7 @@ RunConsoleSection::RunConsoleSection(QWidget* parent)
     layout->addWidget(log_label);
     log_text_ = new QTextEdit(this);
     log_text_->setReadOnly(true);
-    log_text_->setPlainText("Ready. Select area on Map tab, configure sources, then click Generate.\n");
+    log_text_->setPlainText("Ready. Select an area on the map, then click Generate Assets.\n");
     layout->addWidget(log_text_, 1);
 
     connect(btn_generate_, &QPushButton::clicked, this, &RunConsoleSection::generateRequested);
