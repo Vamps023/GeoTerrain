@@ -3,6 +3,7 @@
 #include "Widgets/SCompoundWidget.h"
 #include "Widgets/Input/SEditableTextBox.h"
 #include "Widgets/Input/SSpinBox.h"
+#include "Widgets/Input/SComboBox.h"
 #include "Widgets/Text/STextBlock.h"
 #include "Widgets/Layout/SScrollBox.h"
 #include "Widgets/Notifications/SProgressBar.h"
@@ -62,6 +63,11 @@ private:
     TSharedPtr<STextBlock>       ConsoleText;
     TSharedPtr<SScrollBox>       ConsoleScroll;
     TSharedPtr<SProgressBar>     ProgressBar;
+
+    // DEM source selector
+    TArray<TSharedPtr<FString>>                DemSourceOptions;
+    TSharedPtr<FString>                        SelectedDemSource;
+    TSharedPtr<SComboBox<TSharedPtr<FString>>> DemSourceCombo;
 
     // Inline map picker (pure Slate, no CEF)
     TSharedPtr<SBox>             WorldMapBox;

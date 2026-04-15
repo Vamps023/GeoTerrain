@@ -1,6 +1,7 @@
 #include "UI/SGeoTerrainPanel.h"
 #include "GeoLandscapeImporter.h"
 
+#include "Misc/Paths.h"
 #include "Widgets/Input/SEditableTextBox.h"
 #include "Widgets/Input/SButton.h"
 #include "Widgets/Input/SSpinBox.h"
@@ -12,6 +13,15 @@
 
 void SGeoTerrainPanel::Construct(const FArguments& InArgs)
 {
+    // DEM source options
+    DemSourceOptions.Add(MakeShared<FString>(TEXT("SRTM 30m")));
+    DemSourceOptions.Add(MakeShared<FString>(TEXT("SRTM 90m")));
+    DemSourceOptions.Add(MakeShared<FString>(TEXT("AW3D 30m")));
+    DemSourceOptions.Add(MakeShared<FString>(TEXT("Copernicus 30m")));
+    DemSourceOptions.Add(MakeShared<FString>(TEXT("NASADEM")));
+    DemSourceOptions.Add(MakeShared<FString>(TEXT("3DEP 10m")));
+    SelectedDemSource = DemSourceOptions[0];
+
     Coordinator = MakeShared<FGeoGenerationCoordinator>();
     Coordinator->OnLogMessage.AddSP(this, &SGeoTerrainPanel::OnLog);
     Coordinator->OnProgress.AddSP(this, &SGeoTerrainPanel::OnProgress);
@@ -115,6 +125,26 @@ TSharedRef<SWidget> SGeoTerrainPanel::BuildSourceSection()
             [
                 SNew(SHorizontalBox)
                 + SHorizontalBox::Slot().AutoWidth().VAlign(VAlign_Center)
+                [ SNew(STextBlock).Text(FText::FromString("DEM Source:")).MinDesiredWidth(160) ]
+                + SHorizontalBox::Slot().FillWidth(1)
+                [
+                    SAssignNew(DemSourceCombo, SComboBox<TSharedPtr<FString>>)
+                    .OptionsSource(&DemSourceOptions)
+                    .OnSelectionChanged_Lambda([this](TSharedPtr<FString> New, ESelectInfo::Type){ SelectedDemSource = New; })
+                    .OnGenerateWidget_Lambda([](TSharedPtr<FString> Item){
+                        return SNew(STextBlock).Text(FText::FromString(*Item));
+                    })
+                    [
+                        SNew(STextBlock).Text_Lambda([this]{
+                            return FText::FromString(SelectedDemSource.IsValid() ? **SelectedDemSource : TEXT(""));
+                        })
+                    ]
+                ]
+            ]
+            + SVerticalBox::Slot().AutoHeight().Padding(0,2)
+            [
+                SNew(SHorizontalBox)
+                + SHorizontalBox::Slot().AutoWidth().VAlign(VAlign_Center)
                 [ SNew(STextBlock).Text(FText::FromString("OpenTopography API Key:")).MinDesiredWidth(160) ]
                 + SHorizontalBox::Slot().FillWidth(1)
                 [ SAssignNew(ApiKeyEdit, SEditableTextBox).HintText(FText::FromString("paste key here")) ]
@@ -157,7 +187,8 @@ TSharedRef<SWidget> SGeoTerrainPanel::BuildOutputSection()
                 + SHorizontalBox::Slot().AutoWidth().VAlign(VAlign_Center)
                 [ SNew(STextBlock).Text(FText::FromString("Output Directory:")).MinDesiredWidth(120) ]
                 + SHorizontalBox::Slot().FillWidth(1)
-                [ SAssignNew(OutputDirEdit, SEditableTextBox).HintText(FText::FromString("C:/GeoTerrainExport")) ]
+                [ SAssignNew(OutputDirEdit, SEditableTextBox)
+                  .Text(FText::FromString(FPaths::ConvertRelativePathToFull(FPaths::ProjectSavedDir() / TEXT("GeoTerrainExport")))) ]
             ]
         ];
 }
@@ -223,7 +254,18 @@ TSharedRef<SWidget> SGeoTerrainPanel::BuildConsoleSection()
 
 FReply SGeoTerrainPanel::OnExportClicked()
 {
-    Coordinator->Run(BuildRequest());
+    FGeoGenerationRequest Req = BuildRequest();
+    if (!Req.Bounds.IsValid())
+    {
+        OnLog(TEXT("[Error] Invalid bounds. East must be > West, North must be > South."), true);
+        return FReply::Handled();
+    }
+    if (Req.Output.OutputDir.IsEmpty())
+    {
+        OnLog(TEXT("[Error] Output directory not set."), true);
+        return FReply::Handled();
+    }
+    Coordinator->Run(Req);
     return FReply::Handled();
 }
 
@@ -261,6 +303,12 @@ FReply SGeoTerrainPanel::OnImportLandscapeClicked()
     Params.HeightmapR16Path = LastHeightmapR16;
     Params.AlbedoTifPath    = LastAlbedoTif;
 
+    // Pass current bounds for geo-scale calculation
+    Params.Bounds.West  = FCString::Atod(*WestEdit->GetText().ToString());
+    Params.Bounds.South = FCString::Atod(*SouthEdit->GetText().ToString());
+    Params.Bounds.East  = FCString::Atod(*EastEdit->GetText().ToString());
+    Params.Bounds.North = FCString::Atod(*NorthEdit->GetText().ToString());
+
     auto Result = Importer.Import(Params);
     if (!Result.bSuccess)
         OnLog(FString::Printf(TEXT("[Import] FAILED: %s"), *Result.Message), true);
@@ -270,7 +318,15 @@ FReply SGeoTerrainPanel::OnImportLandscapeClicked()
     return FReply::Handled();
 }
 
-bool SGeoTerrainPanel::CanExport()  const { return !Coordinator->IsRunning(); }
+bool SGeoTerrainPanel::CanExport()  const
+{
+    if (Coordinator->IsRunning()) return false;
+    double W = FCString::Atod(*WestEdit->GetText().ToString());
+    double S = FCString::Atod(*SouthEdit->GetText().ToString());
+    double E = FCString::Atod(*EastEdit->GetText().ToString());
+    double N = FCString::Atod(*NorthEdit->GetText().ToString());
+    return E > W && N > S;
+}
 bool SGeoTerrainPanel::CanCancel()  const { return  Coordinator->IsRunning(); }
 bool SGeoTerrainPanel::CanImport()  const { return !LastHeightmapR16.IsEmpty() && !Coordinator->IsRunning(); }
 
@@ -293,6 +349,13 @@ void SGeoTerrainPanel::OnFinished(EGeoJobStatus Status, const FString& Msg)
     Progress = (Status == EGeoJobStatus::Succeeded || Status == EGeoJobStatus::PartiallySucceeded)
                ? 1.0f : 0.0f;
     OnLog(Msg, Status == EGeoJobStatus::Failed);
+
+    // Populate artifact paths so Import Landscape becomes available
+    if (Status == EGeoJobStatus::Succeeded || Status == EGeoJobStatus::PartiallySucceeded)
+    {
+        LastHeightmapR16 = Coordinator->LastDemR16Path;
+        LastAlbedoTif    = Coordinator->LastAlbedoPath;
+    }
 }
 
 FGeoGenerationRequest SGeoTerrainPanel::BuildRequest()
@@ -303,7 +366,22 @@ FGeoGenerationRequest SGeoTerrainPanel::BuildRequest()
     Req.Bounds.East  = FCString::Atod(*EastEdit->GetText().ToString());
     Req.Bounds.North = FCString::Atod(*NorthEdit->GetText().ToString());
 
+    // DEM source
+    static const TMap<FString, EGeoTerrainDemSource> kSourceMap = {
+        { TEXT("SRTM 30m"),       EGeoTerrainDemSource::OpenTopography_SRTM30m },
+        { TEXT("SRTM 90m"),       EGeoTerrainDemSource::OpenTopography_SRTM90m },
+        { TEXT("AW3D 30m"),       EGeoTerrainDemSource::OpenTopography_AW3D30 },
+        { TEXT("Copernicus 30m"), EGeoTerrainDemSource::OpenTopography_COP30 },
+        { TEXT("NASADEM"),        EGeoTerrainDemSource::OpenTopography_NASADEM },
+        { TEXT("3DEP 10m"),       EGeoTerrainDemSource::OpenTopography_3DEP10m },
+    };
+    if (SelectedDemSource.IsValid())
+    {
+        if (const EGeoTerrainDemSource* Found = kSourceMap.Find(**SelectedDemSource))
+            Req.Sources.Dem.Source = *Found;
+    }
     Req.Sources.Dem.ApiKey        = ApiKeyEdit->GetText().ToString();
+
     Req.Sources.Tiles.UrlTemplate = TileUrlEdit->GetText().ToString();
     Req.Sources.Tiles.ZoomLevel   = ZoomSpin->GetValue();
 
