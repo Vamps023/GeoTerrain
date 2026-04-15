@@ -4,11 +4,25 @@
 #include "Widgets/Docking/SDockTab.h"
 #include "ToolMenus.h"
 #include "LevelEditor.h"
+#include "Misc/Paths.h"
+#include "HAL/PlatformMisc.h"
+
+#include <gdal_priv.h>
+#include <cpl_conv.h>
 
 static const FName GeoTerrainTabName("GeoTerrain");
 
 void FGeoTerrainModule::StartupModule()
 {
+    // Point GDAL/PROJ at data bundled alongside the plugin DLL
+    const FString BinDir = FPaths::ConvertRelativePathToFull(
+        FPaths::ProjectPluginsDir() / TEXT("GeoTerrain/Binaries/Win64"));
+    const FString GdalData = BinDir / TEXT("gdal-data");
+    const FString ProjData = BinDir / TEXT("proj-data");
+    CPLSetConfigOption("GDAL_DATA",  TCHAR_TO_UTF8(*GdalData));
+    CPLSetConfigOption("PROJ_DATA",  TCHAR_TO_UTF8(*ProjData));
+    GDALAllRegister();
+
     UToolMenus::RegisterStartupCallback(
         FSimpleMulticastDelegate::FDelegate::CreateRaw(this, &FGeoTerrainModule::RegisterMenus));
 
