@@ -39,6 +39,12 @@ public:
                               const Config&    config,
                               RunContext&      context);
 
+    // Converts a Float32 GeoTIFF heightmap to Unreal 16-bit RAW (.r16)
+    // Normalises elevation range to full 0–65535 range.
+    Result<std::string> exportUnrealRaw(const std::string& tif_path,
+                                        const std::string& raw_path,
+                                        RunContext&        context);
+
 private:
     Result<DemArtifact> fetchFromOpenTopography(const GeoBounds& bounds,
                                                 const Config&    config,

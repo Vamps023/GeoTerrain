@@ -148,6 +148,18 @@ public slots:
             manifest.dem_path = dem_result.value.output_path;
             manifest.generated_files.push_back(dem_result.value.output_path);
 
+            // Also export Unreal-compatible 16-bit RAW alongside the GeoTIFF
+            const std::string raw_path = (output_dir + "/heightmap.r16").toStdString();
+            DEMFetcher raw_exporter;
+            auto raw_result = raw_exporter.exportUnrealRaw(dem_result.value.output_path, raw_path, context);
+            if (raw_result.success)
+            {
+                manifest.generated_files.push_back(raw_result.value);
+                emit logMessage("[Export] Unreal RAW: " + QString::fromStdString(raw_result.value));
+            }
+            else
+                emit logMessage("[WARN] RAW export skipped: " + QString::fromStdString(raw_result.message));
+
             OSMParser osm_parser;
             auto osm_result = osm_parser.fetch(chunk.bounds, osm_cfg, context);
             if (!osm_result.success)

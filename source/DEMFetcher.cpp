@@ -289,3 +289,132 @@ Result<DemArtifact> DEMFetcher::convertToHeightmapTiff(const std::string& src_pa
     artifact.output_path = dst_path;
     return Result<DemArtifact>::ok(artifact);
 }
+
+// ---------------------------------------------------------------------------
+// Returns nearest valid Unreal Engine landscape dimension.
+// Valid sizes: (n * ComponentSize) + 1  where ComponentSize = 2^k * 7 (k=0..5)
+// Common valid widths/heights: 127,253,505,1009,2017,4033,8129
+static int nearestUnrealSize(int n)
+{
+    // Full list of valid Unreal landscape square dimensions
+    static const int kValid[] = {
+        127, 253, 505, 1009, 2017, 4033, 8129
+    };
+    int best = kValid[0];
+    int bestDiff = std::abs(n - best);
+    for (int v : kValid)
+    {
+        int diff = std::abs(n - v);
+        if (diff < bestDiff) { bestDiff = diff; best = v; }
+    }
+    return best;
+}
+
+// Bilinear resample float buffer from (sw x sh) -> (dw x dh)
+static std::vector<float> resampleBilinear(const std::vector<float>& src,
+                                            int sw, int sh, int dw, int dh)
+{
+    std::vector<float> dst(static_cast<size_t>(dw) * dh);
+    const float sx = static_cast<float>(sw) / dw;
+    const float sy = static_cast<float>(sh) / dh;
+    for (int dy = 0; dy < dh; ++dy)
+    {
+        float fy = (dy + 0.5f) * sy - 0.5f;
+        int y0 = static_cast<int>(fy); if (y0 < 0) y0 = 0;
+        int y1 = y0 + 1;               if (y1 >= sh) y1 = sh - 1;
+        float ty = fy - y0;
+        for (int dx = 0; dx < dw; ++dx)
+        {
+            float fx = (dx + 0.5f) * sx - 0.5f;
+            int x0 = static_cast<int>(fx); if (x0 < 0) x0 = 0;
+            int x1 = x0 + 1;               if (x1 >= sw) x1 = sw - 1;
+            float tx = fx - x0;
+            float v00 = src[y0 * sw + x0];
+            float v10 = src[y0 * sw + x1];
+            float v01 = src[y1 * sw + x0];
+            float v11 = src[y1 * sw + x1];
+            dst[dy * dw + dx] = (v00 * (1 - tx) + v10 * tx) * (1 - ty)
+                               + (v01 * (1 - tx) + v11 * tx) * ty;
+        }
+    }
+    return dst;
+}
+
+// ---------------------------------------------------------------------------
+// Export a Float32 GeoTIFF heightmap to Unreal Engine 16-bit RAW (.r16)
+// Auto-resamples to nearest valid Unreal landscape resolution.
+// Unreal expects: unsigned 16-bit little-endian, row-major, no header.
+Result<std::string> DEMFetcher::exportUnrealRaw(const std::string& tif_path,
+                                                 const std::string& raw_path,
+                                                 RunContext& context)
+{
+    GDALDataset* ds = static_cast<GDALDataset*>(
+        GDALOpen(tif_path.c_str(), GA_ReadOnly));
+    if (!ds)
+        return Result<std::string>::fail(1, "Cannot open heightmap TIF: " + tif_path);
+
+    const int src_w = ds->GetRasterXSize();
+    const int src_h = ds->GetRasterYSize();
+    GDALRasterBand* band = ds->GetRasterBand(1);
+
+    // Read entire band as float32
+    std::vector<float> buf(static_cast<size_t>(src_w) * src_h);
+    CPLErr err = band->RasterIO(GF_Read, 0, 0, src_w, src_h,
+                                buf.data(), src_w, src_h,
+                                GDT_Float32, 0, 0);
+    GDALClose(ds);
+
+    if (err != CE_None)
+        return Result<std::string>::fail(2, "Failed to read heightmap band.");
+
+    // Snap to nearest valid Unreal landscape resolution (square)
+    const int ue_size = nearestUnrealSize(std::max(src_w, src_h));
+    const int out_w   = ue_size;
+    const int out_h   = ue_size;
+
+    // Resample if needed
+    std::vector<float> resampled;
+    const std::vector<float>& data = (src_w == out_w && src_h == out_h)
+        ? buf
+        : (resampled = resampleBilinear(buf, src_w, src_h, out_w, out_h), resampled);
+
+    // Compute valid min/max (ignore nodata <= -9000)
+    float elev_min =  1e38f;
+    float elev_max = -1e38f;
+    for (float v : data)
+    {
+        if (v <= -9000.0f) continue;
+        if (v < elev_min) elev_min = v;
+        if (v > elev_max) elev_max = v;
+    }
+    if (elev_min >= elev_max) { elev_min = 0.0f; elev_max = 1.0f; }
+    const float range = elev_max - elev_min;
+
+    // Normalise to uint16
+    std::vector<uint16_t> raw(static_cast<size_t>(out_w) * out_h);
+    for (size_t i = 0; i < data.size(); ++i)
+    {
+        float v = data[i] <= -9000.0f ? elev_min : data[i];
+        float norm = (v - elev_min) / range;
+        if (norm < 0.0f) norm = 0.0f;
+        if (norm > 1.0f) norm = 1.0f;
+        raw[i] = static_cast<uint16_t>(norm * 65535.0f + 0.5f);
+    }
+
+    // Write little-endian binary (no header)
+    std::ofstream ofs(raw_path, std::ios::binary);
+    if (!ofs)
+        return Result<std::string>::fail(3, "Cannot create RAW file: " + raw_path);
+
+    ofs.write(reinterpret_cast<const char*>(raw.data()),
+              static_cast<std::streamsize>(raw.size() * sizeof(uint16_t)));
+    ofs.close();
+
+    if (context.progress)
+        context.progress("Unreal RAW written (" + std::to_string(out_w) + "x" +
+                         std::to_string(out_h) + " resampled from " +
+                         std::to_string(src_w) + "x" + std::to_string(src_h) +
+                         "): " + raw_path, 95);
+
+    return Result<std::string>::ok(raw_path);
+}
