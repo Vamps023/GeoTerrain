@@ -84,9 +84,12 @@ TGeoResult<AActor*> FGeoLandscapeImporter::Import(const FImportParams& Params)
 
     Landscape->SetActorLabel(Params.LandscapeName);
 
+    // Must assign GUID to the actor before calling Import() — UE5.3 asserts it is valid
+    const FGuid LandscapeGuid = FGuid::NewGuid();
+    Landscape->SetLandscapeGuid(LandscapeGuid);
+
     // Build import layer info
     TMap<FGuid, TArray<uint16>> HeightmapImportData;
-    const FGuid LandscapeGuid = FGuid::NewGuid();
     HeightmapImportData.Add(LandscapeGuid, HeightData);
 
     // Scale: UE landscape Z scale in cm. 1 unit = 1/128 cm by default.
