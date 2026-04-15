@@ -47,10 +47,11 @@ void SGeoTerrainPanel::Construct(const FArguments& InArgs)
         .Value(0.55f)
         [
             SAssignNew(MapBrowser, SWebBrowser)
-            .InitialURL(GetMapHtmlUrl())
+            .InitialURL(TEXT("https://geotile/map"))
+            .ContentsToLoad(LoadMapHtml())
             .ShowControls(false)
             .SupportsTransparency(false)
-            .OnLoadCompleted_Lambda([this]()
+            .OnLoadStarted_Lambda([this]()
             {
                 if (MapBrowser.IsValid())
                 {
@@ -489,15 +490,18 @@ FReply SGeoTerrainPanel::OnCancelClicked()
 }
 
 
-FString SGeoTerrainPanel::GetMapHtmlUrl()
+TOptional<FString> SGeoTerrainPanel::LoadMapHtml()
 {
     TSharedPtr<IPlugin> Plugin = IPluginManager::Get().FindPlugin(TEXT("GeoTerrain"));
     FString PluginDir = Plugin.IsValid()
         ? Plugin->GetBaseDir()
         : FPaths::ConvertRelativePathToFull(FPaths::ProjectPluginsDir() / TEXT("GeoTerrain"));
     FString HtmlPath = PluginDir / TEXT("Resources/MapPicker.html");
-    FPaths::NormalizeFilename(HtmlPath);
-    return TEXT("file:///") + HtmlPath;
+    FString Contents;
+    if (FFileHelper::LoadFileToString(Contents, *HtmlPath))
+        return TOptional<FString>(Contents);
+    // Fallback: minimal error page
+    return TOptional<FString>(TEXT("<html><body style='background:#111;color:#f88;font-family:monospace'>MapPicker.html not found</body></html>"));
 }
 
 void SGeoTerrainPanel::OnBoundsReceivedFromJs(const FString& JsonStr)

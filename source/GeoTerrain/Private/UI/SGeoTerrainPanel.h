@@ -38,7 +38,7 @@ private:
     FReply OnCancelClicked();
     FReply OnImportLandscapeClicked();
     void   OnBoundsSelectedFromMap(double W, double S, double E, double N);
-    FString GetMapHtmlUrl();
+    TOptional<FString> LoadMapHtml();
 
 public:
     void   OnBoundsReceivedFromJs(const FString& JsonStr);
