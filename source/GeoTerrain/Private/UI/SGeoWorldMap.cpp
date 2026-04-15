@@ -6,9 +6,11 @@
 #include "Framework/Application/SlateApplication.h"
 #include "IImageWrapper.h"
 #include "IImageWrapperModule.h"
-#include "Rendering/SlateRenderer.h"
 #include "Misc/FileHelper.h"
 #include "Interfaces/IPluginManager.h"
+#include "RenderingThread.h"
+#include "RHI.h"
+#include "TextureResource.h"
 
 // ── Construct / Destruct ──────────────────────────────────────────────────────
 void SGeoWorldMap::Construct(const FArguments& InArgs)
@@ -20,10 +22,17 @@ void SGeoWorldMap::Construct(const FArguments& InArgs)
 SGeoWorldMap::~SGeoWorldMap()
 {
     WorldMapBrush.Reset();
+    if (WorldMapTexture)
+    {
+        WorldMapTexture->RemoveFromRoot();
+        WorldMapTexture = nullptr;
+    }
 }
 
 void SGeoWorldMap::LoadWorldMap()
 {
+    if (!FSlateApplication::IsInitialized()) return;
+
     TSharedPtr<IPlugin> Plugin = IPluginManager::Get().FindPlugin(TEXT("GeoTerrain"));
     FString Dir = Plugin.IsValid()
         ? Plugin->GetBaseDir() / TEXT("Resources")
@@ -41,16 +50,21 @@ void SGeoWorldMap::LoadWorldMap()
     if (!IW->GetRaw(ERGBFormat::BGRA, 8, Raw)) return;
 
     int32 W = IW->GetWidth(), H = IW->GetHeight();
-    const FName BrushName(TEXT("GeoTerrainWorldMap"));
 
-    if (FSlateApplication::IsInitialized())
-    {
-        FSlateRenderer* Renderer = FSlateApplication::Get().GetRenderer();
-        if (Renderer)
-            Renderer->GenerateDynamicImageResource(BrushName, (uint32)W, (uint32)H, Raw);
-    }
+    UTexture2D* Tex = UTexture2D::CreateTransient(W, H, PF_B8G8R8A8);
+    if (!Tex) return;
+    Tex->AddToRoot();
 
-    WorldMapBrush = MakeShared<FSlateDynamicImageBrush>(BrushName, FVector2D(W, H));
+    uint8* MipData = (uint8*)Tex->GetPlatformData()->Mips[0].BulkData.Lock(LOCK_READ_WRITE);
+    FMemory::Memcpy(MipData, Raw.GetData(), Raw.Num());
+    Tex->GetPlatformData()->Mips[0].BulkData.Unlock();
+    Tex->UpdateResource();
+
+    WorldMapTexture = Tex;
+    WorldMapBrush   = MakeUnique<FSlateBrush>();
+    WorldMapBrush->SetResourceObject(Tex);
+    WorldMapBrush->ImageSize = FVector2D(W, H);
+    WorldMapBrush->DrawAs    = ESlateBrushDrawType::Image;
     bMapLoaded = true;
 }
 
