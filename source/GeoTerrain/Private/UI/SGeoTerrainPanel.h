@@ -24,7 +24,6 @@ public:
 private:
     // ── UI helpers ────────────────────────────────────────────────────────────
     TSharedRef<SWidget> BuildMapSection();
-    TSharedRef<SWidget> BuildWorldMapSection();
     TSharedRef<SWidget> BuildSourceSection();
     TSharedRef<SWidget> BuildOutputSection();
     TSharedRef<SWidget> BuildChunkSection();
@@ -35,7 +34,6 @@ private:
     FReply OnExportClicked();
     FReply OnCancelClicked();
     FReply OnImportLandscapeClicked();
-    FReply OnToggleMapClicked();
     void   OnBoundsSelectedFromMap(double W, double S, double E, double N);
 
     bool CanExport()  const;
@@ -76,10 +74,6 @@ private:
     TSharedPtr<SBox>                           LocalTiffBox;
     TSharedPtr<SEditableTextBox>               LocalTiffEdit;
     TSharedPtr<SSpinBox<float>>                ResolutionSpin;
-
-    // Inline map picker (pure Slate, no CEF)
-    TSharedPtr<SBox>             WorldMapBox;
-    bool                         bMapVisible = false;
 
     FString   LastHeightmapR16;
     FString   LastAlbedoTif;

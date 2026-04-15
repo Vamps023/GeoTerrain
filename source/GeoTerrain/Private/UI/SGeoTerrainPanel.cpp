@@ -8,6 +8,7 @@
 #include "Widgets/Text/STextBlock.h"
 #include "Widgets/Layout/SScrollBox.h"
 #include "Widgets/Layout/SBox.h"
+#include "Widgets/Layout/SSplitter.h"
 #include "Widgets/Notifications/SProgressBar.h"
 #include "Styling/AppStyle.h"
 
@@ -30,26 +31,65 @@ void SGeoTerrainPanel::Construct(const FArguments& InArgs)
 
     ChildSlot
     [
-        SNew(SVerticalBox)
-        + SVerticalBox::Slot().AutoHeight().Padding(4)
-        [ BuildMapSection() ]
-        + SVerticalBox::Slot().AutoHeight().Padding(0, 0, 0, 4)
-        [ BuildWorldMapSection() ]
-        + SVerticalBox::Slot().AutoHeight().Padding(4)
-        [ BuildSourceSection() ]
-        + SVerticalBox::Slot().AutoHeight().Padding(4)
-        [ BuildOutputSection() ]
-        + SVerticalBox::Slot().AutoHeight().Padding(4)
-        [ BuildChunkSection() ]
-        + SVerticalBox::Slot().AutoHeight().Padding(4)
-        [ BuildButtonRow() ]
-        + SVerticalBox::Slot().AutoHeight().Padding(4)
+        SNew(SSplitter)
+        .Orientation(Orient_Horizontal)
+        .ResizeMode(ESplitterResizeMode::Fill)
+
+        // ── LEFT: interactive world map ───────────────────────────────────────
+        + SSplitter::Slot()
+        .Value(0.55f)
         [
-            SAssignNew(ProgressBar, SProgressBar)
-            .Percent_Lambda([this]() -> TOptional<float> { return Progress; })
+            SNew(SBorder)
+            .BorderImage(FAppStyle::GetBrush("ToolPanel.GroupBorder"))
+            .Padding(0)
+            [
+                SNew(SGeoWorldMap)
+                .OnBoundsSelected(FOnMapBoundsSelected::CreateSP(
+                    this, &SGeoTerrainPanel::OnBoundsSelectedFromMap))
+            ]
         ]
-        + SVerticalBox::Slot().FillHeight(1.0f).Padding(4)
-        [ BuildConsoleSection() ]
+
+        // ── RIGHT: settings + progress + console ─────────────────────────────
+        + SSplitter::Slot()
+        .Value(0.45f)
+        [
+            SNew(SVerticalBox)
+
+            // Bounding box coordinate readout
+            + SVerticalBox::Slot().AutoHeight().Padding(4, 4, 4, 2)
+            [ BuildMapSection() ]
+
+            // Settings scroll area (source, output, chunk)
+            + SVerticalBox::Slot().FillHeight(1.0f).Padding(4, 2)
+            [
+                SNew(SScrollBox)
+                + SScrollBox::Slot()
+                [
+                    SNew(SVerticalBox)
+                    + SVerticalBox::Slot().AutoHeight().Padding(0, 0, 0, 4)
+                    [ BuildSourceSection() ]
+                    + SVerticalBox::Slot().AutoHeight().Padding(0, 0, 0, 4)
+                    [ BuildOutputSection() ]
+                    + SVerticalBox::Slot().AutoHeight().Padding(0, 0, 0, 4)
+                    [ BuildChunkSection() ]
+                ]
+            ]
+
+            // Buttons
+            + SVerticalBox::Slot().AutoHeight().Padding(4, 2)
+            [ BuildButtonRow() ]
+
+            // Progress bar
+            + SVerticalBox::Slot().AutoHeight().Padding(4, 2)
+            [
+                SAssignNew(ProgressBar, SProgressBar)
+                .Percent_Lambda([this]() -> TOptional<float> { return Progress; })
+            ]
+
+            // Console log
+            + SVerticalBox::Slot().FillHeight(0.35f).Padding(4, 2, 4, 4)
+            [ BuildConsoleSection() ]
+        ]
     ];
 }
 
@@ -62,26 +102,17 @@ TSharedRef<SWidget> SGeoTerrainPanel::BuildMapSection()
             SNew(SVerticalBox)
             + SVerticalBox::Slot().AutoHeight()
             [
-                SNew(SHorizontalBox)
-                + SHorizontalBox::Slot().FillWidth(1).VAlign(VAlign_Center)
-                [
-                    SNew(STextBlock).Text(FText::FromString("Bounding Box (WGS84)"))
-                        .Font(FAppStyle::GetFontStyle("BoldFont"))
-                ]
-                + SHorizontalBox::Slot().AutoWidth()
-                [
-                    SNew(SButton)
-                    .Text_Lambda([this]{ return FText::FromString(bMapVisible ? TEXT("Hide Map") : TEXT("Pick on Map")); })
-                    .OnClicked(FOnClicked::CreateSP(this, &SGeoTerrainPanel::OnToggleMapClicked))
-                ]
+                SNew(STextBlock)
+                .Text(FText::FromString("Bounding Box (WGS84)"))
+                .Font(FAppStyle::GetFontStyle("BoldFont"))
             ]
-            + SVerticalBox::Slot().AutoHeight().Padding(0, 4)
+            + SVerticalBox::Slot().AutoHeight().Padding(0, 6, 0, 0)
             [
                 SNew(SHorizontalBox)
                 + SHorizontalBox::Slot().FillWidth(1).Padding(2)
                 [ SNew(SVerticalBox)
                   + SVerticalBox::Slot().AutoHeight()[ SNew(STextBlock).Text(FText::FromString("West")) ]
-                  + SVerticalBox::Slot().AutoHeight()[ SAssignNew(WestEdit, SEditableTextBox).Text(FText::FromString("0.0")) ]
+                  + SVerticalBox::Slot().AutoHeight()[ SAssignNew(WestEdit,  SEditableTextBox).Text(FText::FromString("0.0")) ]
                 ]
                 + SHorizontalBox::Slot().FillWidth(1).Padding(2)
                 [ SNew(SVerticalBox)
@@ -91,7 +122,7 @@ TSharedRef<SWidget> SGeoTerrainPanel::BuildMapSection()
                 + SHorizontalBox::Slot().FillWidth(1).Padding(2)
                 [ SNew(SVerticalBox)
                   + SVerticalBox::Slot().AutoHeight()[ SNew(STextBlock).Text(FText::FromString("East")) ]
-                  + SVerticalBox::Slot().AutoHeight()[ SAssignNew(EastEdit, SEditableTextBox).Text(FText::FromString("0.0")) ]
+                  + SVerticalBox::Slot().AutoHeight()[ SAssignNew(EastEdit,  SEditableTextBox).Text(FText::FromString("0.0")) ]
                 ]
                 + SHorizontalBox::Slot().FillWidth(1).Padding(2)
                 [ SNew(SVerticalBox)
@@ -102,16 +133,6 @@ TSharedRef<SWidget> SGeoTerrainPanel::BuildMapSection()
         ];
 }
 
-TSharedRef<SWidget> SGeoTerrainPanel::BuildWorldMapSection()
-{
-    return SAssignNew(WorldMapBox, SBox)
-        .Visibility(EVisibility::Collapsed)
-        .HeightOverride(420.f)
-        [
-            SNew(SGeoWorldMap)
-            .OnBoundsSelected(FOnMapBoundsSelected::CreateSP(this, &SGeoTerrainPanel::OnBoundsSelectedFromMap))
-        ];
-}
 
 TSharedRef<SWidget> SGeoTerrainPanel::BuildSourceSection()
 {
@@ -451,13 +472,6 @@ FReply SGeoTerrainPanel::OnCancelClicked()
     return FReply::Handled();
 }
 
-FReply SGeoTerrainPanel::OnToggleMapClicked()
-{
-    bMapVisible = !bMapVisible;
-    if (WorldMapBox.IsValid())
-        WorldMapBox->SetVisibility(bMapVisible ? EVisibility::Visible : EVisibility::Collapsed);
-    return FReply::Handled();
-}
 
 void SGeoTerrainPanel::OnBoundsSelectedFromMap(double W, double S, double E, double N)
 {
@@ -465,11 +479,7 @@ void SGeoTerrainPanel::OnBoundsSelectedFromMap(double W, double S, double E, dou
     if (SouthEdit.IsValid()) SouthEdit->SetText(FText::FromString(FString::Printf(TEXT("%.6f"), S)));
     if (EastEdit.IsValid())  EastEdit->SetText(FText::FromString(FString::Printf(TEXT("%.6f"), E)));
     if (NorthEdit.IsValid()) NorthEdit->SetText(FText::FromString(FString::Printf(TEXT("%.6f"), N)));
-    // Auto-hide map after selection
-    bMapVisible = false;
-    if (WorldMapBox.IsValid())
-        WorldMapBox->SetVisibility(EVisibility::Collapsed);
-    OnLog(FString::Printf(TEXT("[Map] Bounds set: W=%.5f S=%.5f E=%.5f N=%.5f"), W, S, E, N), false);
+    OnLog(FString::Printf(TEXT("[Map] Bounds: W=%.5f S=%.5f E=%.5f N=%.5f"), W, S, E, N), false);
 }
 
 FReply SGeoTerrainPanel::OnImportLandscapeClicked()
