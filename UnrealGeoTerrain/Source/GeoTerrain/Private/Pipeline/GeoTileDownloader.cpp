@@ -106,7 +106,7 @@ TGeoResult<FGeoTileArtifact> FGeoTileDownloader::Download(const FGeoBounds& Boun
 
 bool FGeoTileDownloader::DownloadTile(const FString& Url, const FString& DestPath, FGeoRunContext& Context)
 {
-    FEvent* Done = FPlatformProcess::CreateSynchEvent(true);
+    FEvent* Done = FPlatformProcess::GetSynchEventFromPool(true);
     bool bOk = false;
     TArray<uint8> Bytes;
 
@@ -123,7 +123,7 @@ bool FGeoTileDownloader::DownloadTile(const FString& Url, const FString& DestPat
     Req->ProcessRequest();
 
     while (!Done->Wait(200)) { if (Context.IsCancelled()) { Req->CancelRequest(); break; } }
-    FPlatformProcess::ReturnSynchEvent(Done);
+    FPlatformProcess::ReturnSynchEventToPool(Done);
 
     if (bOk)
     {

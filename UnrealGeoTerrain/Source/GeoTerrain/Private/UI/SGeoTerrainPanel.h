@@ -1,6 +1,11 @@
 #pragma once
 #include "CoreMinimal.h"
 #include "Widgets/SCompoundWidget.h"
+#include "Widgets/Input/SEditableTextBox.h"
+#include "Widgets/Input/SSpinBox.h"
+#include "Widgets/Text/STextBlock.h"
+#include "Widgets/Layout/SScrollBox.h"
+#include "Widgets/Notifications/SProgressBar.h"
 #include "GeoGenerationTypes.h"
 #include "GeoGenerationCoordinator.h"
 
@@ -37,7 +42,7 @@ private:
     void OnFinished(EGeoJobStatus Status, const FString& Msg);
 
     // ── Build request from UI state ───────────────────────────────────────────
-    FGeoGenerationRequest BuildRequest() const;
+    FGeoGenerationRequest BuildRequest();
 
     // ── State ─────────────────────────────────────────────────────────────────
     TSharedPtr<FGeoGenerationCoordinator> Coordinator;

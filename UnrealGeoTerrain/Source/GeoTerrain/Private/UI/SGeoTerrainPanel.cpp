@@ -6,10 +6,9 @@
 #include "Widgets/Input/SSpinBox.h"
 #include "Widgets/Text/STextBlock.h"
 #include "Widgets/Layout/SScrollBox.h"
-#include "Widgets/Layout/SSplitter.h"
 #include "Widgets/Layout/SBox.h"
 #include "Widgets/Notifications/SProgressBar.h"
-#include "EditorStyleSet.h"
+#include "Styling/AppStyle.h"
 
 void SGeoTerrainPanel::Construct(const FArguments& InArgs)
 {
@@ -34,7 +33,7 @@ void SGeoTerrainPanel::Construct(const FArguments& InArgs)
         + SVerticalBox::Slot().AutoHeight().Padding(4)
         [
             SAssignNew(ProgressBar, SProgressBar)
-            .Percent_Lambda([this]{ return Progress; })
+            .Percent_Lambda([this]() -> TOptional<float> { return Progress; })
         ]
         + SVerticalBox::Slot().FillHeight(1.0f).Padding(4)
         [ BuildConsoleSection() ]
@@ -44,14 +43,14 @@ void SGeoTerrainPanel::Construct(const FArguments& InArgs)
 TSharedRef<SWidget> SGeoTerrainPanel::BuildMapSection()
 {
     return SNew(SBorder)
-        .BorderImage(FEditorStyle::GetBrush("ToolPanel.GroupBorder"))
+        .BorderImage(FAppStyle::GetBrush("ToolPanel.GroupBorder"))
         .Padding(6)
         [
             SNew(SVerticalBox)
             + SVerticalBox::Slot().AutoHeight()
             [
                 SNew(STextBlock).Text(FText::FromString("Bounding Box (WGS84)"))
-                    .Font(FEditorStyle::GetFontStyle("BoldFont"))
+                    .Font(FAppStyle::GetFontStyle("BoldFont"))
             ]
             + SVerticalBox::Slot().AutoHeight().Padding(0, 4)
             [
@@ -83,12 +82,12 @@ TSharedRef<SWidget> SGeoTerrainPanel::BuildMapSection()
 TSharedRef<SWidget> SGeoTerrainPanel::BuildSourceSection()
 {
     return SNew(SBorder)
-        .BorderImage(FEditorStyle::GetBrush("ToolPanel.GroupBorder"))
+        .BorderImage(FAppStyle::GetBrush("ToolPanel.GroupBorder"))
         .Padding(6)
         [
             SNew(SVerticalBox)
             + SVerticalBox::Slot().AutoHeight()
-            [ SNew(STextBlock).Text(FText::FromString("Data Sources")).Font(FEditorStyle::GetFontStyle("BoldFont")) ]
+            [ SNew(STextBlock).Text(FText::FromString("Data Sources")).Font(FAppStyle::GetFontStyle("BoldFont")) ]
             + SVerticalBox::Slot().AutoHeight().Padding(0,2)
             [
                 SNew(SHorizontalBox)
@@ -112,7 +111,10 @@ TSharedRef<SWidget> SGeoTerrainPanel::BuildSourceSection()
                 + SHorizontalBox::Slot().AutoWidth().VAlign(VAlign_Center)
                 [ SNew(STextBlock).Text(FText::FromString("Zoom Level:")).MinDesiredWidth(160) ]
                 + SHorizontalBox::Slot().AutoWidth()
-                [ SAssignNew(ZoomSpin, SSpinBox<int32>).MinValue(1).MaxValue(20).Value(14) ]
+                [
+                    SAssignNew(ZoomSpin, SSpinBox<int32>)
+                    .MinValue(1).MaxValue(20).Value(14).Delta(1)
+                ]
             ]
         ];
 }
@@ -120,12 +122,12 @@ TSharedRef<SWidget> SGeoTerrainPanel::BuildSourceSection()
 TSharedRef<SWidget> SGeoTerrainPanel::BuildOutputSection()
 {
     return SNew(SBorder)
-        .BorderImage(FEditorStyle::GetBrush("ToolPanel.GroupBorder"))
+        .BorderImage(FAppStyle::GetBrush("ToolPanel.GroupBorder"))
         .Padding(6)
         [
             SNew(SVerticalBox)
             + SVerticalBox::Slot().AutoHeight()
-            [ SNew(STextBlock).Text(FText::FromString("Output")).Font(FEditorStyle::GetFontStyle("BoldFont")) ]
+            [ SNew(STextBlock).Text(FText::FromString("Output")).Font(FAppStyle::GetFontStyle("BoldFont")) ]
             + SVerticalBox::Slot().AutoHeight().Padding(0,2)
             [
                 SNew(SHorizontalBox)
@@ -140,14 +142,17 @@ TSharedRef<SWidget> SGeoTerrainPanel::BuildOutputSection()
 TSharedRef<SWidget> SGeoTerrainPanel::BuildChunkSection()
 {
     return SNew(SBorder)
-        .BorderImage(FEditorStyle::GetBrush("ToolPanel.GroupBorder"))
+        .BorderImage(FAppStyle::GetBrush("ToolPanel.GroupBorder"))
         .Padding(6)
         [
             SNew(SHorizontalBox)
             + SHorizontalBox::Slot().AutoWidth().VAlign(VAlign_Center)
             [ SNew(STextBlock).Text(FText::FromString("Chunk Size (km, 0 = single):")).MinDesiredWidth(180) ]
             + SHorizontalBox::Slot().AutoWidth()
-            [ SAssignNew(ChunkSizeSpin, SSpinBox<float>).MinValue(0.0f).MaxValue(100.0f).Value(0.0f) ]
+            [
+                SAssignNew(ChunkSizeSpin, SSpinBox<float>)
+                .MinValue(0.0f).MaxValue(100.0f).Value(0.0f).Delta(0.5f)
+            ]
         ];
 }
 
@@ -180,7 +185,7 @@ TSharedRef<SWidget> SGeoTerrainPanel::BuildButtonRow()
 TSharedRef<SWidget> SGeoTerrainPanel::BuildConsoleSection()
 {
     return SNew(SBorder)
-        .BorderImage(FEditorStyle::GetBrush("ToolPanel.GroupBorder"))
+        .BorderImage(FAppStyle::GetBrush("ToolPanel.GroupBorder"))
         .Padding(4)
         [
             SAssignNew(ConsoleScroll, SScrollBox)
@@ -246,7 +251,7 @@ void SGeoTerrainPanel::OnFinished(EGeoJobStatus Status, const FString& Msg)
     OnLog(Msg, Status == EGeoJobStatus::Failed);
 }
 
-FGeoGenerationRequest SGeoTerrainPanel::BuildRequest() const
+FGeoGenerationRequest SGeoTerrainPanel::BuildRequest()
 {
     FGeoGenerationRequest Req;
     Req.Bounds.West  = FCString::Atod(*WestEdit->GetText().ToString());

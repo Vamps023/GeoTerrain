@@ -232,7 +232,7 @@ TGeoResult<FString> FGeoDemFetcher::ExportUnrealRaw(const FString& TifPath,
 // ── HTTP download (synchronous via event) ─────────────────────────────────────
 bool FGeoDemFetcher::DownloadFile(const FString& Url, const FString& DestPath, FGeoRunContext& Context)
 {
-    FEvent* DoneEvent = FPlatformProcess::CreateSynchEvent(true);
+    FEvent* DoneEvent = FPlatformProcess::GetSynchEventFromPool(true);
     bool bOk = false;
     TArray<uint8> Bytes;
 
@@ -255,7 +255,7 @@ bool FGeoDemFetcher::DownloadFile(const FString& Url, const FString& DestPath, F
     {
         if (Context.IsCancelled()) { Req->CancelRequest(); break; }
     }
-    FPlatformProcess::ReturnSynchEvent(DoneEvent);
+    FPlatformProcess::ReturnSynchEventToPool(DoneEvent);
 
     if (bOk)
     {

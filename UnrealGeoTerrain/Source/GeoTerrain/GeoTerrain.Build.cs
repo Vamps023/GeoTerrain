@@ -7,6 +7,10 @@ public class GeoTerrain : ModuleRules
     {
         PCHUsage = ModuleRules.PCHUsageMode.UseExplicitOrSharedPCHs;
 
+        // Suppress C4668/C4067 from UE engine headers with VS2022 17.10+
+        bEnableUndefinedIdentifierWarnings = false;
+        bEnableExceptions = false;
+
         PublicIncludePaths.AddRange(new string[] {
             Path.Combine(ModuleDirectory, "Public")
         });
@@ -44,7 +48,8 @@ public class GeoTerrain : ModuleRules
         string GdalRoot = Path.Combine(ModuleDirectory, "..", "..", "ThirdParty", "GDAL");
         if (Directory.Exists(GdalRoot))
         {
-            PublicIncludePaths.Add(Path.Combine(GdalRoot, "include"));
+            // Use ExternalIncludePaths so UBT treats as system headers (no /W4 applied)
+            PublicSystemIncludePaths.Add(Path.Combine(GdalRoot, "include"));
             PublicAdditionalLibraries.Add(Path.Combine(GdalRoot, "lib", "gdal_i.lib"));
             RuntimeDependencies.Add(Path.Combine(GdalRoot, "bin", "gdal312.dll"));
         }

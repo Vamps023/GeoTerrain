@@ -31,14 +31,14 @@ void FGeoTerrainModule::RegisterMenus()
     FToolMenuOwnerScoped OwnerScoped(this);
     UToolMenu* Menu = UToolMenus::Get()->ExtendMenu("LevelEditor.MainMenu.Window");
     FToolMenuSection& Section = Menu->FindOrAddSection("WindowLayout");
-    Section.AddMenuEntryWithCommandList(
-        FUIAction(FExecuteAction::CreateLambda([]{
-            FGlobalTabmanager::Get()->TryInvokeTab(FTabId(GeoTerrainTabName));
-        })),
-        NAME_None,
+    Section.AddMenuEntry(
+        "GeoTerrainOpen",
         NSLOCTEXT("GeoTerrain", "OpenPanel", "GeoTerrain Generator"),
         NSLOCTEXT("GeoTerrain", "OpenPanelTip", "Open the GeoTerrain real-world terrain generator"),
-        FSlateIcon()
+        FSlateIcon(),
+        FUIAction(FExecuteAction::CreateLambda([]{
+            FGlobalTabmanager::Get()->TryInvokeTab(FTabId(GeoTerrainTabName));
+        }))
     );
 }
 

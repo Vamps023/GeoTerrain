@@ -98,15 +98,19 @@ TGeoResult<AActor*> FGeoLandscapeImporter::Import(const FImportParams& Params)
     );
     Landscape->SetActorScale3D(Scale);
 
+    // UE5 Import signature: TMap<FGuid,TArray<uint16>> for height data
+    TMap<FGuid, TArray<FLandscapeImportLayerInfo>> LayerInfoMap;
+    LayerInfoMap.Add(LandscapeGuid, TArray<FLandscapeImportLayerInfo>());
+
     Landscape->Import(
         LandscapeGuid,
         0, 0,                             // offset X/Y in quads
         UESize - 1, UESize - 1,           // total quads X/Y
         SectionsPerComponent,
         QuadsPerSection,
-        HeightData.GetData(),
-        nullptr,                          // heightmap file path (nullptr = use data directly)
-        TArray<FLandscapeImportLayerInfo>(),
+        HeightmapImportData,
+        nullptr,                          // heightmap file path hint
+        LayerInfoMap,
         ELandscapeImportAlphamapType::Additive);
 
     Landscape->StaticLightingResolution = 1.0f;
