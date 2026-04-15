@@ -107,29 +107,34 @@ TGeoResult<FGeoTileArtifact> FGeoTileDownloader::Download(const FGeoBounds& Boun
 
 bool FGeoTileDownloader::DownloadTile(const FString& Url, const FString& DestPath, FGeoRunContext& Context)
 {
-    FEvent* Done = FPlatformProcess::GetSynchEventFromPool(true);
-    bool bOk = false;
-    TArray<uint8> Bytes;
+    // Use shared ownership so the lambda never touches a freed event
+    TSharedPtr<FEventRef, ESPMode::ThreadSafe> DoneRef =
+        MakeShared<FEventRef, ESPMode::ThreadSafe>(EEventMode::ManualReset);
+
+    TSharedPtr<bool,         ESPMode::ThreadSafe> bOkPtr    = MakeShared<bool,         ESPMode::ThreadSafe>(false);
+    TSharedPtr<TArray<uint8>,ESPMode::ThreadSafe> BytesPtr  = MakeShared<TArray<uint8>,ESPMode::ThreadSafe>();
 
     TSharedRef<IHttpRequest, ESPMode::ThreadSafe> Req = FHttpModule::Get().CreateRequest();
     Req->SetURL(Url);
     Req->SetVerb(TEXT("GET"));
     Req->OnProcessRequestComplete().BindLambda(
-        [&bOk, &Bytes, Done](FHttpRequestPtr, FHttpResponsePtr Res, bool bSucceeded)
+        [bOkPtr, BytesPtr, DoneRef](FHttpRequestPtr, FHttpResponsePtr Res, bool bSucceeded)
         {
             if (bSucceeded && Res.IsValid() && Res->GetResponseCode() == 200)
-            { Bytes = Res->GetContent(); bOk = true; }
-            Done->Trigger();
+            { *BytesPtr = Res->GetContent(); *bOkPtr = true; }
+            (*DoneRef)->Trigger();
         });
     Req->ProcessRequest();
 
-    while (!Done->Wait(200)) { if (Context.IsCancelled()) { Req->CancelRequest(); break; } }
-    FPlatformProcess::ReturnSynchEventToPool(Done);
+    while (!(*DoneRef)->Wait(200))
+    {
+        if (Context.IsCancelled()) { Req->CancelRequest(); break; }
+    }
 
-    if (bOk)
+    if (*bOkPtr && BytesPtr->Num() > 0)
     {
         TUniquePtr<FArchive> Ar(IFileManager::Get().CreateFileWriter(*DestPath));
-        if (Ar) { Ar->Serialize(Bytes.GetData(), Bytes.Num()); return true; }
+        if (Ar) { Ar->Serialize(BytesPtr->GetData(), BytesPtr->Num()); return true; }
     }
     return false;
 }

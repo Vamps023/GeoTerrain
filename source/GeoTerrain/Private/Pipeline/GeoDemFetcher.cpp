@@ -72,12 +72,12 @@ TGeoResult<FGeoDemArtifact> FGeoDemFetcher::FetchFromOpenTopography(const FGeoBo
                                                                       FGeoRunContext& Context)
 {
     static const TMap<EGeoTerrainDemSource, FString> kDemCodes = {
-        { EGeoTerrainDemSource::OpenTopography_SRTM30m, TEXT("SRTMGL1") },
-        { EGeoTerrainDemSource::OpenTopography_SRTM90m, TEXT("SRTMGL3") },
-        { EGeoTerrainDemSource::OpenTopography_AW3D30,  TEXT("AW3D30")  },
-        { EGeoTerrainDemSource::OpenTopography_COP30,   TEXT("COP30")   },
-        { EGeoTerrainDemSource::OpenTopography_NASADEM, TEXT("NASADEM_HGT") },
-        { EGeoTerrainDemSource::OpenTopography_3DEP10m, TEXT("3DEP10m") },
+        { EGeoTerrainDemSource::OpenTopography_SRTM30m, TEXT("SRTMGL1")    },
+        { EGeoTerrainDemSource::OpenTopography_SRTM90m, TEXT("SRTMGL3")    },
+        { EGeoTerrainDemSource::OpenTopography_AW3D30,  TEXT("AW3D30")     },
+        { EGeoTerrainDemSource::OpenTopography_COP30,   TEXT("COP30")      },
+        { EGeoTerrainDemSource::OpenTopography_NASADEM, TEXT("NASADEM_HGT")},
+        { EGeoTerrainDemSource::OpenTopography_3DEP10m, TEXT("3DEP_10m")   },
     };
 
     const FString* CodePtr = kDemCodes.Find(Config.Source);
@@ -232,35 +232,37 @@ TGeoResult<FString> FGeoDemFetcher::ExportUnrealRaw(const FString& TifPath,
 // ── HTTP download (synchronous via event) ─────────────────────────────────────
 bool FGeoDemFetcher::DownloadFile(const FString& Url, const FString& DestPath, FGeoRunContext& Context)
 {
-    FEvent* DoneEvent = FPlatformProcess::GetSynchEventFromPool(true);
-    bool bOk = false;
-    TArray<uint8> Bytes;
+    // Shared ownership prevents use-after-free when HTTP callback races cancellation
+    TSharedPtr<FEventRef, ESPMode::ThreadSafe> DoneRef =
+        MakeShared<FEventRef, ESPMode::ThreadSafe>(EEventMode::ManualReset);
+
+    TSharedPtr<bool,          ESPMode::ThreadSafe> bOkPtr   = MakeShared<bool,          ESPMode::ThreadSafe>(false);
+    TSharedPtr<TArray<uint8>, ESPMode::ThreadSafe> BytesPtr = MakeShared<TArray<uint8>, ESPMode::ThreadSafe>();
 
     TSharedRef<IHttpRequest, ESPMode::ThreadSafe> Req = FHttpModule::Get().CreateRequest();
     Req->SetURL(Url);
     Req->SetVerb(TEXT("GET"));
     Req->OnProcessRequestComplete().BindLambda(
-        [&bOk, &Bytes, DoneEvent](FHttpRequestPtr, FHttpResponsePtr Res, bool bSucceeded)
+        [bOkPtr, BytesPtr, DoneRef](FHttpRequestPtr, FHttpResponsePtr Res, bool bSucceeded)
         {
             if (bSucceeded && Res.IsValid() && Res->GetResponseCode() == 200)
             {
-                Bytes = Res->GetContent();
-                bOk = true;
+                *BytesPtr = Res->GetContent();
+                *bOkPtr   = true;
             }
-            DoneEvent->Trigger();
+            (*DoneRef)->Trigger();
         });
     Req->ProcessRequest();
 
-    while (!DoneEvent->Wait(200))
+    while (!(*DoneRef)->Wait(200))
     {
         if (Context.IsCancelled()) { Req->CancelRequest(); break; }
     }
-    FPlatformProcess::ReturnSynchEventToPool(DoneEvent);
 
-    if (bOk)
+    if (*bOkPtr && BytesPtr->Num() > 0)
     {
         TUniquePtr<FArchive> Ar(IFileManager::Get().CreateFileWriter(*DestPath));
-        if (Ar) { Ar->Serialize(Bytes.GetData(), Bytes.Num()); return true; }
+        if (Ar) { Ar->Serialize(BytesPtr->GetData(), BytesPtr->Num()); return true; }
     }
     return false;
 }
