@@ -3,6 +3,7 @@
 #include "Rendering/DrawElements.h"
 #include "Styling/CoreStyle.h"
 #include "Fonts/SlateFontInfo.h"
+#include "Framework/Application/SlateApplication.h"
 
 // ── Construct ─────────────────────────────────────────────────────────────────
 void SGeoWorldMap::Construct(const FArguments& InArgs)
@@ -248,7 +249,7 @@ FReply SGeoWorldMap::OnMouseButtonDown(const FGeometry& G, const FPointerEvent& 
         bDragging = true;
         DragStart = DragEnd = Local;
         Invalidate(EInvalidateWidgetReason::Paint);
-        return FReply::Handled().CaptureMouse(SharedThis(this));
+        return FReply::Handled().CaptureMouse(SharedThis(this)).SetUserFocus(SharedThis(this));
     }
     if (E.GetEffectingButton() == EKeys::RightMouseButton)
     {
@@ -256,9 +257,9 @@ FReply SGeoWorldMap::OnMouseButtonDown(const FGeometry& G, const FPointerEvent& 
         PanStart   = Local;
         PanAtStart = PanOffset;
         Invalidate(EInvalidateWidgetReason::Paint);
-        return FReply::Handled().CaptureMouse(SharedThis(this));
+        return FReply::Handled().CaptureMouse(SharedThis(this)).SetUserFocus(SharedThis(this));
     }
-    return FReply::Unhandled();
+    return FReply::Handled().SetUserFocus(SharedThis(this));
 }
 
 FReply SGeoWorldMap::OnMouseMove(const FGeometry& G, const FPointerEvent& E)
@@ -277,7 +278,7 @@ FReply SGeoWorldMap::OnMouseMove(const FGeometry& G, const FPointerEvent& E)
         Invalidate(EInvalidateWidgetReason::Paint);
         return FReply::Handled();
     }
-    return FReply::Unhandled();
+    return FReply::Handled();
 }
 
 FReply SGeoWorldMap::OnMouseButtonUp(const FGeometry& G, const FPointerEvent& E)
@@ -323,6 +324,11 @@ FReply SGeoWorldMap::OnMouseWheel(const FGeometry& G, const FPointerEvent& E)
 
     Invalidate(EInvalidateWidgetReason::Paint);
     return FReply::Handled();
+}
+
+void SGeoWorldMap::OnMouseEnter(const FGeometry& G, const FPointerEvent& E)
+{
+    FSlateApplication::Get().SetKeyboardFocus(SharedThis(this), EFocusCause::Mouse);
 }
 
 void SGeoWorldMap::OnMouseLeave(const FPointerEvent& E)

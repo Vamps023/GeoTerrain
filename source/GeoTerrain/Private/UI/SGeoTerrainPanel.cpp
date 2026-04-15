@@ -2,6 +2,13 @@
 #include "GeoLandscapeImporter.h"
 
 #include "Misc/Paths.h"
+#include "Misc/FileHelper.h"
+#include "HAL/PlatformFileManager.h"
+#include "Dom/JsonObject.h"
+#include "Serialization/JsonReader.h"
+#include "Serialization/JsonSerializer.h"
+#include "Interfaces/IPluginManager.h"
+#include "UI/GeoTerrainJsHandler.h"
 #include "Widgets/Input/SEditableTextBox.h"
 #include "Widgets/Input/SButton.h"
 #include "Widgets/Input/SSpinBox.h"
@@ -35,18 +42,27 @@ void SGeoTerrainPanel::Construct(const FArguments& InArgs)
         .Orientation(Orient_Horizontal)
         .ResizeMode(ESplitterResizeMode::Fill)
 
-        // ── LEFT: interactive world map ───────────────────────────────────────
+        // ── LEFT: Leaflet web map ─────────────────────────────────────────────
         + SSplitter::Slot()
         .Value(0.55f)
         [
-            SNew(SBorder)
-            .BorderImage(FAppStyle::GetBrush("ToolPanel.GroupBorder"))
-            .Padding(0)
-            [
-                SNew(SGeoWorldMap)
-                .OnBoundsSelected(FOnMapBoundsSelected::CreateSP(
-                    this, &SGeoTerrainPanel::OnBoundsSelectedFromMap))
-            ]
+            SAssignNew(MapBrowser, SWebBrowser)
+            .InitialURL(GetMapHtmlUrl())
+            .ShowControls(false)
+            .SupportsTransparency(false)
+            .OnLoadCompleted_Lambda([this]()
+            {
+                if (MapBrowser.IsValid())
+                {
+                    if (!JsHandler)
+                    {
+                        JsHandler = NewObject<UGeoTerrainJsHandler>();
+                        JsHandler->AddToRoot();
+                        JsHandler->SetPanel(this);
+                    }
+                    MapBrowser->BindUObject(TEXT("geoterrainhandler"), JsHandler, true);
+                }
+            })
         ]
 
         // ── RIGHT: settings + progress + console ─────────────────────────────
@@ -472,6 +488,30 @@ FReply SGeoTerrainPanel::OnCancelClicked()
     return FReply::Handled();
 }
 
+
+FString SGeoTerrainPanel::GetMapHtmlUrl()
+{
+    TSharedPtr<IPlugin> Plugin = IPluginManager::Get().FindPlugin(TEXT("GeoTerrain"));
+    FString PluginDir = Plugin.IsValid()
+        ? Plugin->GetBaseDir()
+        : FPaths::ConvertRelativePathToFull(FPaths::ProjectPluginsDir() / TEXT("GeoTerrain"));
+    FString HtmlPath = PluginDir / TEXT("Resources/MapPicker.html");
+    FPaths::NormalizeFilename(HtmlPath);
+    return TEXT("file:///") + HtmlPath;
+}
+
+void SGeoTerrainPanel::OnBoundsReceivedFromJs(const FString& JsonStr)
+{
+    TSharedPtr<FJsonObject> Obj;
+    TSharedRef<TJsonReader<>> Reader = TJsonReaderFactory<>::Create(JsonStr);
+    if (!FJsonSerializer::Deserialize(Reader, Obj) || !Obj.IsValid()) return;
+
+    double W = Obj->GetNumberField(TEXT("west"));
+    double S = Obj->GetNumberField(TEXT("south"));
+    double E = Obj->GetNumberField(TEXT("east"));
+    double N = Obj->GetNumberField(TEXT("north"));
+    OnBoundsSelectedFromMap(W, S, E, N);
+}
 
 void SGeoTerrainPanel::OnBoundsSelectedFromMap(double W, double S, double E, double N)
 {

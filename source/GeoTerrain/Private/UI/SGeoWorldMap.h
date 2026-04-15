@@ -21,6 +21,7 @@ public:
     virtual FReply OnMouseMove      (const FGeometry&, const FPointerEvent&) override;
     virtual FReply OnMouseButtonUp  (const FGeometry&, const FPointerEvent&) override;
     virtual FReply OnMouseWheel     (const FGeometry&, const FPointerEvent&) override;
+    virtual void   OnMouseEnter     (const FGeometry&, const FPointerEvent&) override;
     virtual void   OnMouseLeave     (const FPointerEvent&) override;
     virtual FCursorReply OnCursorQuery(const FGeometry&, const FPointerEvent&) const override;
     virtual FVector2D ComputeDesiredSize(float) const override;
