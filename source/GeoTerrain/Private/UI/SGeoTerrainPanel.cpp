@@ -51,6 +51,27 @@ void SGeoTerrainPanel::Construct(const FArguments& InArgs)
             .ContentsToLoad(LoadMapHtml())
             .ShowControls(false)
             .SupportsTransparency(false)
+            .OnLoadUrl_Lambda([this](const FString& Method, const FString& Url, FString& OutResponse) -> bool
+            {
+                // Serve https://geotile/* from plugin Resources/ folder
+                if (!Url.StartsWith(TEXT("https://geotile/")))
+                    return false;
+                FString RelPath = Url.Mid(FString(TEXT("https://geotile/")).Len());
+                // Strip query strings
+                int32 QMark; if (RelPath.FindChar('?', QMark)) RelPath.LeftInline(QMark);
+
+                TSharedPtr<IPlugin> Plugin = IPluginManager::Get().FindPlugin(TEXT("GeoTerrain"));
+                FString ResourcesDir = Plugin.IsValid()
+                    ? Plugin->GetBaseDir() / TEXT("Resources")
+                    : FPaths::ConvertRelativePathToFull(FPaths::ProjectPluginsDir() / TEXT("GeoTerrain/Resources"));
+                FString FilePath = ResourcesDir / RelPath;
+
+                if (FFileHelper::LoadFileToString(OutResponse, *FilePath))
+                    return true;
+
+                OutResponse = TEXT("/* not found: ") + FilePath + TEXT(" */");
+                return true;
+            })
             .OnLoadStarted_Lambda([this]()
             {
                 if (MapBrowser.IsValid())
