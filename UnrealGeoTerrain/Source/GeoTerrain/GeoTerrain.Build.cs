@@ -46,7 +46,7 @@ public class GeoTerrain : ModuleRules
         {
             PublicIncludePaths.Add(Path.Combine(GdalRoot, "include"));
             PublicAdditionalLibraries.Add(Path.Combine(GdalRoot, "lib", "gdal_i.lib"));
-            RuntimeDependencies.Add(Path.Combine(GdalRoot, "bin", "gdal310.dll"));
+            RuntimeDependencies.Add(Path.Combine(GdalRoot, "bin", "gdal312.dll"));
         }
     }
 }
