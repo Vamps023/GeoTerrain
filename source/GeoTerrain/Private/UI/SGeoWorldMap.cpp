@@ -60,6 +60,8 @@ void SGeoWorldMap::LoadWorldMap()
     Renderer->GenerateDynamicImageResource(BrushName, (uint32)W, (uint32)H, Raw);
 
     WorldMapBrush = MakeUnique<FSlateDynamicImageBrush>(BrushName, FVector2D((float)W, (float)H));
+    WorldMapBrush->DrawAs  = ESlateBrushDrawType::Image;
+    WorldMapBrush->Tiling  = ESlateBrushTileType::NoTile;
     bMapLoaded = true;
 }
 
