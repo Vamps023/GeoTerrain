@@ -22,6 +22,8 @@ void SGeoTerrainPanel::Construct(const FArguments& InArgs)
         SNew(SVerticalBox)
         + SVerticalBox::Slot().AutoHeight().Padding(4)
         [ BuildMapSection() ]
+        + SVerticalBox::Slot().AutoHeight().Padding(0)
+        [ BuildMapPickerSection() ]
         + SVerticalBox::Slot().AutoHeight().Padding(4)
         [ BuildSourceSection() ]
         + SVerticalBox::Slot().AutoHeight().Padding(4)
@@ -40,6 +42,19 @@ void SGeoTerrainPanel::Construct(const FArguments& InArgs)
     ];
 }
 
+TSharedRef<SWidget> SGeoTerrainPanel::BuildMapPickerSection()
+{
+    return SAssignNew(MapPickerBox, SBox)
+        .HeightOverride(TAttribute<FOptionalSize>::CreateLambda([this]() -> FOptionalSize
+        {
+            return bMapPickerVisible ? FOptionalSize(380.f) : FOptionalSize(0.f);
+        }))
+        [
+            SAssignNew(MapPicker, SGeoMapPicker)
+            .OnBoundsSelected(FOnBoundsSelected::CreateSP(this, &SGeoTerrainPanel::OnBoundsSelectedFromMap))
+        ];
+}
+
 TSharedRef<SWidget> SGeoTerrainPanel::BuildMapSection()
 {
     return SNew(SBorder)
@@ -49,8 +64,18 @@ TSharedRef<SWidget> SGeoTerrainPanel::BuildMapSection()
             SNew(SVerticalBox)
             + SVerticalBox::Slot().AutoHeight()
             [
-                SNew(STextBlock).Text(FText::FromString("Bounding Box (WGS84)"))
-                    .Font(FAppStyle::GetFontStyle("BoldFont"))
+                SNew(SHorizontalBox)
+                + SHorizontalBox::Slot().FillWidth(1).VAlign(VAlign_Center)
+                [
+                    SNew(STextBlock).Text(FText::FromString("Bounding Box (WGS84)"))
+                        .Font(FAppStyle::GetFontStyle("BoldFont"))
+                ]
+                + SHorizontalBox::Slot().AutoWidth()
+                [
+                    SNew(SButton)
+                    .Text_Lambda([this]{ return FText::FromString(bMapPickerVisible ? TEXT("Hide Map") : TEXT("Pick on Map 🗺")); })
+                    .OnClicked(FOnClicked::CreateSP(this, &SGeoTerrainPanel::OnToggleMapClicked))
+                ]
             ]
             + SVerticalBox::Slot().AutoHeight().Padding(0, 4)
             [
@@ -208,6 +233,27 @@ FReply SGeoTerrainPanel::OnCancelClicked()
 {
     Coordinator->Cancel();
     return FReply::Handled();
+}
+
+FReply SGeoTerrainPanel::OnToggleMapClicked()
+{
+    bMapPickerVisible = !bMapPickerVisible;
+    if (MapPickerBox.IsValid())
+        MapPickerBox->Invalidate(EInvalidateWidgetReason::Layout);
+    return FReply::Handled();
+}
+
+void SGeoTerrainPanel::OnBoundsSelectedFromMap(double W, double S, double E, double N)
+{
+    if (WestEdit.IsValid())  WestEdit->SetText(FText::FromString(FString::Printf(TEXT("%.6f"), W)));
+    if (SouthEdit.IsValid()) SouthEdit->SetText(FText::FromString(FString::Printf(TEXT("%.6f"), S)));
+    if (EastEdit.IsValid())  EastEdit->SetText(FText::FromString(FString::Printf(TEXT("%.6f"), E)));
+    if (NorthEdit.IsValid()) NorthEdit->SetText(FText::FromString(FString::Printf(TEXT("%.6f"), N)));
+    // Auto-hide map after selection
+    bMapPickerVisible = false;
+    if (MapPickerBox.IsValid())
+        MapPickerBox->Invalidate(EInvalidateWidgetReason::Layout);
+    OnLog(FString::Printf(TEXT("[Map] Bounds set: W=%.5f S=%.5f E=%.5f N=%.5f"), W, S, E, N), false);
 }
 
 FReply SGeoTerrainPanel::OnImportLandscapeClicked()

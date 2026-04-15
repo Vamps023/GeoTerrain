@@ -8,6 +8,7 @@
 #include "Widgets/Notifications/SProgressBar.h"
 #include "GeoGenerationTypes.h"
 #include "GeoGenerationCoordinator.h"
+#include "UI/SGeoMapPicker.h"
 
 // Main Slate panel — replaces GeoTerrainPanel + all ui/ Qt widgets
 class SGeoTerrainPanel : public SCompoundWidget
@@ -21,6 +22,7 @@ public:
 private:
     // ── UI helpers ────────────────────────────────────────────────────────────
     TSharedRef<SWidget> BuildMapSection();
+    TSharedRef<SWidget> BuildMapPickerSection();
     TSharedRef<SWidget> BuildSourceSection();
     TSharedRef<SWidget> BuildOutputSection();
     TSharedRef<SWidget> BuildChunkSection();
@@ -31,6 +33,8 @@ private:
     FReply OnExportClicked();
     FReply OnCancelClicked();
     FReply OnImportLandscapeClicked();
+    FReply OnToggleMapClicked();
+    void   OnBoundsSelectedFromMap(double W, double S, double E, double N);
 
     bool CanExport()  const;
     bool CanCancel()  const;
@@ -57,6 +61,11 @@ private:
     TSharedPtr<STextBlock>       ConsoleText;
     TSharedPtr<SScrollBox>       ConsoleScroll;
     TSharedPtr<SProgressBar>     ProgressBar;
+
+    // Map picker
+    TSharedPtr<SGeoMapPicker>    MapPicker;
+    TSharedPtr<SBox>             MapPickerBox;
+    bool                         bMapPickerVisible = false;
 
     FString   LastHeightmapR16;
     FString   LastAlbedoTif;

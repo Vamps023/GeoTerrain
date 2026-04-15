@@ -35,6 +35,7 @@ public class GeoTerrain : ModuleRules
             "UnrealEd",
             "ToolMenus",
             "InputCore",
+            "WebBrowser",
         });
 
         PrivateDependencyModuleNames.AddRange(new string[] {
