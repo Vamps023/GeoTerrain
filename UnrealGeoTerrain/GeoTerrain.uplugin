@@ -1,0 +1,24 @@
+{
+    "FileVersion": 3,
+    "Version": 1,
+    "VersionName": "1.0",
+    "FriendlyName": "GeoTerrain",
+    "Description": "Real-world geo terrain generator. Downloads DEM + satellite tiles, exports heightmap (.r16/.tif) and albedo for Unreal Engine Landscape.",
+    "Category": "World Building",
+    "CreatedBy": "Vamps",
+    "CreatedByURL": "",
+    "DocsURL": "",
+    "MarketplaceURL": "",
+    "SupportURL": "",
+    "CanContainContent": false,
+    "IsBetaVersion": false,
+    "IsExperimentalVersion": false,
+    "Installed": false,
+    "Modules": [
+        {
+            "Name": "GeoTerrain",
+            "Type": "Editor",
+            "LoadingPhase": "Default"
+        }
+    ]
+}
