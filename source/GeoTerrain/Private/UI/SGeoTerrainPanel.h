@@ -42,6 +42,10 @@ private:
     bool CanCancel()  const;
     bool CanImport()  const;
 
+    void          OnDemSourceChanged(TSharedPtr<FString> NewSource);
+    FText         GetDemInfoText()   const;
+    EVisibility   GetLocalTiffVisibility() const;
+
     // ── Coordinator callbacks (fired on game thread) ──────────────────────────
     void OnLog     (const FString& Msg, bool bIsError);
     void OnProgress(int32 Percent);
@@ -68,6 +72,10 @@ private:
     TArray<TSharedPtr<FString>>                DemSourceOptions;
     TSharedPtr<FString>                        SelectedDemSource;
     TSharedPtr<SComboBox<TSharedPtr<FString>>> DemSourceCombo;
+    TSharedPtr<STextBlock>                     DemInfoLabel;
+    TSharedPtr<SBox>                           LocalTiffBox;
+    TSharedPtr<SEditableTextBox>               LocalTiffEdit;
+    TSharedPtr<SSpinBox<float>>                ResolutionSpin;
 
     // Inline map picker (pure Slate, no CEF)
     TSharedPtr<SBox>             WorldMapBox;
