@@ -39,14 +39,9 @@ void SGeoTerrainPanel::Construct(const FArguments& InArgs)
         + SSplitter::Slot()
         .Value(0.55f)
         [
-            SNew(SBorder)
-            .BorderImage(FAppStyle::GetBrush("ToolPanel.GroupBorder"))
-            .Padding(0)
-            [
-                SAssignNew(MapWidget, SGeoWorldMap)
-                .OnBoundsSelected(FOnMapBoundsSelected::CreateSP(
-                    this, &SGeoTerrainPanel::OnBoundsSelectedFromMap))
-            ]
+            SAssignNew(MapWidget, SGeoWorldMap)
+            .OnBoundsSelected(FOnMapBoundsSelected::CreateSP(
+                this, &SGeoTerrainPanel::OnBoundsSelectedFromMap))
         ]
 
         // ── RIGHT: settings + progress + console ─────────────────────────────
