@@ -51,6 +51,7 @@ void SGeoWorldMap::LoadWorldMap()
     }
 
     WorldMapBrush = MakeShared<FSlateDynamicImageBrush>(BrushName, FVector2D(W, H));
+    bMapLoaded = true;
 }
 
 FVector2D SGeoWorldMap::ComputeDesiredSize(float) const
@@ -102,6 +103,10 @@ int32 SGeoWorldMap::OnPaint(
     const FSlateBrush*   White   = FCoreStyle::Get().GetBrush("WhiteBrush");
     const FSlateFontInfo SmFont  = FCoreStyle::GetDefaultFontStyle("Regular", 7);
     const FSlateFontInfo BldFont = FCoreStyle::GetDefaultFontStyle("Bold", 8);
+
+    // Retry map load if it failed during Construct (Slate not ready then)
+    if (!bMapLoaded)
+        const_cast<SGeoWorldMap*>(this)->LoadWorldMap();
 
     // ── 1. Ocean background ───────────────────────────────────────────────────
     FSlateDrawElement::MakeBox(Out, L++, G.ToPaintGeometry(),

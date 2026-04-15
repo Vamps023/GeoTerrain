@@ -55,4 +55,5 @@ private:
 
     // ── Bundled world map image ───────────────────────────────────────────────
     TSharedPtr<FSlateDynamicImageBrush> WorldMapBrush;
+    mutable bool bMapLoaded = false;
 };
