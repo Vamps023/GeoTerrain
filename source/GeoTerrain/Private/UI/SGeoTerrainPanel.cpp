@@ -485,21 +485,49 @@ void SGeoTerrainPanel::OnBoundsSelectedFromMap(double W, double S, double E, dou
 FReply SGeoTerrainPanel::OnImportLandscapeClicked()
 {
     FGeoLandscapeImporter Importer;
-    FGeoLandscapeImporter::FImportParams Params;
-    Params.HeightmapR16Path = LastHeightmapR16;
-    Params.AlbedoTifPath    = LastAlbedoTif;
 
-    // Pass current bounds for geo-scale calculation
-    Params.Bounds.West  = FCString::Atod(*WestEdit->GetText().ToString());
-    Params.Bounds.South = FCString::Atod(*SouthEdit->GetText().ToString());
-    Params.Bounds.East  = FCString::Atod(*EastEdit->GetText().ToString());
-    Params.Bounds.North = FCString::Atod(*NorthEdit->GetText().ToString());
+    FGeoBounds Bounds;
+    Bounds.West  = FCString::Atod(*WestEdit->GetText().ToString());
+    Bounds.South = FCString::Atod(*SouthEdit->GetText().ToString());
+    Bounds.East  = FCString::Atod(*EastEdit->GetText().ToString());
+    Bounds.North = FCString::Atod(*NorthEdit->GetText().ToString());
 
-    auto Result = Importer.Import(Params);
-    if (!Result.bSuccess)
-        OnLog(FString::Printf(TEXT("[Import] FAILED: %s"), *Result.Message), true);
+    const FString OutputDir = OutputDirEdit.IsValid() ? OutputDirEdit->GetText().ToString() : TEXT("");
+    const float   ChunkKm   = ChunkSizeSpin.IsValid() ? ChunkSizeSpin->GetValue() : 0.f;
+
+    if (ChunkKm >= 1.0f)
+    {
+        // ── Multi-chunk import ────────────────────────────────────────────────
+        FGeoLandscapeImporter::FChunkImportParams P;
+        P.OutputDir    = OutputDir;
+        P.TotalBounds  = Bounds;
+        P.Chunking     = BuildRequest().Chunking;   // carries ChunkSizeKm + EnabledMask
+        P.ZScale       = 100.0f;
+
+        TArray<TGeoResult<AActor*>> Results = Importer.ImportChunks(P);
+        int32 Ok = 0, Fail = 0;
+        for (const auto& R : Results)
+        {
+            if (R.bSuccess) ++Ok;
+            else { ++Fail; OnLog(FString::Printf(TEXT("[Import] FAILED: %s"), *R.Message), true); }
+        }
+        OnLog(FString::Printf(TEXT("[Import] %d chunk(s) imported, %d failed."), Ok, Fail),
+              Fail > 0);
+    }
     else
-        OnLog(TEXT("[Import] Landscape created successfully."), false);
+    {
+        // ── Single import (no chunking) ───────────────────────────────────────
+        FGeoLandscapeImporter::FImportParams P;
+        P.HeightmapR16Path = LastHeightmapR16;
+        P.AlbedoTifPath    = LastAlbedoTif;
+        P.Bounds           = Bounds;
+
+        auto Result = Importer.Import(P);
+        if (!Result.bSuccess)
+            OnLog(FString::Printf(TEXT("[Import] FAILED: %s"), *Result.Message), true);
+        else
+            OnLog(TEXT("[Import] Landscape created successfully."), false);
+    }
 
     return FReply::Handled();
 }

@@ -1,4 +1,5 @@
 #include "GeoLandscapeImporter.h"
+#include "GeoChunkPlanner.h"
 
 #include "LandscapeProxy.h"
 #include "Landscape.h"
@@ -120,4 +121,71 @@ TGeoResult<AActor*> FGeoLandscapeImporter::Import(const FImportParams& Params)
     Landscape->MarkPackageDirty();
 
     return TGeoResult<AActor*>::Ok(Landscape);
+}
+
+TArray<TGeoResult<AActor*>> FGeoLandscapeImporter::ImportChunks(const FChunkImportParams& Params)
+{
+    TArray<TGeoResult<AActor*>> Results;
+
+    if (!Params.TotalBounds.IsValid())
+    {
+        Results.Add(TGeoResult<AActor*>::Fail(10, TEXT("ImportChunks: TotalBounds is invalid.")));
+        return Results;
+    }
+
+    // Rebuild the same chunk plan the exporter used
+    FGeoChunkPlan Plan = FGeoChunkPlanner::Plan(Params.TotalBounds, Params.Chunking);
+
+    // Single-chunk case: just look for heightmap.r16 directly in OutputDir
+    if (Plan.Chunks.Num() <= 1)
+    {
+        FImportParams P;
+        P.HeightmapR16Path = FPaths::Combine(Params.OutputDir, TEXT("heightmap.r16"));
+        P.Bounds           = Params.TotalBounds;
+        P.LandscapeName    = TEXT("GeoTerrain_Landscape");
+        P.ZScale           = Params.ZScale;
+        P.WorldOffset      = FVector::ZeroVector;
+        Results.Add(Import(P));
+        return Results;
+    }
+
+    // Multi-chunk: the exporter writes chunk_R_C/heightmap.r16
+    // World offset: each chunk is placed relative to the SW corner of the total bounds.
+    // 1 degree lat/lon ~ 111320 m at equator → convert to UE cm.
+    const double CmPerDegLat = 111320.0 * 100.0;
+    const double CentreLatRad = FMath::DegreesToRadians((Params.TotalBounds.North + Params.TotalBounds.South) * 0.5);
+    const double CmPerDegLon = 111320.0 * 100.0 * FMath::Cos(CentreLatRad);
+
+    for (const FGeoChunkDefinition& Chunk : Plan.Chunks)
+    {
+        // Path: OutputDir/chunk_R_C/heightmap.r16
+        FString ChunkDir;
+        if (Chunk.DirectoryName == TEXT(".") || Chunk.DirectoryName.IsEmpty())
+            ChunkDir = Params.OutputDir;
+        else
+            ChunkDir = FPaths::Combine(Params.OutputDir, Chunk.DirectoryName);
+
+        FString R16Path = FPaths::Combine(ChunkDir, TEXT("heightmap.r16"));
+        if (!IFileManager::Get().FileExists(*R16Path))
+        {
+            Results.Add(TGeoResult<AActor*>::Fail(11,
+                FString::Printf(TEXT("Missing: %s"), *R16Path)));
+            continue;
+        }
+
+        // World offset in cm from the SW corner of the total bounds
+        double OffsetX = (Chunk.Bounds.West  - Params.TotalBounds.West)  * CmPerDegLon;
+        double OffsetY = (Chunk.Bounds.South - Params.TotalBounds.South) * CmPerDegLat;
+
+        FImportParams P;
+        P.HeightmapR16Path = R16Path;
+        P.Bounds           = Chunk.Bounds;
+        P.LandscapeName    = FString::Printf(TEXT("GeoTerrain_%s"), *Chunk.DirectoryName);
+        P.ZScale           = Params.ZScale;
+        P.WorldOffset      = FVector((float)OffsetX, (float)OffsetY, 0.f);
+
+        Results.Add(Import(P));
+    }
+
+    return Results;
 }

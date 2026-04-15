@@ -20,8 +20,20 @@ public:
         FVector         WorldOffset        = FVector::ZeroVector;
     };
 
+    struct FChunkImportParams
+    {
+        FString           OutputDir;       // root output dir (contains chunk_R_C/ subdirs)
+        FGeoBounds        TotalBounds;     // full selected area
+        FGeoChunkSettings Chunking;        // same settings used during export
+        float             ZScale = 100.0f;
+    };
+
     // Must be called on game thread. Spawns ALandscape in the current editor world.
     TGeoResult<AActor*> Import(const FImportParams& Params);
+
+    // Import all chunk_R_C/heightmap.r16 files found under OutputDir.
+    // Each chunk gets its own ALandscape actor placed at the correct world offset.
+    TArray<TGeoResult<AActor*>> ImportChunks(const FChunkImportParams& Params);
 
 private:
     // Snap file size to valid UE landscape dimension (127, 253, 505, 1009, 2017, 4033, 8129)
