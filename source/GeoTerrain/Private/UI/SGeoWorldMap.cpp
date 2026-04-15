@@ -28,7 +28,7 @@ void SGeoWorldMap::LoadWorldMap()
     FString Dir = Plugin.IsValid()
         ? Plugin->GetBaseDir() / TEXT("Resources")
         : FPaths::ProjectPluginsDir() / TEXT("GeoTerrain/Resources");
-    FString Path = Dir / TEXT("worldmap.jpg");
+    FString Path = Dir / TEXT("worldmap.png");
 
     if (!FPaths::FileExists(Path)) return;
 
