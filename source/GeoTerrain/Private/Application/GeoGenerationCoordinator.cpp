@@ -77,7 +77,10 @@ void FGeoGenerationCoordinator::RunInternal(FGeoGenerationRequest Request)
         }
 
         const FGeoChunkDefinition& Chunk = Plan.EnabledChunks[Idx];
-        const FString OutputDir = FPaths::Combine(Request.Output.OutputDir, Chunk.DirectoryName);
+        // For single-chunk ('.'), use the output dir directly to avoid path weirdness
+        const FString OutputDir = (Chunk.DirectoryName == TEXT(".") || Chunk.DirectoryName.IsEmpty())
+            ? Request.Output.OutputDir
+            : FPaths::Combine(Request.Output.OutputDir, Chunk.DirectoryName);
         IFileManager::Get().MakeDirectory(*OutputDir, true);
 
         Log(FString::Printf(TEXT("[Chunk %d/%d] %s"), Idx + 1, Total, *OutputDir));

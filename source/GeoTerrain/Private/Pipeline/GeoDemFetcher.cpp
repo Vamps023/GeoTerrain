@@ -91,10 +91,37 @@ TGeoResult<FGeoDemArtifact> FGeoDemFetcher::FetchFromOpenTopography(const FGeoBo
 
     // Download raw GeoTIFF
     const FString RawPath = Config.OutputPath + TEXT("_raw.tif");
-    Context.ReportProgress(TEXT("Downloading DEM..."), 10);
+    Context.ReportProgress(FString::Printf(TEXT("Downloading DEM (%s)..."), **CodePtr), 10);
+    Context.ReportProgress(FString::Printf(TEXT("URL: %s"), *Url), 11);
 
     if (!DownloadFile(Url, RawPath, Context))
-        return TGeoResult<FGeoDemArtifact>::Fail(2, TEXT("DEM download failed."));
+        return TGeoResult<FGeoDemArtifact>::Fail(2, TEXT("DEM download failed (HTTP error)."));
+
+    // Validate: OpenTopography returns HTML/JSON on error, not GeoTIFF
+    {
+        TUniquePtr<FArchive> Peek(IFileManager::Get().CreateFileReader(*RawPath));
+        if (!Peek || Peek->TotalSize() < 4)
+            return TGeoResult<FGeoDemArtifact>::Fail(3, TEXT("DEM file empty or missing."));
+
+        uint8 Magic[512] = {};
+        const int32 ReadBytes = FMath::Min((int64)512, Peek->TotalSize());
+        Peek->Serialize(Magic, ReadBytes);
+        Peek.Reset();
+
+        // GeoTIFF magic: 49 49 2A 00 (little-endian) or 4D 4D 00 2A (big-endian)
+        const bool bIsTiff = (Magic[0] == 0x49 && Magic[1] == 0x49 && Magic[2] == 0x2A) ||
+                             (Magic[0] == 0x4D && Magic[1] == 0x4D && Magic[3] == 0x2A);
+        if (!bIsTiff)
+        {
+            // Log what the server actually said (first 256 chars)
+            FString ErrMsg = UTF8_TO_TCHAR(reinterpret_cast<const char*>(Magic));
+            ErrMsg = ErrMsg.Left(256).TrimEnd();
+            // Remove the bad file so it doesn't get confused with a valid TIF
+            IFileManager::Get().Delete(*RawPath);
+            return TGeoResult<FGeoDemArtifact>::Fail(4,
+                FString::Printf(TEXT("DEM API returned non-GeoTIFF response (bad API key or invalid bounds?):\n%s"), *ErrMsg));
+        }
+    }
 
     return ConvertToHeightmapTiff(RawPath, Config.OutputPath, Bounds, Config, Context);
 }
@@ -177,11 +204,29 @@ TGeoResult<FGeoDemArtifact> FGeoDemFetcher::ConvertToHeightmapTiff(const FString
     const FString RawPath = FPaths::ChangeExtension(DstPath, TEXT("r16"));
     auto RawResult = ExportUnrealRaw(DstPath, RawPath, Context);
 
+    // Read actual elevation range from the output TIF
+    double ElevMin = 0.0, ElevMax = 0.0;
+    {
+        GDALDataset* StatDs = static_cast<GDALDataset*>(GDALOpen(TCHAR_TO_UTF8(*DstPath), GA_ReadOnly));
+        if (StatDs)
+        {
+            double Mn, Mx, Mean, Std;
+            if (StatDs->GetRasterBand(1)->GetStatistics(0, 1, &Mn, &Mx, &Mean, &Std) == CE_None)
+            {
+                if (Mn > -9000.0) ElevMin = Mn;
+                if (Mx > -9000.0) ElevMax = Mx;
+            }
+            GDALClose(StatDs);
+        }
+    }
+
     FGeoDemArtifact Art;
     Art.OutputPath    = DstPath;
     Art.UnrealRawPath = RawResult.bSuccess ? RawResult.Value : TEXT("");
     Art.WidthPx  = OutW;
     Art.HeightPx = OutH;
+    Art.ElevMin  = ElevMin;
+    Art.ElevMax  = ElevMax;
     return TGeoResult<FGeoDemArtifact>::Ok(Art);
 }
 
