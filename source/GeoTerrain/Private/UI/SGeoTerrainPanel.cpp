@@ -398,6 +398,11 @@ TSharedRef<SWidget> SGeoTerrainPanel::BuildChunkSection()
             [
                 SAssignNew(ChunkSizeSpin, SSpinBox<float>)
                 .MinValue(0.0f).MaxValue(100.0f).Value(0.0f).Delta(0.5f)
+                .OnValueChanged_Lambda([this](float Val)
+                {
+                    if (MapWidget.IsValid())
+                        MapWidget->SetChunkSizeKm((double)Val);
+                })
             ]
         ];
 }
@@ -611,6 +616,8 @@ FGeoGenerationRequest SGeoTerrainPanel::BuildRequest()
     Req.Output.OutputDir          = OutputDirEdit->GetText().ToString();
     Req.Output.bExportUnrealRaw   = true;
 
-    Req.Chunking.ChunkSizeKm      = ChunkSizeSpin->GetValue();
+    Req.Chunking.ChunkSizeKm = ChunkSizeSpin->GetValue();
+    if (MapWidget.IsValid())
+        Req.Chunking.EnabledMask = MapWidget->GetEnabledMask();
     return Req;
 }

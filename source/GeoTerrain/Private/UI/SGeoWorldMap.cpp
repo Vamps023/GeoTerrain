@@ -98,11 +98,55 @@ void SGeoWorldMap::LocalToLonLat(FVector2D P, const FGeometry& Geo, double& OutL
 void SGeoWorldMap::ClampView(const FGeometry& Geo)
 {
     FVector2D S = Geo.GetLocalSize();
-    // Prevent panning further than half a zoomed map width/height
     float MaxPanX = S.X * (Zoom - 1.0f) * 0.5f;
     float MaxPanY = S.Y * (Zoom - 1.0f) * 0.5f;
     PanOffset.X = FMath::Clamp(PanOffset.X, -MaxPanX, MaxPanX);
     PanOffset.Y = FMath::Clamp(PanOffset.Y, -MaxPanY, MaxPanY);
+}
+
+// ── Chunk system ──────────────────────────────────────────────────────────────
+void SGeoWorldMap::RebuildChunkPlan()
+{
+    if (!bHasSelection || ChunkSizeKm < 1.0)
+    {
+        CurrentPlan = FGeoChunkPlan();
+        ChunkEnabledMask.Empty();
+        return;
+    }
+    FGeoBounds Sel; Sel.West=SelW; Sel.South=SelS; Sel.East=SelE; Sel.North=SelN;
+    FGeoChunkSettings Settings;
+    Settings.ChunkSizeKm  = ChunkSizeKm;
+    Settings.EnabledMask  = ChunkEnabledMask;  // preserve existing toggle state if sizes match
+    CurrentPlan = FGeoChunkPlanner::Plan(Sel, Settings);
+    // Reset mask to all-enabled if size changed
+    if (ChunkEnabledMask.Num() != CurrentPlan.Chunks.Num())
+    {
+        ChunkEnabledMask.Init(true, CurrentPlan.Chunks.Num());
+        // Replan with the correct mask
+        Settings.EnabledMask = ChunkEnabledMask;
+        CurrentPlan = FGeoChunkPlanner::Plan(Sel, Settings);
+    }
+}
+
+void SGeoWorldMap::SetChunkSizeKm(double Km)
+{
+    ChunkSizeKm = Km;
+    RebuildChunkPlan();
+    Invalidate(EInvalidateWidgetReason::Paint);
+}
+
+int32 SGeoWorldMap::HitTestChunk(FVector2D LocalPt, const FGeometry& Geo) const
+{
+    for (int32 I = 0; I < CurrentPlan.Chunks.Num(); ++I)
+    {
+        const FGeoChunkDefinition& C = CurrentPlan.Chunks[I];
+        FVector2D TL = LonLatToLocal(C.Bounds.West,  C.Bounds.North, Geo);
+        FVector2D BR = LonLatToLocal(C.Bounds.East,  C.Bounds.South, Geo);
+        if (LocalPt.X >= TL.X && LocalPt.X <= BR.X &&
+            LocalPt.Y >= TL.Y && LocalPt.Y <= BR.Y)
+            return I;
+    }
+    return INDEX_NONE;
 }
 
 // ── Paint ─────────────────────────────────────────────────────────────────────
@@ -241,7 +285,62 @@ int32 SGeoWorldMap::OnPaint(
         ++L;
     }
 
-    // ── 7. Confirmed selection ────────────────────────────────────────────────
+    // ── 7. Chunk grid over selection ──────────────────────────────────────────
+    if (bHasSelection && CurrentPlan.Chunks.Num() > 1)
+    {
+        for (int32 I = 0; I < CurrentPlan.Chunks.Num(); ++I)
+        {
+            const FGeoChunkDefinition& C = CurrentPlan.Chunks[I];
+            const bool bChunkEnabled = (ChunkEnabledMask.Num() > I) ? ChunkEnabledMask[I] : true;
+
+            FVector2D CTL = LonLatToLocal(C.Bounds.West,  C.Bounds.North, G);
+            FVector2D CBR = LonLatToLocal(C.Bounds.East,  C.Bounds.South, G);
+            FVector2D CSz = CBR - CTL;
+            if (CSz.X < 1.f || CSz.Y < 1.f) continue;
+
+            // Fill: enabled=blue tint, disabled=dark red tint
+            FLinearColor Fill = bChunkEnabled
+                ? FLinearColor(0.1f, 0.5f, 1.0f, 0.13f)
+                : FLinearColor(0.7f, 0.1f, 0.1f, 0.35f);
+            FSlateDrawElement::MakeBox(Out, L,
+                G.ToPaintGeometry(CSz, FSlateLayoutTransform(CTL)),
+                White, ESlateDrawEffect::None, Fill);
+
+            // Border
+            FLinearColor Border = bChunkEnabled
+                ? FLinearColor(0.3f, 0.75f, 1.0f, 0.7f)
+                : FLinearColor(1.0f, 0.3f, 0.3f, 0.6f);
+            TArray<FVector2D> Rim={CTL,{CBR.X,CTL.Y},CBR,{CTL.X,CBR.Y},CTL};
+            FSlateDrawElement::MakeLines(Out, L, G.ToPaintGeometry(), Rim,
+                ESlateDrawEffect::None, Border, true, 1.0f);
+
+            // Index label (only if chunk is big enough)
+            if (CSz.X > 20.f && CSz.Y > 12.f)
+            {
+                FVector2D LabelPos = CTL + FVector2D(3.f, 2.f);
+                FSlateDrawElement::MakeText(Out, L,
+                    G.ToPaintGeometry(FVector2D(CSz.X-4.f, 12.f), FSlateLayoutTransform(LabelPos)),
+                    FString::Printf(TEXT("%d"), I), SmFont,
+                    ESlateDrawEffect::None,
+                    bChunkEnabled ? FLinearColor(0.8f,0.95f,1.f,0.9f) : FLinearColor(1.f,0.6f,0.6f,0.8f));
+            }
+        }
+        ++L;
+
+        // Chunk summary label
+        int32 Enabled = 0;
+        for (bool b : ChunkEnabledMask) if (b) ++Enabled;
+        FString Summary = FString::Printf(TEXT("%d / %d chunks enabled  (LMB click chunk to toggle)"),
+            Enabled, CurrentPlan.Chunks.Num());
+        FVector2D SelTL = LonLatToLocal(SelW, SelN, G);
+        FVector2D LblPos = SelTL + FVector2D(2.f, -13.f);
+        if (LblPos.Y < 2.f) LblPos.Y = LonLatToLocal(SelW, SelS, G).Y + 2.f;
+        FSlateDrawElement::MakeText(Out, L++,
+            G.ToPaintGeometry(FVector2D(380.f, 12.f), FSlateLayoutTransform(LblPos)),
+            Summary, SmFont, ESlateDrawEffect::None, FLinearColor(0.9f, 0.85f, 0.4f, 1.f));
+    }
+
+    // ── 8. Confirmed selection ────────────────────────────────────────────────
     if (bHasSelection)
     {
         FVector2D TL = LonLatToLocal(SelW, SelN, G);
@@ -313,6 +412,24 @@ FReply SGeoWorldMap::OnMouseButtonDown(const FGeometry& G, const FPointerEvent& 
     FVector2D Local = G.AbsoluteToLocal(E.GetScreenSpacePosition());
     if (E.GetEffectingButton() == EKeys::LeftMouseButton)
     {
+        // If chunk grid is showing and click hits a chunk — toggle it
+        if (bHasSelection && CurrentPlan.Chunks.Num() > 1)
+        {
+            int32 Hit = HitTestChunk(Local, G);
+            if (Hit != INDEX_NONE)
+            {
+                if (ChunkEnabledMask.IsValidIndex(Hit))
+                    ChunkEnabledMask[Hit] = !ChunkEnabledMask[Hit];
+                // Re-resolve EnabledChunks list
+                FGeoBounds Sel; Sel.West=SelW; Sel.South=SelS; Sel.East=SelE; Sel.North=SelN;
+                FGeoChunkSettings S2;
+                S2.ChunkSizeKm = ChunkSizeKm;
+                S2.EnabledMask = ChunkEnabledMask;
+                CurrentPlan = FGeoChunkPlanner::Plan(Sel, S2);
+                Invalidate(EInvalidateWidgetReason::Paint);
+                return FReply::Handled().SetUserFocus(SharedThis(this));
+            }
+        }
         bDragging = true;
         DragStart = DragEnd = Local;
         Invalidate(EInvalidateWidgetReason::Paint);
@@ -362,8 +479,12 @@ FReply SGeoWorldMap::OnMouseButtonUp(const FGeometry& G, const FPointerEvent& E)
         if (S2>N2) Swap(S2,N2);
         SelW=W2; SelE=E2; SelS=S2; SelN=N2;
         bHasSelection = (SelE-SelW > 0.01 && SelN-SelS > 0.01);
-        if (bHasSelection && OnBoundsSelected.IsBound())
-            OnBoundsSelected.Execute(SelW,SelS,SelE,SelN);
+        if (bHasSelection)
+        {
+            RebuildChunkPlan();
+            if (OnBoundsSelected.IsBound())
+                OnBoundsSelected.Execute(SelW,SelS,SelE,SelN);
+        }
         Invalidate(EInvalidateWidgetReason::Paint);
         return FReply::Handled().ReleaseMouseCapture();
     }

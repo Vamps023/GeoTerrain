@@ -2,6 +2,7 @@
 #include "CoreMinimal.h"
 #include "Widgets/SLeafWidget.h"
 #include "Brushes/SlateDynamicImageBrush.h"
+#include "GeoChunkPlanner.h"
 
 DECLARE_DELEGATE_FourParams(FOnMapBoundsSelected, double, double, double, double);
 
@@ -15,6 +16,12 @@ public:
     void Construct(const FArguments& InArgs);
     virtual ~SGeoWorldMap();
     void LoadWorldMap();
+
+    // ── Chunk API ─────────────────────────────────────────────────────────────
+    void           SetChunkSizeKm(double Km);     // call when spin changes
+    const TArray<bool>& GetEnabledMask() const { return ChunkEnabledMask; }
+    int32          GetChunkCount()  const { return CurrentPlan.Chunks.Num(); }
+    int32          GetEnabledCount() const { return CurrentPlan.EnabledChunks.Num(); }
 
     virtual int32 OnPaint(
         const FPaintArgs&, const FGeometry&, const FSlateRect&,
@@ -52,6 +59,13 @@ private:
 
     bool   bHasSelection = false;
     double SelW=0, SelS=0, SelE=0, SelN=0;
+
+    // ── Chunk grid ───────────────────────────────────────────────────────────
+    double           ChunkSizeKm = 0.0;
+    FGeoChunkPlan    CurrentPlan;
+    TArray<bool>     ChunkEnabledMask;
+    void             RebuildChunkPlan();
+    int32            HitTestChunk(FVector2D LocalPt, const FGeometry& Geo) const;
 
     // ── Bundled world map image ───────────────────────────────────────────────
     TUniquePtr<FSlateDynamicImageBrush> WorldMapBrush;
