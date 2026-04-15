@@ -126,8 +126,14 @@ int32 SGeoWorldMap::OnPaint(
         for (int i = 0; ; ++i)
         {
             const FCoastPt& P = kCoastline[i];
-            if (P.X > 997.f) break;          // end-of-data sentinel
-            if (P.X > 990.f)                 // ring separator
+            if (P.X > 997.f)                 // 998 sentinel = end of all data
+            {
+                if (Ring.Num() >= 2)
+                    FSlateDrawElement::MakeLines(Out, L, G.ToPaintGeometry(),
+                        Ring, ESlateDrawEffect::None, LandC, true, 1.1f);
+                break;
+            }
+            if (P.X > 990.f)                 // 999 sentinel = end of this ring
             {
                 if (Ring.Num() >= 2)
                     FSlateDrawElement::MakeLines(Out, L, G.ToPaintGeometry(),
@@ -137,9 +143,6 @@ int32 SGeoWorldMap::OnPaint(
             }
             Ring.Add(LonLatToLocal(P.X, P.Y, G));
         }
-        if (Ring.Num() >= 2)
-            FSlateDrawElement::MakeLines(Out, L, G.ToPaintGeometry(),
-                Ring, ESlateDrawEffect::None, LandC, true, 1.1f);
         ++L;
     }
 
