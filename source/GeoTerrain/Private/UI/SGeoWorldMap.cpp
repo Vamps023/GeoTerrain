@@ -167,19 +167,41 @@ int32 SGeoWorldMap::OnPaint(
     FSlateDrawElement::MakeBox(Out, L++, G.ToPaintGeometry(),
         White, ESlateDrawEffect::None, FLinearColor(0.04f, 0.07f, 0.14f));
 
-    // ── 2. Bundled world map image ──────────────────────────────────────────────
+    // ── 2. Bundled world map image (UV-cropped to widget viewport) ────────────
     if (WorldMapBrush.IsValid())
     {
-        // The image is equirectangular: lon -180..180, lat 90..-90
-        // Map the full image to where (-180,90) -> (180,-90) sits in local space
+        // Where the full image sits in local space
         FVector2D ImgTL = LonLatToLocal(-180.0,  90.0, G);
         FVector2D ImgBR = LonLatToLocal( 180.0, -90.0, G);
         FVector2D ImgSz = ImgBR - ImgTL;
+
         if (ImgSz.X > 0.f && ImgSz.Y > 0.f)
         {
-            FSlateDrawElement::MakeBox(Out, L,
-                G.ToPaintGeometry(ImgSz, FSlateLayoutTransform(ImgTL)),
-                WorldMapBrush.Get(), ESlateDrawEffect::None, FLinearColor::White);
+            // Clamp draw rect to widget viewport
+            FVector2D WidSz = G.GetLocalSize();
+            FVector2D DrawTL(FMath::Max(ImgTL.X, 0.f), FMath::Max(ImgTL.Y, 0.f));
+            FVector2D DrawBR(FMath::Min(ImgBR.X, WidSz.X), FMath::Min(ImgBR.Y, WidSz.Y));
+            FVector2D DrawSz = DrawBR - DrawTL;
+
+            if (DrawSz.X > 0.f && DrawSz.Y > 0.f)
+            {
+                // UV region: which portion of the texture covers the clamped rect
+                float U0 = (DrawTL.X - ImgTL.X) / ImgSz.X;
+                float V0 = (DrawTL.Y - ImgTL.Y) / ImgSz.Y;
+                float U1 = (DrawBR.X - ImgTL.X) / ImgSz.X;
+                float V1 = (DrawBR.Y - ImgTL.Y) / ImgSz.Y;
+
+                // Temporarily override UVRegion on the brush (safe: OnPaint is single-threaded)
+                FSlateDynamicImageBrush* Brush = WorldMapBrush.Get();
+                FBox2f PrevUV = Brush->GetUVRegion();
+                Brush->SetUVRegion(FBox2d(FVector2D(U0, V0), FVector2D(U1, V1)));
+
+                FSlateDrawElement::MakeBox(Out, L,
+                    G.ToPaintGeometry(DrawSz, FSlateLayoutTransform(DrawTL)),
+                    Brush, ESlateDrawEffect::None, FLinearColor::White);
+
+                Brush->SetUVRegion(PrevUV);
+            }
         }
     }
     ++L;
@@ -503,7 +525,7 @@ FReply SGeoWorldMap::OnMouseWheel(const FGeometry& G, const FPointerEvent& E)
     FVector2D Local  = G.AbsoluteToLocal(E.GetScreenSpacePosition());
     FVector2D Centre = G.GetLocalSize() * 0.5f;
     float OldZoom    = Zoom;
-    Zoom = FMath::Clamp(Zoom * (E.GetWheelDelta() > 0 ? 1.25f : 0.8f), 1.0f, 32.0f);
+    Zoom = FMath::Clamp(Zoom * (E.GetWheelDelta() > 0 ? 1.25f : 0.8f), 1.0f, 256.0f);
 
     // Keep the geographic point under the cursor fixed during zoom
     float Scale = Zoom / OldZoom;
