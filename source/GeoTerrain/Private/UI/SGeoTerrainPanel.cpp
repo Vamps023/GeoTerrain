@@ -2,13 +2,6 @@
 #include "GeoLandscapeImporter.h"
 
 #include "Misc/Paths.h"
-#include "Misc/FileHelper.h"
-#include "HAL/PlatformFileManager.h"
-#include "Dom/JsonObject.h"
-#include "Serialization/JsonReader.h"
-#include "Serialization/JsonSerializer.h"
-#include "Interfaces/IPluginManager.h"
-#include "UI/GeoTerrainJsHandler.h"
 #include "Widgets/Input/SEditableTextBox.h"
 #include "Widgets/Input/SButton.h"
 #include "Widgets/Input/SSpinBox.h"
@@ -42,49 +35,18 @@ void SGeoTerrainPanel::Construct(const FArguments& InArgs)
         .Orientation(Orient_Horizontal)
         .ResizeMode(ESplitterResizeMode::Fill)
 
-        // ── LEFT: Leaflet web map ─────────────────────────────────────────────
+        // ── LEFT: interactive world map ─────────────────────────────────────────
         + SSplitter::Slot()
         .Value(0.55f)
         [
-            SAssignNew(MapBrowser, SWebBrowser)
-            .InitialURL(TEXT("https://geotile/map"))
-            .ContentsToLoad(LoadMapHtml())
-            .ShowControls(false)
-            .SupportsTransparency(false)
-            .OnLoadUrl_Lambda([this](const FString& Method, const FString& Url, FString& OutResponse) -> bool
-            {
-                // Serve https://geotile/* from plugin Resources/ folder
-                if (!Url.StartsWith(TEXT("https://geotile/")))
-                    return false;
-                FString RelPath = Url.Mid(FString(TEXT("https://geotile/")).Len());
-                // Strip query strings
-                int32 QMark; if (RelPath.FindChar('?', QMark)) RelPath.LeftInline(QMark);
-
-                TSharedPtr<IPlugin> Plugin = IPluginManager::Get().FindPlugin(TEXT("GeoTerrain"));
-                FString ResourcesDir = Plugin.IsValid()
-                    ? Plugin->GetBaseDir() / TEXT("Resources")
-                    : FPaths::ConvertRelativePathToFull(FPaths::ProjectPluginsDir() / TEXT("GeoTerrain/Resources"));
-                FString FilePath = ResourcesDir / RelPath;
-
-                if (FFileHelper::LoadFileToString(OutResponse, *FilePath))
-                    return true;
-
-                OutResponse = TEXT("/* not found: ") + FilePath + TEXT(" */");
-                return true;
-            })
-            .OnLoadStarted_Lambda([this]()
-            {
-                if (MapBrowser.IsValid())
-                {
-                    if (!JsHandler)
-                    {
-                        JsHandler = NewObject<UGeoTerrainJsHandler>();
-                        JsHandler->AddToRoot();
-                        JsHandler->SetPanel(this);
-                    }
-                    MapBrowser->BindUObject(TEXT("geoterrainhandler"), JsHandler, true);
-                }
-            })
+            SNew(SBorder)
+            .BorderImage(FAppStyle::GetBrush("ToolPanel.GroupBorder"))
+            .Padding(0)
+            [
+                SAssignNew(MapWidget, SGeoWorldMap)
+                .OnBoundsSelected(FOnMapBoundsSelected::CreateSP(
+                    this, &SGeoTerrainPanel::OnBoundsSelectedFromMap))
+            ]
         ]
 
         // ── RIGHT: settings + progress + console ─────────────────────────────
@@ -510,33 +472,6 @@ FReply SGeoTerrainPanel::OnCancelClicked()
     return FReply::Handled();
 }
 
-
-TOptional<FString> SGeoTerrainPanel::LoadMapHtml()
-{
-    TSharedPtr<IPlugin> Plugin = IPluginManager::Get().FindPlugin(TEXT("GeoTerrain"));
-    FString PluginDir = Plugin.IsValid()
-        ? Plugin->GetBaseDir()
-        : FPaths::ConvertRelativePathToFull(FPaths::ProjectPluginsDir() / TEXT("GeoTerrain"));
-    FString HtmlPath = PluginDir / TEXT("Resources/MapPicker.html");
-    FString Contents;
-    if (FFileHelper::LoadFileToString(Contents, *HtmlPath))
-        return TOptional<FString>(Contents);
-    // Fallback: minimal error page
-    return TOptional<FString>(TEXT("<html><body style='background:#111;color:#f88;font-family:monospace'>MapPicker.html not found</body></html>"));
-}
-
-void SGeoTerrainPanel::OnBoundsReceivedFromJs(const FString& JsonStr)
-{
-    TSharedPtr<FJsonObject> Obj;
-    TSharedRef<TJsonReader<>> Reader = TJsonReaderFactory<>::Create(JsonStr);
-    if (!FJsonSerializer::Deserialize(Reader, Obj) || !Obj.IsValid()) return;
-
-    double W = Obj->GetNumberField(TEXT("west"));
-    double S = Obj->GetNumberField(TEXT("south"));
-    double E = Obj->GetNumberField(TEXT("east"));
-    double N = Obj->GetNumberField(TEXT("north"));
-    OnBoundsSelectedFromMap(W, S, E, N);
-}
 
 void SGeoTerrainPanel::OnBoundsSelectedFromMap(double W, double S, double E, double N)
 {

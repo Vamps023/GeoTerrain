@@ -4,11 +4,22 @@
 #include "Styling/CoreStyle.h"
 #include "Fonts/SlateFontInfo.h"
 #include "Framework/Application/SlateApplication.h"
+#include "HttpModule.h"
+#include "Interfaces/IHttpRequest.h"
+#include "Interfaces/IHttpResponse.h"
+#include "IImageWrapper.h"
+#include "IImageWrapperModule.h"
+#include "Rendering/SlateRenderer.h"
 
-// ── Construct ─────────────────────────────────────────────────────────────────
+// ── Construct / Destruct ──────────────────────────────────────────────────────
 void SGeoWorldMap::Construct(const FArguments& InArgs)
 {
     OnBoundsSelected = InArgs._OnBoundsSelected;
+}
+
+SGeoWorldMap::~SGeoWorldMap()
+{
+    TileCache.Empty();
 }
 
 FVector2D SGeoWorldMap::ComputeDesiredSize(float) const
@@ -51,6 +62,117 @@ void SGeoWorldMap::ClampView(const FGeometry& Geo)
     PanOffset.Y = FMath::Clamp(PanOffset.Y, -MaxPanY, MaxPanY);
 }
 
+// ── OSM Tile Math ─────────────────────────────────────────────────────────────
+int32 SGeoWorldMap::GetOsmZoom() const
+{
+    // Map our widget Zoom (1=world, 32=max) to OSM zoom level 0-18
+    // Zoom=1 -> OSM 1, Zoom=32 -> OSM 13
+    return FMath::Clamp(FMath::FloorToInt(FMath::Log2(Zoom) + 1.0f), 1, 16);
+}
+
+FVector2D SGeoWorldMap::TileToLocal(int32 TZ, int32 TX, int32 TY, const FGeometry& Geo) const
+{
+    int32 NumTiles = 1 << TZ;
+    double TileLon = (double)TX / NumTiles * 360.0 - 180.0;
+    double SinhVal = FMath::Sinh(UE_PI * (1.0 - 2.0 * (double)TY / NumTiles));
+    double TileLat = FMath::RadiansToDegrees(FMath::Atan(SinhVal));
+    return LonLatToLocal(TileLon, TileLat, Geo);
+}
+
+void SGeoWorldMap::RequestVisibleTiles(const FGeometry& Geo) const
+{
+    int32 OZ = GetOsmZoom();
+    int32 NumTiles = 1 << OZ;
+    FVector2D Sz = Geo.GetLocalSize();
+
+    // Figure out which tiles cover the visible area
+    double LonMin, LatMax, LonMax, LatMin;
+    LocalToLonLat(FVector2D(0,    0   ), Geo, LonMin, LatMax);
+    LocalToLonLat(FVector2D(Sz.X, Sz.Y), Geo, LonMax, LatMin);
+
+    // Lon -> tile X
+    auto LonToTX = [&](double Lon) {
+        return FMath::Clamp((int32)FMath::Floor((Lon + 180.0) / 360.0 * NumTiles), 0, NumTiles - 1);
+    };
+    // Lat -> tile Y (Web Mercator)
+    auto LatToTY = [&](double Lat) {
+        double LatR = FMath::DegreesToRadians(FMath::Clamp(Lat, -85.0511, 85.0511));
+        return FMath::Clamp((int32)FMath::Floor((1.0 - FMath::Loge(FMath::Tan(LatR) + 1.0 / FMath::Cos(LatR)) / UE_PI) / 2.0 * NumTiles), 0, NumTiles - 1);
+    };
+
+    int32 TX0 = LonToTX(LonMin), TX1 = LonToTX(LonMax);
+    int32 TY0 = LatToTY(LatMax), TY1 = LatToTY(LatMin);
+
+    // Clamp to a reasonable fetch budget per frame
+    int32 Budget = 0;
+    for (int32 TY = TY0; TY <= TY1; ++TY)
+        for (int32 TX = TX0; TX <= TX1; ++TX)
+        {
+            FTileKey Key{OZ, TX, TY};
+            if (!TileCache.Contains(Key) && !PendingTiles.Contains(Key))
+            {
+                if (++Budget > 16) return;
+                FetchTile(Key);
+            }
+        }
+}
+
+void SGeoWorldMap::FetchTile(FTileKey Key) const
+{
+    PendingTiles.Add(Key);
+    // Round-robin between OSM subdomains a/b/c
+    static int32 Sub = 0;
+    const TCHAR* Subs[] = { TEXT("a"), TEXT("b"), TEXT("c") };
+    FString Url = FString::Printf(TEXT("https://%s.tile.openstreetmap.org/%d/%d/%d.png"),
+        Subs[(Sub++) % 3], Key.Z, Key.X, Key.Y);
+
+    TSharedRef<IHttpRequest, ESPMode::ThreadSafe> Req = FHttpModule::Get().CreateRequest();
+    Req->SetURL(Url);
+    Req->SetVerb(TEXT("GET"));
+    Req->SetHeader(TEXT("User-Agent"), TEXT("GeoTerrainPlugin/1.0 (Unreal Engine)"));
+    Req->OnProcessRequestComplete().BindSP(
+        const_cast<SGeoWorldMap*>(this), &SGeoWorldMap::OnTileDownloaded, Key);
+    Req->ProcessRequest();
+}
+
+void SGeoWorldMap::OnTileDownloaded(
+    FHttpRequestPtr, FHttpResponsePtr Resp, bool bOk, FTileKey Key) const
+{
+    PendingTiles.Remove(Key);
+    if (!bOk || !Resp.IsValid() || Resp->GetResponseCode() != 200) return;
+
+    const TArray<uint8>& Data = Resp->GetContent();
+    IImageWrapperModule& IWM = FModuleManager::LoadModuleChecked<IImageWrapperModule>(TEXT("ImageWrapper"));
+    TSharedPtr<IImageWrapper> IW = IWM.CreateImageWrapper(EImageFormat::PNG);
+    if (!IW.IsValid() || !IW->SetCompressed(Data.GetData(), Data.Num())) return;
+
+    TArray<uint8> Raw;
+    if (!IW->GetRaw(ERGBFormat::BGRA, 8, Raw)) return;
+
+    int32 W = IW->GetWidth(), H = IW->GetHeight();
+    FString BrushName = FString::Printf(TEXT("OSMTile_%d_%d_%d"), Key.Z, Key.X, Key.Y);
+
+    // Build a Slate dynamic image brush from raw BGRA bytes
+    TSharedPtr<FSlateDynamicImageBrush> Brush = MakeShared<FSlateDynamicImageBrush>(
+        *BrushName, FVector2D(W, H));
+
+    if (FSlateApplication::IsInitialized())
+    {
+        FSlateRenderer* Renderer = FSlateApplication::Get().GetRenderer();
+        if (Renderer)
+            Renderer->GenerateDynamicImageResource(*BrushName, (uint32)W, (uint32)H, Raw);
+    }
+
+    // Evict oldest entries when cache is full
+    if (TileCache.Num() >= kMaxCacheSize)
+    {
+        auto It = TileCache.CreateIterator();
+        It.RemoveCurrent();
+    }
+    TileCache.Add(Key, Brush);
+    const_cast<SGeoWorldMap*>(this)->Invalidate(EInvalidateWidgetReason::Paint);
+}
+
 // ── Paint ─────────────────────────────────────────────────────────────────────
 int32 SGeoWorldMap::OnPaint(
     const FPaintArgs& Args, const FGeometry& G,
@@ -65,13 +187,50 @@ int32 SGeoWorldMap::OnPaint(
     FSlateDrawElement::MakeBox(Out, L++, G.ToPaintGeometry(),
         White, ESlateDrawEffect::None, FLinearColor(0.04f, 0.07f, 0.14f));
 
-    // ── 2. Land fill (draw filled quads per segment using box rects) ──────────
-    // We draw land as a slightly lighter box under coastlines for a fill effect.
-    // Actually we draw coastline lines; land shading is done by drawing a single
-    // tinted box under the coastline layer at slightly lighter ocean tone.
-    // True polygon fill requires triangle lists — instead we draw the coastlines
-    // over a solid ocean and use a land-coloured "continent box" approximation.
-    // For a clean look we just draw coastline outlines on the ocean background.
+    // ── 2. OSM tile layer ─────────────────────────────────────────────────────
+    {
+        int32 OZ = GetOsmZoom();
+        int32 NumTiles = 1 << OZ;
+        FVector2D Sz = G.GetLocalSize();
+
+        double LonMin, LatMax, LonMax, LatMin;
+        LocalToLonLat(FVector2D(0,    0   ), G, LonMin, LatMax);
+        LocalToLonLat(FVector2D(Sz.X, Sz.Y), G, LonMax, LatMin);
+
+        auto LonToTX = [&](double Lon) {
+            return FMath::Clamp((int32)FMath::Floor((Lon + 180.0) / 360.0 * NumTiles), 0, NumTiles - 1);
+        };
+        auto LatToTY = [&](double Lat) {
+            double LatR = FMath::DegreesToRadians(FMath::Clamp(Lat, -85.0511, 85.0511));
+            return FMath::Clamp((int32)FMath::Floor((1.0 - FMath::Loge(FMath::Tan(LatR) + 1.0 / FMath::Cos(LatR)) / UE_PI) / 2.0 * NumTiles), 0, NumTiles - 1);
+        };
+
+        int32 TX0 = LonToTX(LonMin), TX1 = LonToTX(LonMax);
+        int32 TY0 = LatToTY(LatMax), TY1 = LatToTY(LatMin);
+
+        for (int32 TY = TY0; TY <= TY1; ++TY)
+        for (int32 TX = TX0; TX <= TX1; ++TX)
+        {
+            FTileKey Key{OZ, TX, TY};
+            if (TSharedPtr<FSlateDynamicImageBrush>* Found = TileCache.Find(Key))
+            {
+                // Top-left pixel of this tile
+                FVector2D TL = TileToLocal(OZ, TX,   TY,   G);
+                FVector2D BR = TileToLocal(OZ, TX+1, TY+1, G);
+                FVector2D TileSize = BR - TL;
+                if (TileSize.X > 0 && TileSize.Y > 0)
+                {
+                    FSlateDrawElement::MakeBox(Out, L,
+                        G.ToPaintGeometry(TileSize, FSlateLayoutTransform(TL)),
+                        (*Found).Get(), ESlateDrawEffect::None, FLinearColor::White);
+                }
+            }
+        }
+        ++L;
+
+        // Request any missing tiles (non-const side effect, safe via mutable)
+        RequestVisibleTiles(G);
+    }
 
     // ── 3. Minor grid lines (10°) ─────────────────────────────────────────────
     {

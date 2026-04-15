@@ -3,6 +3,5 @@
 
 void UGeoTerrainJsHandler::OnBoundsSelected(const FString& JsonStr)
 {
-    if (Panel)
-        Panel->OnBoundsReceivedFromJs(JsonStr);
+    // No-op: SWebBrowser removed, SGeoWorldMap handles selection directly
 }

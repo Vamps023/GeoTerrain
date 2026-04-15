@@ -10,10 +10,7 @@
 #include "GeoGenerationTypes.h"
 #include "GeoGenerationCoordinator.h"
 #include "Widgets/Layout/SBox.h"
-#include "SWebBrowser.h"
-
-// UObject bridge for JS → C++ binding
-class UGeoTerrainJsHandler;
+#include "UI/SGeoWorldMap.h"
 
 // Main Slate panel — replaces GeoTerrainPanel + all ui/ Qt widgets
 class SGeoTerrainPanel : public SCompoundWidget
@@ -38,10 +35,6 @@ private:
     FReply OnCancelClicked();
     FReply OnImportLandscapeClicked();
     void   OnBoundsSelectedFromMap(double W, double S, double E, double N);
-    TOptional<FString> LoadMapHtml();
-
-public:
-    void   OnBoundsReceivedFromJs(const FString& JsonStr);
 
     bool CanExport()  const;
     bool CanCancel()  const;
@@ -82,8 +75,7 @@ public:
     TSharedPtr<SEditableTextBox>               LocalTiffEdit;
     TSharedPtr<SSpinBox<float>>                ResolutionSpin;
 
-    TSharedPtr<SWebBrowser>  MapBrowser;
-    UGeoTerrainJsHandler*    JsHandler = nullptr;
+    TSharedPtr<SGeoWorldMap> MapWidget;
 
     FString   LastHeightmapR16;
     FString   LastAlbedoTif;
