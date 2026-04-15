@@ -4,13 +4,9 @@
 #include "Styling/CoreStyle.h"
 #include "Fonts/SlateFontInfo.h"
 #include "Framework/Application/SlateApplication.h"
-#include "IImageWrapper.h"
-#include "IImageWrapperModule.h"
+#include "Brushes/SlateImageBrush.h"
 #include "Misc/FileHelper.h"
 #include "Interfaces/IPluginManager.h"
-#include "RenderingThread.h"
-#include "RHI.h"
-#include "TextureResource.h"
 
 // ── Construct / Destruct ──────────────────────────────────────────────────────
 void SGeoWorldMap::Construct(const FArguments& InArgs)
@@ -22,11 +18,6 @@ void SGeoWorldMap::Construct(const FArguments& InArgs)
 SGeoWorldMap::~SGeoWorldMap()
 {
     WorldMapBrush.Reset();
-    if (WorldMapTexture)
-    {
-        WorldMapTexture->RemoveFromRoot();
-        WorldMapTexture = nullptr;
-    }
 }
 
 void SGeoWorldMap::LoadWorldMap()
@@ -39,32 +30,9 @@ void SGeoWorldMap::LoadWorldMap()
         : FPaths::ProjectPluginsDir() / TEXT("GeoTerrain/Resources");
     FString Path = Dir / TEXT("worldmap.jpg");
 
-    TArray<uint8> FileData;
-    if (!FFileHelper::LoadFileToArray(FileData, *Path)) return;
+    if (!FPaths::FileExists(Path)) return;
 
-    IImageWrapperModule& IWM = FModuleManager::LoadModuleChecked<IImageWrapperModule>(TEXT("ImageWrapper"));
-    TSharedPtr<IImageWrapper> IW = IWM.CreateImageWrapper(EImageFormat::JPEG);
-    if (!IW.IsValid() || !IW->SetCompressed(FileData.GetData(), FileData.Num())) return;
-
-    TArray<uint8> Raw;
-    if (!IW->GetRaw(ERGBFormat::BGRA, 8, Raw)) return;
-
-    int32 W = IW->GetWidth(), H = IW->GetHeight();
-
-    UTexture2D* Tex = UTexture2D::CreateTransient(W, H, PF_B8G8R8A8);
-    if (!Tex) return;
-    Tex->AddToRoot();
-
-    uint8* MipData = (uint8*)Tex->GetPlatformData()->Mips[0].BulkData.Lock(LOCK_READ_WRITE);
-    FMemory::Memcpy(MipData, Raw.GetData(), Raw.Num());
-    Tex->GetPlatformData()->Mips[0].BulkData.Unlock();
-    Tex->UpdateResource();
-
-    WorldMapTexture = Tex;
-    WorldMapBrush   = MakeUnique<FSlateBrush>();
-    WorldMapBrush->SetResourceObject(Tex);
-    WorldMapBrush->ImageSize = FVector2D(W, H);
-    WorldMapBrush->DrawAs    = ESlateBrushDrawType::Image;
+    WorldMapBrush = MakeUnique<FSlateImageBrush>(Path, FVector2D(2048.f, 1024.f));
     bMapLoaded = true;
 }
 

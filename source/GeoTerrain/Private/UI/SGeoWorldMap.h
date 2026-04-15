@@ -2,7 +2,6 @@
 #include "CoreMinimal.h"
 #include "Widgets/SLeafWidget.h"
 #include "Brushes/SlateImageBrush.h"
-#include "Engine/Texture2D.h"
 
 DECLARE_DELEGATE_FourParams(FOnMapBoundsSelected, double, double, double, double);
 
@@ -55,7 +54,6 @@ private:
     double SelW=0, SelS=0, SelE=0, SelN=0;
 
     // ── Bundled world map image ───────────────────────────────────────────────
-    UTexture2D*              WorldMapTexture = nullptr;
     TUniquePtr<FSlateBrush>  WorldMapBrush;
     mutable bool             bMapLoaded = false;
 };

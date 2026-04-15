@@ -42,9 +42,6 @@ public class GeoTerrain : ModuleRules
             "AppFramework",
             "PropertyEditor",
             "EditorFramework",
-            "ImageWrapper",
-            "RenderCore",
-            "RHI",
         });
 
         // GDAL — place OSGeo4W or your GDAL build under ThirdParty/GDAL/
