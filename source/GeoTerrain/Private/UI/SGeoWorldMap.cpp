@@ -4,7 +4,9 @@
 #include "Styling/CoreStyle.h"
 #include "Fonts/SlateFontInfo.h"
 #include "Framework/Application/SlateApplication.h"
-#include "Brushes/SlateImageBrush.h"
+#include "Brushes/SlateDynamicImageBrush.h"
+#include "IImageWrapper.h"
+#include "IImageWrapperModule.h"
 #include "Misc/FileHelper.h"
 #include "Interfaces/IPluginManager.h"
 
@@ -23,16 +25,41 @@ SGeoWorldMap::~SGeoWorldMap()
 void SGeoWorldMap::LoadWorldMap()
 {
     if (!FSlateApplication::IsInitialized()) return;
+    FSlateRenderer* Renderer = FSlateApplication::Get().GetRenderer();
+    if (!Renderer) return;
 
     TSharedPtr<IPlugin> Plugin = IPluginManager::Get().FindPlugin(TEXT("GeoTerrain"));
     FString Dir = Plugin.IsValid()
         ? Plugin->GetBaseDir() / TEXT("Resources")
         : FPaths::ProjectPluginsDir() / TEXT("GeoTerrain/Resources");
-    FString Path = Dir / TEXT("worldmap.png");
 
+    // Try PNG first, fall back to JPEG
+    FString Path = Dir / TEXT("worldmap.png");
+    EImageFormat Fmt = EImageFormat::PNG;
+    if (!FPaths::FileExists(Path))
+    {
+        Path = Dir / TEXT("worldmap.jpg");
+        Fmt  = EImageFormat::JPEG;
+    }
     if (!FPaths::FileExists(Path)) return;
 
-    WorldMapBrush = MakeUnique<FSlateImageBrush>(Path, FVector2D(2048.f, 1024.f));
+    TArray<uint8> FileData;
+    if (!FFileHelper::LoadFileToArray(FileData, *Path)) return;
+
+    IImageWrapperModule& IWM = FModuleManager::LoadModuleChecked<IImageWrapperModule>(TEXT("ImageWrapper"));
+    TSharedPtr<IImageWrapper> IW = IWM.CreateImageWrapper(Fmt);
+    if (!IW.IsValid() || !IW->SetCompressed(FileData.GetData(), FileData.Num())) return;
+
+    TArray<uint8> Raw;
+    if (!IW->GetRaw(ERGBFormat::BGRA, 8, Raw)) return;
+
+    const int32 W = IW->GetWidth();
+    const int32 H = IW->GetHeight();
+    const FName BrushName(TEXT("GeoTerrainWorldMap"));
+
+    Renderer->GenerateDynamicImageResource(BrushName, (uint32)W, (uint32)H, Raw);
+
+    WorldMapBrush = MakeUnique<FSlateDynamicImageBrush>(BrushName, FVector2D((float)W, (float)H));
     bMapLoaded = true;
 }
 
