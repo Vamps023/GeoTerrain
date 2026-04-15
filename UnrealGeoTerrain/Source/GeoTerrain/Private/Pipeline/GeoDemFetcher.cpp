@@ -159,7 +159,7 @@ TGeoResult<FGeoDemArtifact> FGeoDemFetcher::ConvertToHeightmapTiff(const FString
     WOpts->eResampleAlg = GRA_Bilinear;
     WOpts->pfnTransformer = GDALGenImgProjTransform;
     WOpts->pTransformerArg = GDALCreateGenImgProjTransformer(
-        SrcDs, GDALGetProjectionRef(SrcDs), DstDs, GDALGetProjectionRef(DstDs), FALSE, 0.0, 1);
+        SrcDs, GDALGetProjectionRef(SrcDs), DstDs, GDALGetProjectionRef(DstDs), 0, 0.0, 1);
 
     GDALWarpOperation WarpOp;
     CPLErr Err = WarpOp.Initialize(WOpts);

@@ -189,7 +189,7 @@ bool FGeoTileDownloader::MergeTiles(const TArray<FString>& TilePaths, const FGeo
         WO->eResampleAlg    = GRA_Bilinear;
         WO->pfnTransformer  = GDALGenImgProjTransform;
         WO->pTransformerArg = GDALCreateGenImgProjTransformer(
-            SrcDs, nullptr, OutDs, GDALGetProjectionRef(OutDs), FALSE, 0.0, 1);
+            SrcDs, nullptr, OutDs, GDALGetProjectionRef(OutDs), 0, 0.0, 1);
         if (WO->pTransformerArg)
         {
             GDALWarpOperation Op; Op.Initialize(WO);

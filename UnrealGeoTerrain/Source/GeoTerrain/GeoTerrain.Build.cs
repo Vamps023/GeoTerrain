@@ -52,6 +52,8 @@ public class GeoTerrain : ModuleRules
             PublicSystemIncludePaths.Add(Path.Combine(GdalRoot, "include"));
             PublicAdditionalLibraries.Add(Path.Combine(GdalRoot, "lib", "gdal_i.lib"));
             RuntimeDependencies.Add(Path.Combine(GdalRoot, "bin", "gdal312.dll"));
+            // Delay-load: defer DLL resolution until first GDAL call (after StartupModule sets search path)
+            PublicDelayLoadDLLs.Add("gdal312.dll");
         }
     }
 }
