@@ -46,6 +46,7 @@ void SGeoTerrainPanel::Construct(const FArguments& InArgs)
 
         // ── RIGHT: settings + progress + console ─────────────────────────────
         + SSplitter::Slot()
+
         .Value(0.45f)
         [
             SNew(SVerticalBox)
@@ -86,7 +87,13 @@ void SGeoTerrainPanel::Construct(const FArguments& InArgs)
             [ BuildConsoleSection() ]
         ]
     ];
+
+    if (MapWidget.IsValid() && TileUrlEdit.IsValid())
+    {
+        MapWidget->SetTileUrlTemplate(TileUrlEdit->GetText().ToString());
+    }
 }
+
 
 TSharedRef<SWidget> SGeoTerrainPanel::BuildMapSection()
 {
@@ -303,8 +310,12 @@ TSharedRef<SWidget> SGeoTerrainPanel::BuildSourceSection()
                 + SHorizontalBox::Slot().FillWidth(1)
                 [
                     SAssignNew(TileUrlEdit, SEditableTextBox)
-                    .Text(FText::FromString(
-                        "https://mt1.google.com/vt/lyrs=s&x={x}&y={y}&z={z}"))
+                    .Text(FText::FromString("https://tile.openstreetmap.org/{z}/{x}/{y}.png"))
+                    .OnTextChanged_Lambda([this](const FText& NewText)
+                    {
+                        if (MapWidget.IsValid())
+                            MapWidget->SetTileUrlTemplate(NewText.ToString());
+                    })
                 ]
             ]
 

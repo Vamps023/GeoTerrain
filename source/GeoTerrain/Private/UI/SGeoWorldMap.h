@@ -3,6 +3,23 @@
 #include "Widgets/SLeafWidget.h"
 #include "Brushes/SlateDynamicImageBrush.h"
 #include "GeoChunkPlanner.h"
+#include "HttpModule.h"
+#include "Interfaces/IHttpRequest.h"
+#include "Interfaces/IHttpResponse.h"
+
+struct FGeoTileKey
+{
+    int32 Z, X, Y;
+    bool operator==(const FGeoTileKey& O) const { return Z == O.Z && X == O.X && Y == O.Y; }
+    friend uint32 GetTypeHash(const FGeoTileKey& K) { return HashCombine(HashCombine(K.Z, K.X), K.Y); }
+};
+
+struct FGeoMapTile
+{
+    TSharedPtr<FSlateDynamicImageBrush> Brush;
+    bool   bIsLoading = false;
+    double LastUsedTime = 0.0;
+};
 
 DECLARE_DELEGATE_FourParams(FOnMapBoundsSelected, double, double, double, double);
 
@@ -15,7 +32,9 @@ public:
 
     void Construct(const FArguments& InArgs);
     virtual ~SGeoWorldMap();
-    void LoadWorldMap();
+
+    // Set the template URL for XYZ tiles (e.g., https://tile.openstreetmap.org/{z}/{x}/{y}.png)
+    void SetTileUrlTemplate(const FString& UrlTemplate);
 
     // ── Chunk API ─────────────────────────────────────────────────────────────
     void           SetChunkSizeKm(double Km);     // call when spin changes
@@ -67,7 +86,19 @@ private:
     void             RebuildChunkPlan();
     int32            HitTestChunk(FVector2D LocalPt, const FGeometry& Geo) const;
 
-    // ── Bundled world map image ───────────────────────────────────────────────
-    TUniquePtr<FSlateDynamicImageBrush> WorldMapBrush;
-    mutable bool             bMapLoaded = false;
+    // ── Native Tile Rendering ──────────────────────────────────────────────────
+    FString TileUrlTemplate = TEXT("https://a.tile.openstreetmap.org/{z}/{x}/{y}.png");
+    mutable TMap<FGeoTileKey, TSharedPtr<FGeoMapTile>> TileCache;
+    int32 MaxConcurrentDownloads = 6;
+    mutable int32 ActiveDownloads = 0;
+
+    void FetchTile(const FGeoTileKey& Key) const;
+    void OnTileDownloaded(FHttpRequestPtr Request, FHttpResponsePtr Response, bool bSucceeded, FGeoTileKey Key) const;
+    void PruneTileCache() const;
+    
+    // Web-Mercator math
+    static int32 Long2TileX(double Lon, int32 z);
+    static int32 Lat2TileY(double Lat, int32 z);
+    static double TileX2Long(int32 x, int32 z);
+    static double TileY2Lat(int32 y, int32 z);
 };
