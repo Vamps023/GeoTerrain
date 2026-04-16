@@ -2,6 +2,9 @@
 #include "CoreMinimal.h"
 #include "GeoGenerationTypes.h"
 
+/**
+ * @brief Planner for dividing geographic bounds into chunks based on settings.
+ */
 class GEOTERRAIN_API FGeoChunkPlanner
 {
 public:

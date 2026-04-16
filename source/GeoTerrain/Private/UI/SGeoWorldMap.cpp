@@ -98,11 +98,14 @@ void SGeoWorldMap::LocalToLonLat(FVector2D P, const FGeometry& Geo, double& OutL
 void SGeoWorldMap::ClampView(const FGeometry& Geo)
 {
     FVector2D S = Geo.GetLocalSize();
-    float MaxPanX = S.X * (Zoom - 1.0f) * 0.5f;
-    float MaxPanY = S.Y * (Zoom - 1.0f) * 0.5f;
+    // Allow panning up to half the *zoomed* image size beyond the widget edge
+    // so users can scroll to any corner of the map at any zoom level.
+    float MaxPanX = S.X * Zoom * 0.5f;
+    float MaxPanY = S.Y * Zoom * 0.5f;
     PanOffset.X = FMath::Clamp(PanOffset.X, -MaxPanX, MaxPanX);
     PanOffset.Y = FMath::Clamp(PanOffset.Y, -MaxPanY, MaxPanY);
 }
+
 
 // ── Chunk system ──────────────────────────────────────────────────────────────
 void SGeoWorldMap::RebuildChunkPlan()
@@ -525,7 +528,8 @@ FReply SGeoWorldMap::OnMouseWheel(const FGeometry& G, const FPointerEvent& E)
     FVector2D Local  = G.AbsoluteToLocal(E.GetScreenSpacePosition());
     FVector2D Centre = G.GetLocalSize() * 0.5f;
     float OldZoom    = Zoom;
-    Zoom = FMath::Clamp(Zoom * (E.GetWheelDelta() > 0 ? 1.25f : 0.8f), 1.0f, 256.0f);
+    // Use 1.3/0.77 steps: feels responsive but doesn't skip past details
+    Zoom = FMath::Clamp(Zoom * (E.GetWheelDelta() > 0 ? 1.3f : 0.769f), 1.0f, 512.0f);
 
     // Keep the geographic point under the cursor fixed during zoom
     float Scale = Zoom / OldZoom;

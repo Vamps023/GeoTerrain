@@ -3,6 +3,8 @@
 #include "GeoDemFetcher.h"
 #include "GeoTileDownloader.h"
 #include "GeoMaskGenerator.h"
+#include "GeoLandscapeImporter.h"
+
 
 #include "Async/Async.h"
 #include "HAL/FileManager.h"
@@ -117,9 +119,20 @@ void FGeoGenerationCoordinator::RunInternal(FGeoGenerationRequest Request)
         Log(FString::Printf(TEXT("[OK] Elevation range: %.1f m – %.1f m"),
             DemResult.Value.ElevMin, DemResult.Value.ElevMax));
 
-        // Save last artifact paths for Import Landscape
+        // Save last artifact paths for "Import Landscape" button and write
+        // the per-chunk elevation sidecar so the importer can compute the
+        // correct "Fit to Data" ZScale automatically.
         LastDemR16Path = DemResult.Value.UnrealRawPath;
         LastAlbedoPath = TileResult.Value.OutputPath;
+
+        if (!LastDemR16Path.IsEmpty())
+        {
+            FGeoLandscapeImporter::WriteChunkMeta(
+                LastDemR16Path,
+                DemResult.Value.ElevMin,
+                DemResult.Value.ElevMax);
+        }
+
 
         // ── Mask generation ───────────────────────────────────────────────────
         FGeoMaskConfig MaskCfg;

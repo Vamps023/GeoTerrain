@@ -4,6 +4,9 @@
 #include "GeoGenerationTypes.h"
 #include "GeoRunContext.h"
 
+/**
+ * @brief Artifact representing a downloaded DEM and its processed outputs.
+ */
 struct FGeoDemArtifact
 {
     FString OutputPath;      // absolute path to heightmap.tif

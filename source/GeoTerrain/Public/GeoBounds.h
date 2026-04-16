@@ -1,6 +1,11 @@
 #pragma once
 
 // Geographic bounding box in WGS84 decimal degrees.
+/**
+ * @brief Geographic bounding box in WGS84 decimal degrees.
+ *
+ * Represents a rectangular area defined by west, south, east, north coordinates.
+ */
 struct FGeoBounds
 {
     double West  = 0.0;

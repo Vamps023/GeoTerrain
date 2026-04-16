@@ -499,10 +499,10 @@ FReply SGeoTerrainPanel::OnImportLandscapeClicked()
     {
         // ── Multi-chunk import ────────────────────────────────────────────────
         FGeoLandscapeImporter::FChunkImportParams P;
-        P.OutputDir    = OutputDir;
-        P.TotalBounds  = Bounds;
-        P.Chunking     = BuildRequest().Chunking;   // carries ChunkSizeKm + EnabledMask
-        P.ZScale       = 100.0f;
+        P.OutputDir      = OutputDir;
+        P.TotalBounds    = Bounds;
+        P.Chunking       = BuildRequest().Chunking;   // carries ChunkSizeKm + EnabledMask
+        P.ZScaleFallback = 100.0f;   // overridden per-chunk via GeoTerrain_meta.json
 
         TArray<TGeoResult<AActor*>> Results = Importer.ImportChunks(P);
         int32 Ok = 0, Fail = 0;
@@ -517,10 +517,20 @@ FReply SGeoTerrainPanel::OnImportLandscapeClicked()
     else
     {
         // ── Single import (no chunking) ───────────────────────────────────────
+        // Use the output dir to locate the heightmap; fall back to
+        // LastHeightmapR16 (set after an in-session export).
+        FString R16 = LastHeightmapR16;
+        if (R16.IsEmpty())
+            R16 = FPaths::Combine(OutputDir, TEXT("heightmap.r16"));
+
         FGeoLandscapeImporter::FImportParams P;
-        P.HeightmapR16Path = LastHeightmapR16;
+        P.HeightmapR16Path = R16;
         P.AlbedoTifPath    = LastAlbedoTif;
         P.Bounds           = Bounds;
+        P.ZScaleFallback   = 100.0f;   // overridden if GeoTerrain_meta.json exists
+
+        // Recover elevation range from sidecar if available
+        // (sidecar is read inside ImportChunks/Import via ReadChunkMeta)
 
         auto Result = Importer.Import(P);
         if (!Result.bSuccess)
@@ -581,7 +591,14 @@ bool SGeoTerrainPanel::CanExport()  const
     return E > W && N > S;
 }
 bool SGeoTerrainPanel::CanCancel()  const { return  Coordinator->IsRunning(); }
-bool SGeoTerrainPanel::CanImport()  const { return !LastHeightmapR16.IsEmpty() && !Coordinator->IsRunning(); }
+bool SGeoTerrainPanel::CanImport()  const
+{
+    if (Coordinator->IsRunning()) return false;
+    // Allow import as long as we have a valid output directory —
+    // the actual .r16 files may have been exported in a previous session.
+    const FString Dir = OutputDirEdit.IsValid() ? OutputDirEdit->GetText().ToString() : TEXT("");
+    return !Dir.IsEmpty();
+}
 
 void SGeoTerrainPanel::OnLog(const FString& Msg, bool /*bIsError*/)
 {
