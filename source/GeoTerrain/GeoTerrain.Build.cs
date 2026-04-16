@@ -43,6 +43,7 @@ public class GeoTerrain : ModuleRules
             "PropertyEditor",
             "EditorFramework",
             "ImageWrapper",
+            "DesktopPlatform",   // IDesktopPlatform::OpenDirectoryDialog (batch import folder picker)
         });
 
         // GDAL — place OSGeo4W or your GDAL build under ThirdParty/GDAL/

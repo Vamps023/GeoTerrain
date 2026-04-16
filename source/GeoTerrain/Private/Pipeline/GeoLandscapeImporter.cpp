@@ -159,9 +159,10 @@ TGeoResult<AActor*> FGeoLandscapeImporter::Import(const FImportParams& Params)
 
     Landscape->SetActorLabel(Params.LandscapeName);
 
-    // Must assign GUID before calling Import() — UE5.3 asserts it is valid
+    // Generate a new GUID for the landscape. We pass this to Import() which
+    // handles registering the GUID internally. Do not call SetLandscapeGuid()
+    // directly here because it triggers a crash/assertion in UE5.3.
     const FGuid LandscapeGuid = FGuid::NewGuid();
-    Landscape->SetLandscapeGuid(LandscapeGuid);
 
     // ── Height data map ───────────────────────────────────────────────────────
     TMap<FGuid, TArray<uint16>> HeightmapImportData;

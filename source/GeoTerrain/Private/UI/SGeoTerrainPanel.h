@@ -4,11 +4,13 @@
 #include "Widgets/Input/SEditableTextBox.h"
 #include "Widgets/Input/SSpinBox.h"
 #include "Widgets/Input/SComboBox.h"
+#include "Widgets/Input/SCheckBox.h"
 #include "Widgets/Text/STextBlock.h"
 #include "Widgets/Layout/SScrollBox.h"
 #include "Widgets/Notifications/SProgressBar.h"
 #include "GeoGenerationTypes.h"
 #include "GeoGenerationCoordinator.h"
+#include "GeoR16BatchImporter.h"
 #include "Widgets/Layout/SBox.h"
 #include "UI/SGeoWorldMap.h"
 
@@ -29,11 +31,14 @@ private:
     TSharedRef<SWidget> BuildChunkSection();
     TSharedRef<SWidget> BuildConsoleSection();
     TSharedRef<SWidget> BuildButtonRow();
+    TSharedRef<SWidget> BuildBatchImportSection();
 
     // ── Button handlers ───────────────────────────────────────────────────────
     FReply OnExportClicked();
     FReply OnCancelClicked();
     FReply OnImportLandscapeClicked();
+    FReply OnBatchImportClicked();
+    FReply OnBrowseBatchFolderClicked();
     void   OnBoundsSelectedFromMap(double W, double S, double E, double N);
 
     bool CanExport()  const;
@@ -76,6 +81,13 @@ private:
     TSharedPtr<SSpinBox<float>>                ResolutionSpin;
 
     TSharedPtr<SGeoWorldMap> MapWidget;
+
+    // ── Batch R16 import state ─────────────────────────────────────────────────
+    TSharedPtr<SEditableTextBox>  BatchFolderEdit;
+    TSharedPtr<SSpinBox<float>>   BatchScaleXYSpin;
+    TSharedPtr<SSpinBox<float>>   BatchScaleZSpin;
+    TSharedPtr<SCheckBox>         BatchFlipYCheck;
+    TSharedPtr<STextBlock>        BatchStatusText;
 
     FString   LastHeightmapR16;
     FString   LastAlbedoTif;

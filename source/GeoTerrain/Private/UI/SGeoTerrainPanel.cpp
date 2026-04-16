@@ -5,12 +5,17 @@
 #include "Widgets/Input/SEditableTextBox.h"
 #include "Widgets/Input/SButton.h"
 #include "Widgets/Input/SSpinBox.h"
+#include "Widgets/Input/SCheckBox.h"
 #include "Widgets/Text/STextBlock.h"
 #include "Widgets/Layout/SScrollBox.h"
 #include "Widgets/Layout/SBox.h"
 #include "Widgets/Layout/SSplitter.h"
 #include "Widgets/Notifications/SProgressBar.h"
 #include "Styling/AppStyle.h"
+#include "Framework/Application/SlateApplication.h"
+#include "DesktopPlatformModule.h"
+#include "ScopedTransaction.h"
+#include "Editor.h"
 
 void SGeoTerrainPanel::Construct(const FArguments& InArgs)
 {
@@ -68,6 +73,8 @@ void SGeoTerrainPanel::Construct(const FArguments& InArgs)
                     [ BuildOutputSection() ]
                     + SVerticalBox::Slot().AutoHeight().Padding(0, 0, 0, 4)
                     [ BuildChunkSection() ]
+                    + SVerticalBox::Slot().AutoHeight().Padding(0, 4, 0, 4)
+                    [ BuildBatchImportSection() ]
                 ]
             ]
 
@@ -480,6 +487,261 @@ FReply SGeoTerrainPanel::OnExportClicked()
 FReply SGeoTerrainPanel::OnCancelClicked()
 {
     Coordinator->Cancel();
+    return FReply::Handled();
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+//  Batch R16 Import
+// ─────────────────────────────────────────────────────────────────────────────
+
+TSharedRef<SWidget> SGeoTerrainPanel::BuildBatchImportSection()
+{
+    return SNew(SBorder)
+        .BorderImage(FAppStyle::GetBrush("ToolPanel.GroupBorder"))
+        .Padding(6)
+        [
+            SNew(SVerticalBox)
+
+            // ── Header ───────────────────────────────────────────────────────
+            + SVerticalBox::Slot().AutoHeight().Padding(0, 0, 0, 4)
+            [
+                SNew(STextBlock)
+                .Text(FText::FromString("Batch R16 Tile Import"))
+                .Font(FAppStyle::GetFontStyle("BoldFont"))
+                .ToolTipText(FText::FromString(
+                    "Import a folder of tile_x{X}_y{Y}.r16 files.\n"
+                    "Each tile becomes a separate ALandscape actor positioned on a seamless grid."))
+            ]
+
+            // ── Folder path row ──────────────────────────────────────────────
+            + SVerticalBox::Slot().AutoHeight().Padding(0, 2)
+            [
+                SNew(SHorizontalBox)
+                + SHorizontalBox::Slot().AutoWidth().VAlign(VAlign_Center)
+                [
+                    SNew(STextBlock)
+                    .Text(FText::FromString("Tile Folder:"))
+                    .MinDesiredWidth(120)
+                ]
+                + SHorizontalBox::Slot().FillWidth(1).Padding(4, 0)
+                [
+                    SAssignNew(BatchFolderEdit, SEditableTextBox)
+                    .HintText(FText::FromString("C:/path/to/tiles/"))
+                ]
+                + SHorizontalBox::Slot().AutoWidth()
+                [
+                    SNew(SButton)
+                    .Text(FText::FromString("..."))
+                    .ToolTipText(FText::FromString("Browse for tile folder"))
+                    .OnClicked(FOnClicked::CreateSP(this, &SGeoTerrainPanel::OnBrowseBatchFolderClicked))
+                ]
+            ]
+
+            // ── XY scale row ─────────────────────────────────────────────────
+            + SVerticalBox::Slot().AutoHeight().Padding(0, 2)
+            [
+                SNew(SHorizontalBox)
+                + SHorizontalBox::Slot().AutoWidth().VAlign(VAlign_Center)
+                [
+                    SNew(STextBlock)
+                    .Text(FText::FromString("XY Scale (cm/quad):"))
+                    .MinDesiredWidth(120)
+                    .ToolTipText(FText::FromString(
+                        "Horizontal scale in centimetres per quad.\n"
+                        "Default 100 = 1 metre per landscape quad."))
+                ]
+                + SHorizontalBox::Slot().AutoWidth().Padding(4, 0)
+                [
+                    SAssignNew(BatchScaleXYSpin, SSpinBox<float>)
+                    .MinValue(0.01f).MaxValue(100000.0f)
+                    .Value(100.0f).Delta(1.0f)
+                    .MinDesiredWidth(80)
+                ]
+            ]
+
+            // ── Z scale row ──────────────────────────────────────────────────
+            + SVerticalBox::Slot().AutoHeight().Padding(0, 2)
+            [
+                SNew(SHorizontalBox)
+                + SHorizontalBox::Slot().AutoWidth().VAlign(VAlign_Center)
+                [
+                    SNew(STextBlock)
+                    .Text(FText::FromString("Z Scale (height mult):"))
+                    .MinDesiredWidth(120)
+                    .ToolTipText(FText::FromString(
+                        "Height multiplier.\n"
+                        "UE maps uint16 [0,65535] to [-256*Z, +256*Z] cm.\n"
+                        "Fit-to-Data formula: Z = ElevRangeM * 100 / 512"))
+                ]
+                + SHorizontalBox::Slot().AutoWidth().Padding(4, 0)
+                [
+                    SAssignNew(BatchScaleZSpin, SSpinBox<float>)
+                    .MinValue(0.01f).MaxValue(100000.0f)
+                    .Value(100.0f).Delta(1.0f)
+                    .MinDesiredWidth(80)
+                ]
+            ]
+
+            // ── Flip Y checkbox ──────────────────────────────────────────────
+            + SVerticalBox::Slot().AutoHeight().Padding(0, 2)
+            [
+                SNew(SHorizontalBox)
+                + SHorizontalBox::Slot().AutoWidth().VAlign(VAlign_Center)
+                [
+                    SAssignNew(BatchFlipYCheck, SCheckBox)
+                ]
+                + SHorizontalBox::Slot().AutoWidth().VAlign(VAlign_Center).Padding(4, 0)
+                [
+                    SNew(STextBlock)
+                    .Text(FText::FromString("Flip Y Axis"))
+                    .ToolTipText(FText::FromString(
+                        "Reverse the row order of each heightmap before import.\n"
+                        "Enable when tiles appear upside-down vertically."))
+                ]
+            ]
+
+            // ── Status text ──────────────────────────────────────────────────
+            + SVerticalBox::Slot().AutoHeight().Padding(0, 2)
+            [
+                SAssignNew(BatchStatusText, STextBlock)
+                .AutoWrapText(true)
+                .Text(FText::GetEmpty())
+                .ColorAndOpacity(FSlateColor(FLinearColor(0.8f, 0.9f, 0.6f)))
+            ]
+
+            // ── Import button ────────────────────────────────────────────────
+            + SVerticalBox::Slot().AutoHeight().Padding(0, 4, 0, 0)
+            [
+                SNew(SButton)
+                .HAlign(HAlign_Center)
+                .Text(FText::FromString("Import R16 Tiles"))
+                .ToolTipText(FText::FromString(
+                    "Scan the tile folder and create one ALandscape per tile_x*_y*.r16 file."))
+                .IsEnabled_Lambda([this]
+                {
+                    return BatchFolderEdit.IsValid()
+                        && !BatchFolderEdit->GetText().IsEmpty()
+                        && !Coordinator->IsRunning();
+                })
+                .OnClicked(FOnClicked::CreateSP(this, &SGeoTerrainPanel::OnBatchImportClicked))
+            ]
+        ];
+}
+
+FReply SGeoTerrainPanel::OnBrowseBatchFolderClicked()
+{
+    IDesktopPlatform* DesktopPlatform = FDesktopPlatformModule::Get();
+    if (!DesktopPlatform)
+        return FReply::Handled();
+
+    const void* ParentWindow = FSlateApplication::Get().GetActiveTopLevelWindow().IsValid()
+        ? FSlateApplication::Get().GetActiveTopLevelWindow()->GetNativeWindow()->GetOSWindowHandle()
+        : nullptr;
+
+    FString StartDir = BatchFolderEdit.IsValid() ? BatchFolderEdit->GetText().ToString() : FString();
+    if (StartDir.IsEmpty())
+        StartDir = FPaths::ProjectSavedDir();
+
+    FString ChosenFolder;
+    if (DesktopPlatform->OpenDirectoryDialog(
+            const_cast<void*>(ParentWindow),
+            TEXT("Select folder containing tile_x*_y*.r16 files"),
+            StartDir,
+            ChosenFolder))
+    {
+        if (BatchFolderEdit.IsValid())
+            BatchFolderEdit->SetText(FText::FromString(ChosenFolder));
+    }
+    return FReply::Handled();
+}
+
+FReply SGeoTerrainPanel::OnBatchImportClicked()
+{
+    if (!BatchFolderEdit.IsValid()) return FReply::Handled();
+
+    const FString Folder = BatchFolderEdit->GetText().ToString();
+    if (Folder.IsEmpty())
+    {
+        OnLog(TEXT("[BatchImport] ERROR: No folder selected."), true);
+        return FReply::Handled();
+    }
+
+    FGeoR16BatchImporter::FBatchImportSettings Settings;
+    Settings.FolderPath        = Folder;
+    Settings.ScaleXY           = BatchScaleXYSpin.IsValid() ? BatchScaleXYSpin->GetValue() : 100.0f;
+    Settings.ScaleZ            = BatchScaleZSpin.IsValid()  ? BatchScaleZSpin->GetValue()  : 100.0f;
+    Settings.bFlipY            = BatchFlipYCheck.IsValid()  ? (BatchFlipYCheck->GetCheckedState() == ECheckBoxState::Checked) : false;
+    Settings.LandscapeNamePrefix = TEXT("GeoTile");
+
+    OnLog(FString::Printf(
+        TEXT("[BatchImport] Starting batch import from: %s  (XY=%.1f  Z=%.1f  FlipY=%s)"),
+        *Folder, Settings.ScaleXY, Settings.ScaleZ, Settings.bFlipY ? TEXT("yes") : TEXT("no")), false);
+
+    if (BatchStatusText.IsValid())
+        BatchStatusText->SetText(FText::FromString(TEXT("Importing...")));
+
+    // ── Editor Stability ─────────────────────────────────────────────────────
+    // Clear selection so the "Details" panel doesn't try to refresh multiple
+    // times while we are spawning actors in a loop.
+    if (GEditor)
+    {
+        GEditor->SelectNone(true, true);
+    }
+
+    TArray<FGeoR16BatchImporter::FTileImportResult> Results;
+    {
+        // Wrap the whole batch in one Undo transaction.
+        FScopedTransaction Transaction(FText::FromString("Batch R16 Tile Import"));
+
+        FGeoR16BatchImporter Importer;
+
+        // Progress callback updates the main progress bar
+        auto ProgressCB = [this](int32 Done, int32 Total)
+        {
+            Progress = (Total > 0) ? (float)Done / (float)Total : 0.0f;
+            if (BatchStatusText.IsValid())
+                BatchStatusText->SetText(FText::FromString(
+                    FString::Printf(TEXT("Importing tile %d / %d ..."), Done, Total)));
+        };
+
+        Results = Importer.ImportFolder(Settings, ProgressCB);
+    }
+
+    if (GEditor)
+    {
+        GEditor->NoteSelectionChange();
+    }
+
+
+    // Summarise results in the console
+    int32 Ok = 0, Fail = 0;
+    for (const auto& R : Results)
+    {
+        if (R.bSuccess)
+        {
+            ++Ok;
+            OnLog(FString::Printf(
+                TEXT("[BatchImport] OK  tile(%d,%d) res=%d  file=%s"),
+                R.TileX, R.TileY, R.Resolution, *FPaths::GetCleanFilename(R.FilePath)), false);
+        }
+        else
+        {
+            ++Fail;
+            OnLog(FString::Printf(
+                TEXT("[BatchImport] FAIL tile(%d,%d): %s"),
+                R.TileX, R.TileY, *R.ErrorMessage), true);
+        }
+    }
+
+    const FString Summary = FString::Printf(
+        TEXT("[BatchImport] Done — %d tile(s) imported, %d failed."), Ok, Fail);
+    OnLog(Summary, Fail > 0);
+
+    Progress = (Ok > 0) ? 1.0f : 0.0f;
+    if (BatchStatusText.IsValid())
+        BatchStatusText->SetText(FText::FromString(
+            FString::Printf(TEXT("%d imported, %d failed"), Ok, Fail)));
+
     return FReply::Handled();
 }
 
