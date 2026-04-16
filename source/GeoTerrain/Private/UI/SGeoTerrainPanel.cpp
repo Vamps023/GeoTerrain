@@ -14,8 +14,11 @@
 #include "Styling/AppStyle.h"
 #include "Framework/Application/SlateApplication.h"
 #include "DesktopPlatformModule.h"
+<<<<<<< HEAD
 #include "ScopedTransaction.h"
 #include "Editor.h"
+=======
+>>>>>>> 97b8f9f26b257c666cb68d683672c402fc1da546
 
 void SGeoTerrainPanel::Construct(const FArguments& InArgs)
 {
@@ -680,6 +683,7 @@ FReply SGeoTerrainPanel::OnBatchImportClicked()
     if (BatchStatusText.IsValid())
         BatchStatusText->SetText(FText::FromString(TEXT("Importing...")));
 
+<<<<<<< HEAD
     // ── Editor Stability ─────────────────────────────────────────────────────
     // Clear selection so the "Details" panel doesn't try to refresh multiple
     // times while we are spawning actors in a loop.
@@ -712,6 +716,21 @@ FReply SGeoTerrainPanel::OnBatchImportClicked()
         GEditor->NoteSelectionChange();
     }
 
+=======
+    FGeoR16BatchImporter Importer;
+
+    // Progress callback updates the main progress bar
+    auto ProgressCB = [this](int32 Done, int32 Total)
+    {
+        Progress = (Total > 0) ? (float)Done / (float)Total : 0.0f;
+        if (BatchStatusText.IsValid())
+            BatchStatusText->SetText(FText::FromString(
+                FString::Printf(TEXT("Importing tile %d / %d ..."), Done, Total)));
+    };
+
+    const TArray<FGeoR16BatchImporter::FTileImportResult> Results =
+        Importer.ImportFolder(Settings, ProgressCB);
+>>>>>>> 97b8f9f26b257c666cb68d683672c402fc1da546
 
     // Summarise results in the console
     int32 Ok = 0, Fail = 0;

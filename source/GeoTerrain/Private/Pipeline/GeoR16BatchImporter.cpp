@@ -27,7 +27,11 @@
 // 4033  = 64 components of 63 quads  (63 * 64 + 1)
 // 8129  = 128 components of 63 quads (63 * 128 + 1)
 // ─────────────────────────────────────────────────────────────────────────────
+<<<<<<< HEAD
 static constexpr int32 kValidResolutions[] = { 127, 253, 505, 1009, 2017, 4033, 8065, 8129 };
+=======
+static constexpr int32 kValidResolutions[] = { 127, 253, 505, 1009, 2017, 4033, 8129 };
+>>>>>>> 97b8f9f26b257c666cb68d683672c402fc1da546
 
 // ─────────────────────────────────────────────────────────────────────────────
 //  NearestValidResolution
@@ -154,9 +158,14 @@ bool FGeoR16BatchImporter::LoadHeightmap(const FString& FilePath,
     const int64 NumPixels = FileSizeBytes / sizeof(uint16);
     const int32 Side      = FMath::RoundToInt(FMath::Sqrt((double)NumPixels));
 
+<<<<<<< HEAD
     // Verify it's a perfect square.  We MUST have Side * Side == NumPixels exactly
     // to avoid buffer overflows during Serialize() or resampling crashes.
     if ((int64)Side * Side != NumPixels)
+=======
+    // Verify it's a perfect square (allow ±1 pixel for floating-point rounding).
+    if (FMath::Abs((int64)Side * Side - NumPixels) > 1)
+>>>>>>> 97b8f9f26b257c666cb68d683672c402fc1da546
     {
         UE_LOG(LogTemp, Error,
                TEXT("FGeoR16BatchImporter: '%s' pixel count %lld is not a perfect square."),
@@ -165,8 +174,12 @@ bool FGeoR16BatchImporter::LoadHeightmap(const FString& FilePath,
     }
 
     OutResolution = Side;
+<<<<<<< HEAD
     // Allocate space for the TOTAL pixels found in the file.
     OutData.SetNumUninitialized(NumPixels);
+=======
+    OutData.SetNumUninitialized(Side * Side);
+>>>>>>> 97b8f9f26b257c666cb68d683672c402fc1da546
     Ar->Serialize(OutData.GetData(), FileSizeBytes);
 
     if (Ar->IsError())
@@ -292,9 +305,13 @@ ALandscape* FGeoR16BatchImporter::CreateLandscapeTile(
                                                      ALandscape::StaticClass());
     SpawnParams.NameMode     = FActorSpawnParameters::ESpawnActorNameMode::Requested;
     SpawnParams.bNoFail      = true;
+<<<<<<< HEAD
     // We omit RF_Transactional here because the batch is already wrapped in a 
     // FScopedTransaction in the UI layer.
 
+=======
+    SpawnParams.ObjectFlags  = RF_Transactional;
+>>>>>>> 97b8f9f26b257c666cb68d683672c402fc1da546
 
     ALandscape* Landscape = World->SpawnActor<ALandscape>(
         ALandscape::StaticClass(),
@@ -310,19 +327,31 @@ ALandscape* FGeoR16BatchImporter::CreateLandscapeTile(
         return nullptr;
     }
 
+<<<<<<< HEAD
     // ── 5. Actor label ──────────────────────────────────────────────────────────
+=======
+    // ── 5. Actor label ────────────────────────────────────────────────────────
+>>>>>>> 97b8f9f26b257c666cb68d683672c402fc1da546
     const FString Label = FString::Printf(TEXT("%s_X%d_Y%d"),
                                            *Settings.LandscapeNamePrefix,
                                            TileX, TileY);
     Landscape->SetActorLabel(Label);
 
+<<<<<<< HEAD
     // ── 6. Scale (BEFORE Import — bakes into normal/LOD calculations) ────────
+=======
+    // ── 6. Scale ──────────────────────────────────────────────────────────────
+    //  XY: cm per quad (= cm per pixel for a 1:1 tile).
+    //  Z:  controls the height range (see FImportParams::ComputedZScale comments
+    //      in GeoLandscapeImporter.h for the full formula explanation).
+>>>>>>> 97b8f9f26b257c666cb68d683672c402fc1da546
     Landscape->SetActorScale3D(FVector(Settings.ScaleXY, Settings.ScaleXY, Settings.ScaleZ));
 
     // ── 7. Material ───────────────────────────────────────────────────────────
     if (Settings.LandscapeMaterial)
         Landscape->LandscapeMaterial = Settings.LandscapeMaterial;
 
+<<<<<<< HEAD
     // ── 8. GUID — DO NOT call SetLandscapeGuid() before Import() ─────────────
     //  In UE 5.3, calling SetLandscapeGuid() before Import() corrupts the
     //  internal landscape state and causes Import() to hit a
@@ -337,12 +366,39 @@ ALandscape* FGeoR16BatchImporter::CreateLandscapeTile(
     // ── 9. Build the height data import map ──────────────────────────────────
     TMap<FGuid, TArray<uint16>> HeightmapData;
     HeightmapData.Add(LandscapeGuid, MoveTemp(FinalData));
+=======
+    // ── 8. Build the height data import map ──────────────────────────────────
+    //  Key = a fresh GUID that acts as the internal landscape identity.
+    //  This GUID is passed directly to ALandscape::Import(); do NOT also call
+    //  SetLandscapeGuid() — that resets the internal GUID after Import() has
+    //  already registered it, triggering the ensure() assertion in UE5.3.
+    const FGuid LandscapeGuid = FGuid::NewGuid();
+
+    TMap<FGuid, TArray<uint16>> HeightmapData;
+    HeightmapData.Add(LandscapeGuid, FinalData);
+>>>>>>> 97b8f9f26b257c666cb68d683672c402fc1da546
 
     // Layer info map (no paintable layers required for height-only import).
     TMap<FGuid, TArray<FLandscapeImportLayerInfo>> LayerInfoMap;
     LayerInfoMap.Add(LandscapeGuid, TArray<FLandscapeImportLayerInfo>());
 
+<<<<<<< HEAD
     // ── 10. Import ───────────────────────────────────────────────────────────
+=======
+    // ── 9. Import ─────────────────────────────────────────────────────────────
+    //  ALandscape::Import() signature (UE 5.x):
+    //    Import(
+    //      InGuid,
+    //      InMinX, InMinY,   ← always 0,0 for a fresh landscape
+    //      InMaxX, InMaxY,   ← TotalQuads, TotalQuads
+    //      InNumSubsections, ← SectionsPerComponent
+    //      InSubsectionSizeQuads, ← QuadsPerSection
+    //      InImportHeightData,
+    //      InHeightmapFileName,  ← optional hint, pass nullptr
+    //      InImportMaterialLayerInfos,
+    //      InImportMaterialLayerType
+    //    )
+>>>>>>> 97b8f9f26b257c666cb68d683672c402fc1da546
     Landscape->Import(
         LandscapeGuid,
         0, 0,
