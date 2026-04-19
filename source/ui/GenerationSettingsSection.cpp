@@ -91,5 +91,41 @@ GenerationSettingsSection::GenerationSettingsSection(QWidget* parent)
     spin_tile_km_->setSuffix(" km");
     addRow(split_gl, "Chunk Size:", spin_tile_km_);
 
+    auto* qgis_gl = makeGroup("UNIGINE Export (QGIS Required)");
+    auto* qgis_row = new QHBoxLayout();
+    edit_qgis_root_ = new QLineEdit(this);
+    // Auto-detect common QGIS/OSGeo4W paths
+    QStringList common_paths;
+    common_paths << "C:/OSGeo4W"
+                 << "C:/OSGeo4W64"
+                 << "C:/Program Files/QGIS 3.32"
+                 << "C:/Program Files/QGIS 3.28"
+                 << QDir::homePath() + "/Documents/Sogeclair Rail Simulation/Track Editor/cots/qgis";
+    for (const QString& path : common_paths)
+    {
+        if (QDir(path).exists())
+        {
+            edit_qgis_root_->setText(path);
+            break;
+        }
+    }
+    qgis_row->addWidget(edit_qgis_root_);
+    auto* browse_qgis = new QPushButton("Browse", this);
+    qgis_row->addWidget(browse_qgis);
+    auto* qgis_widget = new QWidget(this);
+    auto* qgis_widget_row = new QHBoxLayout(qgis_widget);
+    qgis_widget_row->setContentsMargins(0, 0, 0, 0);
+    auto* qgis_lbl = new QLabel("QGIS Root:", this);
+    qgis_lbl->setFixedWidth(140);
+    qgis_widget_row->addWidget(qgis_lbl);
+    qgis_widget_row->addLayout(qgis_row);
+    qgis_gl->addWidget(qgis_widget);
+    connect(browse_qgis, &QPushButton::clicked, this, [this]()
+    {
+        const QString dir = QFileDialog::getExistingDirectory(this, "Select QGIS/OSGeo4W Root Directory (containing bin/gdal_translate.exe)", edit_qgis_root_->text());
+        if (!dir.isEmpty())
+            edit_qgis_root_->setText(dir);
+    });
+
     layout->addStretch();
 }

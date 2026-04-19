@@ -364,28 +364,38 @@ void GeoTerrainController::onCancel()
 
 void GeoTerrainController::onExport()
 {
+    const QString qgis_root = panel_->settingsSection()->qgisRootEdit()->text();
+    if (qgis_root.isEmpty())
+    {
+        panel_->appendLog("[Export] ERROR: QGIS root path not set. Please configure QGIS path in Settings tab.");
+        return;
+    }
+
     auto result = export_->exportForUnigine(
         panel_->settingsSection()->outputDirEdit()->text(),
-        "C:/Users/snare.ext/Documents/Sogeclair Rail Simulation/Track Editor/cots/qgis",
+        qgis_root,
         [this](const QString& line) { panel_->appendLog(line); });
     if (!result.success)
-        panel_->appendLog("[Export] " + QString::fromStdString(result.message));
+        panel_->appendLog("[Export] FAILED: " + QString::fromStdString(result.message));
     else
         panel_->appendLog(QString("[Export] Wrote %1 file(s).").arg(result.value));
 }
 
 void GeoTerrainController::onGather()
 {
-    auto result = export_->gatherChunks(
-        panel_->settingsSection()->outputDirEdit()->text(),
+    const QString output_dir = panel_->settingsSection()->outputDirEdit()->text();
+    if (output_dir.isEmpty())
+    {
+        panel_->appendLog("[Gather] ERROR: No output directory set.");
+        return;
+    }
+
+    auto result = export_->gatherChunks(output_dir,
         [this](const QString& line) { panel_->appendLog(line); });
     if (!result.success)
-        panel_->appendLog("[Gather] " + QString::fromStdString(result.message));
+        panel_->appendLog("[Gather] FAILED: " + QString::fromStdString(result.message));
     else
-    {
         panel_->appendLog(QString("[Gather] Copied %1 file(s).").arg(result.value));
-        panel_->setSandwormEnabled(true);
-    }
 }
 
 void GeoTerrainController::onCreateSandworm()
@@ -393,7 +403,7 @@ void GeoTerrainController::onCreateSandworm()
     const QString output_dir = panel_->settingsSection()->outputDirEdit()->text();
     if (output_dir.isEmpty())
     {
-        panel_->appendLog("[Sandworm] No output directory set.");
+        panel_->appendLog("[Sandworm] ERROR: No output directory set.");
         return;
     }
 
