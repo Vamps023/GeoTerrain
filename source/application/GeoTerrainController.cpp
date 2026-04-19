@@ -12,7 +12,8 @@
 #include "ChunkPlanner.h"
 #include "ExportCoordinator.h"
 #include "GenerationCoordinator.h"
-#include "SandwormExporter.h"
+#include "TerrainBuilder.h"
+#include "ui/TerrainBuilderSection.h"
 
 #include <QFileInfo>
 #include <QJsonArray>
@@ -91,7 +92,10 @@ GeoTerrainController::GeoTerrainController(GeoTerrainPanel* panel, QObject* pare
     connect(console, &RunConsoleSection::cancelRequested,    this, &GeoTerrainController::onCancel);
     connect(console, &RunConsoleSection::exportRequested,    this, &GeoTerrainController::onExport);
     connect(console, &RunConsoleSection::gatherRequested,    this, &GeoTerrainController::onGather);
-    connect(console, &RunConsoleSection::sandwormRequested,  this, &GeoTerrainController::onCreateSandworm);
+
+    if (auto* terrain = panel_->terrainSection())
+        connect(terrain, &TerrainBuilderSection::buildTerrainRequested,
+                this, &GeoTerrainController::onBuildTerrain);
 
     connect(generation_, &GenerationCoordinator::logMessage, panel_, &GeoTerrainPanel::appendLog);
     connect(generation_, &GenerationCoordinator::progressChanged, this, &GeoTerrainController::onProgress);
@@ -426,37 +430,51 @@ void GeoTerrainController::onGather()
     });
 }
 
-void GeoTerrainController::onCreateSandworm()
+void GeoTerrainController::onBuildTerrain()
 {
     if (job_->isRunning())
         return;
 
-    const QString output_dir = panel_->settingsSection()->outputDirEdit()->text();
-    if (output_dir.isEmpty())
+    auto* terrain_section = panel_->terrainSection();
+    if (!terrain_section)
+        return;
+
+    TerrainBuildRequest request;
+    request.heightmap_path   = terrain_section->heightmapPath();
+    request.albedo_path      = terrain_section->albedoPath();
+    request.output_lmap_path = terrain_section->outputLmapPath();
+    request.world_size_m     = terrain_section->worldSizeMeters();
+    request.height_min_m     = terrain_section->heightMinMeters();
+    request.height_max_m     = terrain_section->heightMaxMeters();
+    request.tile_resolution  = terrain_section->tileResolution();
+
+    if (auto pre = TerrainBuilder::validate(request); !pre.success)
     {
-        panel_->appendLog("[Sandworm] ERROR: No output directory set.");
+        panel_->appendLog("[Terrain] " + QString::fromStdString(pre.message));
         return;
     }
 
-    const QString project_name = QFileInfo(output_dir).fileName();
-    const GeoBounds bounds = current_bounds_;
+    // UNIGINE API calls MUST run on the engine main thread (same thread as
+    // the editor UI), so this runs synchronously rather than through the
+    // worker-thread AsyncJob used by Export/Gather. The build is CPU-heavy
+    // (.lmap serialization) and will briefly freeze the panel.
+    panel_->appendLog("Building terrain...");
+    terrain_section->setBuildEnabled(false);
 
-    panel_->appendLog("Starting Sandworm project...");
-    panel_->setControlsEnabled(false);
-    active_job_tag_ = "Sandworm";
+    auto log_fn = [this](const QString& line) { panel_->appendLog(line); };
+    auto result = terrain_builder_.build(request, log_fn);
 
-    SandwormExporter exporter;
-    job_->start([exporter, output_dir, bounds, project_name](AsyncJob::LogFn log) -> AsyncJob::Outcome
+    if (result.success)
     {
-        auto r = exporter.createProject(output_dir, bounds, project_name, log);
-        AsyncJob::Outcome o;
-        o.success = r.success;
-        o.count = r.success ? 1 : 0;
-        o.message = r.success
-            ? QString("[Sandworm] Done \u2014 open in Sandworm: ") + r.value
-            : QString("[Sandworm] FAILED: %1").arg(QString::fromStdString(r.message));
-        return o;
-    });
+        panel_->appendLog(QString("[Terrain] Done \u2014 .lmap: %1 (grid %2x%3)")
+            .arg(result.value.lmap_path)
+            .arg(result.value.grid_x).arg(result.value.grid_y));
+    }
+    else
+    {
+        panel_->appendLog("[Terrain] FAILED: " + QString::fromStdString(result.message));
+    }
+    terrain_section->setBuildEnabled(true);
 }
 
 void GeoTerrainController::onProgress(int percent)
@@ -464,20 +482,13 @@ void GeoTerrainController::onProgress(int percent)
     panel_->setProgress(percent);
 }
 
-void GeoTerrainController::onAsyncJobFinished(bool success, int /*count*/, const QString& message)
+void GeoTerrainController::onAsyncJobFinished(bool /*success*/, int /*count*/, const QString& message)
 {
     panel_->appendLog(message);
     panel_->setControlsEnabled(true);
 
-    // Restore per-action enablement based on state / which job just finished.
     const bool chunked = panel_->settingsSection()->chunkSizeSpin()->value() >= 1.0;
     panel_->setGatherEnabled(chunked);
-
-    if (active_job_tag_ == "Gather" && success)
-        panel_->setSandwormEnabled(true);
-    else if (active_job_tag_ == "Sandworm")
-        panel_->setSandwormEnabled(true);
-
     active_job_tag_.clear();
 }
 
@@ -490,9 +501,6 @@ void GeoTerrainController::onFinished(int status, const QString& message)
     panel_->setExportEnabled(ok);
     const bool chunked = panel_->settingsSection()->chunkSizeSpin()->value() >= 1.0;
     panel_->setGatherEnabled(chunked);
-    // Enable Sandworm for single-chunk runs immediately; multi-chunk after Gather
-    if (ok && !chunked)
-        panel_->setSandwormEnabled(true);
 }
 
 void GeoTerrainController::applyMapMode(int mode, bool use_fallback)

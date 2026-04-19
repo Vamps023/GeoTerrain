@@ -35,13 +35,6 @@ RunConsoleSection::RunConsoleSection(QWidget* parent)
     btn_gather_ = new QPushButton("Gather Chunk Exports", this);
     btn_gather_->setEnabled(false);
     export_layout->addWidget(btn_gather_);
-    btn_sandworm_ = new QPushButton("Create Sandworm Project", this);
-    btn_sandworm_->setEnabled(false);
-    btn_sandworm_->setToolTip("Generate a .sandworm project file wiring heightmap.tif and albedo.tif for each chunk");
-    btn_sandworm_->setStyleSheet(
-        "QPushButton:enabled { background:#5a3a7a; color:white; font-weight:bold; padding:4px; border-radius:3px; }"
-        "QPushButton:enabled:hover { background:#7a4a9a; }");
-    export_layout->addWidget(btn_sandworm_);
     layout->addWidget(export_grp);
 
     auto* button_row = new QHBoxLayout();
@@ -67,7 +60,6 @@ RunConsoleSection::RunConsoleSection(QWidget* parent)
     connect(btn_cancel_, &QPushButton::clicked, this, &RunConsoleSection::cancelRequested);
     connect(btn_export_,   &QPushButton::clicked, this, &RunConsoleSection::exportRequested);
     connect(btn_gather_,   &QPushButton::clicked, this, &RunConsoleSection::gatherRequested);
-    connect(btn_sandworm_, &QPushButton::clicked, this, &RunConsoleSection::sandwormRequested);
 }
 
 void RunConsoleSection::appendLog(const QString& message)
@@ -101,9 +93,4 @@ void RunConsoleSection::setExportEnabled(bool enabled)
 void RunConsoleSection::setGatherEnabled(bool enabled)
 {
     btn_gather_->setEnabled(enabled);
-}
-
-void RunConsoleSection::setSandwormEnabled(bool enabled)
-{
-    btn_sandworm_->setEnabled(enabled);
 }

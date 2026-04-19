@@ -5,6 +5,7 @@
 #include "ui/MapSelectionSection.h"
 #include "ui/RunConsoleSection.h"
 #include "ui/SourceSettingsSection.h"
+#include "ui/TerrainBuilderSection.h"
 
 #include <QLabel>
 #include <QPalette>
@@ -49,11 +50,13 @@ void GeoTerrainPanel::setupUi()
     source_section_ = new SourceSettingsSection(this);
     settings_section_ = new GenerationSettingsSection(this);
     console_section_ = new RunConsoleSection(this);
+    terrain_section_ = new TerrainBuilderSection(this);
 
     tabs_->addTab(map_section_, "Map");
     tabs_->addTab(source_section_, "Sources");
     tabs_->addTab(settings_section_, "Parameters");
     tabs_->addTab(console_section_, "Generate");
+    tabs_->addTab(terrain_section_, "Terrain");
     root->addWidget(tabs_);
 }
 
@@ -69,9 +72,13 @@ void GeoTerrainPanel::setLayerInfo(const QString& text, bool has_extent)
 
 void GeoTerrainPanel::setControlsEnabled(bool enabled)
 {
-    tabs_->setTabEnabled(0, enabled);
-    tabs_->setTabEnabled(1, enabled);
-    tabs_->setTabEnabled(2, enabled);
+    // Disable non-Generate tabs while a background job is running; the
+    // Generate tab keeps its own state via console_section_->setRunning().
+    for (int i = 0; i < tabs_->count(); ++i)
+    {
+        if (tabs_->widget(i) != console_section_)
+            tabs_->setTabEnabled(i, enabled);
+    }
     console_section_->setRunning(!enabled);
 }
 
@@ -98,11 +105,6 @@ void GeoTerrainPanel::setExportEnabled(bool enabled)
 void GeoTerrainPanel::setGatherEnabled(bool enabled)
 {
     console_section_->setGatherEnabled(enabled);
-}
-
-void GeoTerrainPanel::setSandwormEnabled(bool enabled)
-{
-    console_section_->setSandwormEnabled(enabled);
 }
 
 void GeoTerrainPanel::showGenerateTab()

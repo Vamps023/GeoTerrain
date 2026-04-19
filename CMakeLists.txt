@@ -66,6 +66,7 @@ set(SOURCES
     source/ui/SourceSettingsSection.cpp
     source/ui/GenerationSettingsSection.cpp
     source/ui/RunConsoleSection.cpp
+    source/ui/TerrainBuilderSection.cpp
     source/pipeline/DEMFetcher.cpp
     source/pipeline/TileDownloader.cpp
     source/pipeline/OSMParser.cpp
@@ -79,7 +80,7 @@ set(SOURCES
     source/application/ChunkPlanner.cpp
     source/application/ExportCoordinator.cpp
     source/application/GenerationCoordinator.cpp
-    source/application/SandwormExporter.cpp
+    source/application/TerrainBuilder.cpp
     source/application/GeoTerrainController.cpp
 )
 
@@ -91,6 +92,7 @@ set(HEADERS
     source/ui/SourceSettingsSection.h
     source/ui/GenerationSettingsSection.h
     source/ui/RunConsoleSection.h
+    source/ui/TerrainBuilderSection.h
     source/pipeline/DEMFetcher.h
     source/pipeline/TileDownloader.h
     source/pipeline/OSMParser.h
@@ -107,8 +109,7 @@ set(HEADERS
     source/application/AsyncJob.h
     source/application/ChunkPlanner.h
     source/application/ExportCoordinator.h
-    source/application/GenerationCoordinator.h
-    source/application/SandwormExporter.h
+    source/application/TerrainBuilder.h
     source/application/GeoTerrainController.h
 )
 

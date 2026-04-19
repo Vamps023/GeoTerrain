@@ -2,7 +2,7 @@
 
 #include "../domain/GenerationTypes.h"
 #include "ExportCoordinator.h"
-#include "SandwormExporter.h"
+#include "TerrainBuilder.h"
 
 #include <QObject>
 #include <QString>
@@ -33,7 +33,7 @@ private slots:
     void onCancel();
     void onExport();
     void onGather();
-    void onCreateSandworm();
+    void onBuildTerrain();
     void onProgress(int percent);
     void onFinished(int status, const QString& message);
     void onAsyncJobFinished(bool success, int count, const QString& message);
@@ -49,7 +49,7 @@ private:
     GenerationCoordinator* generation_ = nullptr;
     AsyncJob* job_ = nullptr;
     ExportCoordinator export_;
-    SandwormExporter sandworm_;
+    TerrainBuilder terrain_builder_;
     QString active_job_tag_;
     GeoBounds current_bounds_;
     GeoBounds layer_extent_;

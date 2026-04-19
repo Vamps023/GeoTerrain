@@ -12,6 +12,7 @@ class MapSelectionSection;
 class SourceSettingsSection;
 class GenerationSettingsSection;
 class RunConsoleSection;
+class TerrainBuilderSection;
 
 class GeoTerrainPanel : public QWidget
 {
@@ -25,6 +26,7 @@ public:
     SourceSettingsSection* sourceSection() const { return source_section_; }
     GenerationSettingsSection* settingsSection() const { return settings_section_; }
     RunConsoleSection* consoleSection() const { return console_section_; }
+    TerrainBuilderSection* terrainSection() const { return terrain_section_; }
 
     void setBoundsText(const QString& text);
     void setLayerInfo(const QString& text, bool has_extent);
@@ -34,7 +36,6 @@ public:
     void setProgress(int percent);
     void setExportEnabled(bool enabled);
     void setGatherEnabled(bool enabled);
-    void setSandwormEnabled(bool enabled);
     void showGenerateTab();
 
 signals:
@@ -48,5 +49,6 @@ private:
     SourceSettingsSection* source_section_ = nullptr;
     GenerationSettingsSection* settings_section_ = nullptr;
     RunConsoleSection* console_section_ = nullptr;
+    TerrainBuilderSection* terrain_section_ = nullptr;
     std::unique_ptr<GeoTerrainController> controller_;
 };
