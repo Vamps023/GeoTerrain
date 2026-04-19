@@ -25,10 +25,39 @@ struct TerrainBuildRequest
     QString heightmap_path;    // absolute path to heightmap TIFF
     QString albedo_path;       // absolute path to albedo TIFF
     QString output_lmap_path;  // absolute path to the .lmap to create
-    double world_size_m = 0.0; // side length of the square terrain in metres
-    double height_min_m = 0.0; // elevation floor  (metres above sea level)
-    double height_max_m = 0.0; // elevation ceiling
-    int tile_resolution = 1024;// per-tile texel count for the .lmap
+    // All remaining fields auto-computed from heightmap when left at 0:
+    //   world_size_m   ← GeoTIFF pixel scale × width (or sensible default)
+    //   height_min_m   ← min non-no-data pixel value
+    //   height_max_m   ← max pixel value
+    //   tile_resolution ← 1024 by default
+    double world_size_m = 0.0;
+    double height_min_m = 0.0;
+    double height_max_m = 0.0;
+    int tile_resolution = 0;
+};
+
+// Geo-referenced extent of a single GeoTIFF, expressed in metres so that
+// multiple layers with different native CRS/units can be placed on a common
+// ground plane. Center is the file's geographic centre relative to the
+// heightmap's centre (i.e. the heightmap's centre is always (0,0)).
+struct GeoExtent
+{
+    double width_m = 0.0;
+    double height_m = 0.0;
+    double center_offset_x_m = 0.0;  // metres east of heightmap centre
+    double center_offset_y_m = 0.0;  // metres north of heightmap centre
+    bool has_geo_transform = false;
+};
+
+struct TerrainAutoParams
+{
+    double world_size_m = 0.0;
+    double height_min_m = 0.0;
+    double height_max_m = 0.0;
+    int tile_resolution = 1024;
+    int heightmap_width = 0;
+    int heightmap_height = 0;
+    bool has_geo_transform = false;
 };
 
 struct TerrainBuildReport
@@ -48,4 +77,8 @@ public:
 
     // Exposed for unit testing / pre-flight validation (no engine calls).
     static Result<QString> validate(const TerrainBuildRequest& request);
+
+    // Auto-compute terrain parameters from a heightmap TIFF via GDAL.
+    // Used when the user leaves scale/elevation inputs unset in the UI.
+    static Result<TerrainAutoParams> computeAutoParams(const QString& heightmap_path);
 };

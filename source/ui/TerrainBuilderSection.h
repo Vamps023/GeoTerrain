@@ -1,9 +1,8 @@
 #pragma once
 
-#include <QDoubleSpinBox>
+#include <QLabel>
 #include <QLineEdit>
 #include <QPushButton>
-#include <QSpinBox>
 #include <QWidget>
 
 // ---------------------------------------------------------------------------
@@ -11,9 +10,8 @@
 //
 // Exposes the minimal production workflow for turning a pair of .tif files
 // (heightmap + albedo) into a native UNIGINE LandscapeTerrain: three file
-// pickers, world size + elevation range inputs, and a single Generate button.
-// All heavy lifting (TIFF decode, .lmap creation, node spawning) happens
-// behind the Generate button in GeoTerrainController.
+// pickers and a single Generate button. World size, elevation range and tile
+// resolution are auto-computed from the heightmap GeoTIFF (Sandworm-style).
 class TerrainBuilderSection : public QWidget
 {
     Q_OBJECT
@@ -24,18 +22,18 @@ public:
     QString heightmapPath() const;
     QString albedoPath() const;
     QString outputLmapPath() const;
-    double worldSizeMeters() const;
-    double heightMinMeters() const;
-    double heightMaxMeters() const;
-    int tileResolution() const;
 
     void setHeightmapPath(const QString& path);
     void setAlbedoPath(const QString& path);
     void setOutputLmapPath(const QString& path);
     void setBuildEnabled(bool enabled);
 
+    // Display auto-computed parameters after the heightmap is scanned.
+    void setAutoParamsText(const QString& text);
+
 signals:
     void buildTerrainRequested();
+    void heightmapPathChanged(const QString& path);
 
 private slots:
     void onBrowseHeightmap();
@@ -46,9 +44,6 @@ private:
     QLineEdit* edit_heightmap_ = nullptr;
     QLineEdit* edit_albedo_ = nullptr;
     QLineEdit* edit_output_ = nullptr;
-    QDoubleSpinBox* spin_world_size_ = nullptr;
-    QDoubleSpinBox* spin_height_min_ = nullptr;
-    QDoubleSpinBox* spin_height_max_ = nullptr;
-    QSpinBox* spin_tile_resolution_ = nullptr;
+    QLabel*    label_auto_params_ = nullptr;
     QPushButton* btn_build_ = nullptr;
 };

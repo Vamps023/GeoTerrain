@@ -24,6 +24,8 @@ public:
 
     QLineEdit* searchEdit() const { return edit_search_; }
     double paddingDegrees() const;
+    double chunkSizeKm() const;
+    QDoubleSpinBox* chunkSizeSpin() const { return spin_chunk_km_; }
     QVector<bool> chunkEnabled() const;
 
 signals:
@@ -44,4 +46,5 @@ private:
     QPushButton* btn_focus_layer_ = nullptr;
     QPushButton* btn_select_bounds_ = nullptr;
     QDoubleSpinBox* spin_pad_deg_ = nullptr;
+    QDoubleSpinBox* spin_chunk_km_ = nullptr;
 };

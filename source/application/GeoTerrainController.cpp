@@ -15,6 +15,9 @@
 #include "TerrainBuilder.h"
 #include "ui/TerrainBuilderSection.h"
 
+#include <UnigineLog.h>
+
+#include <QDebug>
 #include <QFileInfo>
 #include <QJsonArray>
 #include <QJsonDocument>
@@ -94,8 +97,19 @@ GeoTerrainController::GeoTerrainController(GeoTerrainPanel* panel, QObject* pare
     connect(console, &RunConsoleSection::gatherRequested,    this, &GeoTerrainController::onGather);
 
     if (auto* terrain = panel_->terrainSection())
-        connect(terrain, &TerrainBuilderSection::buildTerrainRequested,
-                this, &GeoTerrainController::onBuildTerrain);
+    {
+        try
+        {
+            connect(terrain, &TerrainBuilderSection::buildTerrainRequested,
+                    this, &GeoTerrainController::onBuildTerrain, Qt::QueuedConnection);
+            connect(terrain, &TerrainBuilderSection::heightmapPathChanged,
+                    this, &GeoTerrainController::onHeightmapPathChanged);
+        }
+        catch (...)
+        {
+            // Signal connection failed - terrain build will not work
+        }
+    }
 
     connect(generation_, &GenerationCoordinator::logMessage, panel_, &GeoTerrainPanel::appendLog);
     connect(generation_, &GenerationCoordinator::progressChanged, this, &GeoTerrainController::onProgress);
@@ -136,7 +150,7 @@ GenerationRequest GeoTerrainController::buildRequest() const
     request.mask.resolution_m = settings->resolutionSpin()->value();
     request.mask.road_width_m = settings->roadWidthSpin()->value();
     request.output.output_dir = settings->outputDirEdit()->text().toStdString();
-    request.chunking.chunk_size_km = settings->chunkSizeSpin()->value();
+    request.chunking.chunk_size_km = panel_->mapSection()->chunkSizeKm();
     {
         const QVector<bool> qt_mask = panel_->mapSection()->chunkEnabled();
         request.chunking.enabled_mask.reserve(qt_mask.size());
@@ -210,7 +224,7 @@ void GeoTerrainController::onPreviewGrid()
         return;
     auto result = ChunkPlanner::buildPlan(
         current_bounds_,
-        panel_->settingsSection()->chunkSizeSpin()->value(),
+        panel_->mapSection()->chunkSizeKm(),
         panel_->settingsSection()->outputDirEdit()->text().toStdString());
     if (!result.success)
     {
@@ -374,13 +388,10 @@ void GeoTerrainController::onExport()
     if (job_->isRunning())
         return;
 
-    const QString qgis_root = panel_->settingsSection()->qgisRootEdit()->text();
-    if (qgis_root.isEmpty())
-    {
-        panel_->appendLog("[Export] ERROR: QGIS root path not set. Please configure QGIS path in Settings tab.");
-        return;
-    }
-
+    // QGIS export path is no longer surfaced in the UI — use an empty root
+    // so the coordinator skips any QGIS-specific steps and relies on the
+    // native UNIGINE pipeline we now ship.
+    const QString qgis_root;
     const QString output_dir = panel_->settingsSection()->outputDirEdit()->text();
     panel_->appendLog("Starting export...");
     panel_->setControlsEnabled(false);
@@ -432,21 +443,20 @@ void GeoTerrainController::onGather()
 
 void GeoTerrainController::onBuildTerrain()
 {
-    if (job_->isRunning())
-        return;
-
+    qDebug() << "[Terrain] onBuildTerrain slot invoked.";
+    panel_->appendLog("[Terrain] onBuildTerrain slot invoked.");
     auto* terrain_section = panel_->terrainSection();
     if (!terrain_section)
+    {
+        panel_->appendLog("[Terrain] ERROR: Terrain section not found.");
         return;
-
+    }
     TerrainBuildRequest request;
     request.heightmap_path   = terrain_section->heightmapPath();
     request.albedo_path      = terrain_section->albedoPath();
     request.output_lmap_path = terrain_section->outputLmapPath();
-    request.world_size_m     = terrain_section->worldSizeMeters();
-    request.height_min_m     = terrain_section->heightMinMeters();
-    request.height_max_m     = terrain_section->heightMaxMeters();
-    request.tile_resolution  = terrain_section->tileResolution();
+    // world_size_m, height_min/max_m and tile_resolution are left at 0 so
+    // TerrainBuilder::build() auto-computes them from the heightmap GeoTIFF.
 
     if (auto pre = TerrainBuilder::validate(request); !pre.success)
     {
@@ -461,7 +471,16 @@ void GeoTerrainController::onBuildTerrain()
     panel_->appendLog("Building terrain...");
     terrain_section->setBuildEnabled(false);
 
-    auto log_fn = [this](const QString& line) { panel_->appendLog(line); };
+    // Mirror log output to both the panel AND qDebug (editor_log.txt) so we
+    // can see terrain build progress even if the editor crashes before the
+    // panel can render the message.
+    auto log_fn = [this](const QString& line)
+    {
+        // Use Unigine::Log so messages are flushed to editor_log.txt
+        // immediately (qDebug may be buffered and lost on crash).
+        Unigine::Log::message("%s\n", line.toUtf8().constData());
+        panel_->appendLog(line);
+    };
     auto result = terrain_builder_.build(request, log_fn);
 
     if (result.success)
@@ -487,7 +506,7 @@ void GeoTerrainController::onAsyncJobFinished(bool /*success*/, int /*count*/, c
     panel_->appendLog(message);
     panel_->setControlsEnabled(true);
 
-    const bool chunked = panel_->settingsSection()->chunkSizeSpin()->value() >= 1.0;
+    const bool chunked = panel_->mapSection()->chunkSizeKm() >= 1.0;
     panel_->setGatherEnabled(chunked);
     active_job_tag_.clear();
 }
@@ -499,7 +518,7 @@ void GeoTerrainController::onFinished(int status, const QString& message)
     const bool ok = (status == static_cast<int>(JobStatus::Succeeded) ||
                      status == static_cast<int>(JobStatus::PartiallySucceeded));
     panel_->setExportEnabled(ok);
-    const bool chunked = panel_->settingsSection()->chunkSizeSpin()->value() >= 1.0;
+    const bool chunked = panel_->mapSection()->chunkSizeKm() >= 1.0;
     panel_->setGatherEnabled(chunked);
 }
 
@@ -519,4 +538,43 @@ void GeoTerrainController::applyMapMode(int mode, bool use_fallback)
     map_section->setMapStatus(
         mapStatusText(map_mode_, using_satellite_fallback_),
         using_satellite_fallback_);
+}
+
+void GeoTerrainController::onHeightmapPathChanged(const QString& path)
+{
+    auto* terrain_section = panel_->terrainSection();
+    if (!terrain_section)
+        return;
+
+    if (path.isEmpty() || !QFileInfo::exists(path))
+    {
+        terrain_section->setAutoParamsText("Select a heightmap to compute parameters…");
+        return;
+    }
+
+    auto r = TerrainBuilder::computeAutoParams(path);
+    if (!r.success)
+    {
+        terrain_section->setAutoParamsText(
+            QString("Could not read heightmap: %1").arg(QString::fromStdString(r.message)));
+        return;
+    }
+
+    const auto& p = r.value;
+    const QString text = QString(
+        "Heightmap: %1 x %2 px\n"
+        "World size: %3 m (square)\n"
+        "Elevation: %4 .. %5 m\n"
+        "Tile resolution: %6 px\n"
+        "%7")
+        .arg(p.heightmap_width)
+        .arg(p.heightmap_height)
+        .arg(p.world_size_m, 0, 'f', 2)
+        .arg(p.height_min_m, 0, 'f', 2)
+        .arg(p.height_max_m, 0, 'f', 2)
+        .arg(p.tile_resolution)
+        .arg(p.has_geo_transform
+                ? "Source: GeoTIFF pixel scale"
+                : "Source: image dimensions (no geo metadata)");
+    terrain_section->setAutoParamsText(text);
 }

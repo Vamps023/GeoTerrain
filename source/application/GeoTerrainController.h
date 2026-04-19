@@ -34,6 +34,7 @@ private slots:
     void onExport();
     void onGather();
     void onBuildTerrain();
+    void onHeightmapPathChanged(const QString& path);
     void onProgress(int percent);
     void onFinished(int status, const QString& message);
     void onAsyncJobFinished(bool success, int count, const QString& message);

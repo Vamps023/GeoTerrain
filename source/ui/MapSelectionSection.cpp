@@ -79,6 +79,20 @@ MapSelectionSection::MapSelectionSection(QWidget* parent)
     label_bounds_->setStyleSheet("color: #4fc3f7; font-size: 9pt; padding: 2px;");
     bottom_row->addWidget(label_bounds_, 1);
 
+    auto* chunk_lbl = new QLabel("Chunk:", this);
+    chunk_lbl->setStyleSheet("color:#aaa; font-size:8pt;");
+    bottom_row->addWidget(chunk_lbl);
+
+    spin_chunk_km_ = new QDoubleSpinBox(this);
+    spin_chunk_km_->setRange(0.0, 500.0);
+    spin_chunk_km_->setValue(0.0);
+    spin_chunk_km_->setSingleStep(5.0);
+    spin_chunk_km_->setDecimals(1);
+    spin_chunk_km_->setSuffix(" km");
+    spin_chunk_km_->setToolTip("Split large areas into square chunks of this size. 0 = no splitting.");
+    spin_chunk_km_->setFixedWidth(96);
+    bottom_row->addWidget(spin_chunk_km_);
+
     auto* btn_preview_grid = new QPushButton("Preview Chunks", this);
     bottom_row->addWidget(btn_preview_grid);
 
@@ -130,6 +144,11 @@ void MapSelectionSection::setMapMode(int mode)
 double MapSelectionSection::paddingDegrees() const
 {
     return spin_pad_deg_ ? spin_pad_deg_->value() : 0.01;
+}
+
+double MapSelectionSection::chunkSizeKm() const
+{
+    return spin_chunk_km_ ? spin_chunk_km_->value() : 0.0;
 }
 
 QVector<bool> MapSelectionSection::chunkEnabled() const
