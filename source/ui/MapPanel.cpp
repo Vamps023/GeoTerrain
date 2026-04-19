@@ -559,7 +559,16 @@ void MapPanel::mouseMoveEvent(QMouseEvent* event)
     }
     else if (selecting_)
     {
-        sel_end_world_ = widgetToWorld(event->pos());
+        // Constrain the selection to a 1:1 (square) aspect ratio in
+        // widget-space so downstream heightmap/albedo exports are square and
+        // aligned 1:1 with each other.
+        QPointF raw = widgetToWorld(event->pos());
+        const double dx = raw.x() - sel_start_world_.x();
+        const double dy = raw.y() - sel_start_world_.y();
+        const double side = std::max(std::abs(dx), std::abs(dy));
+        const double sx = (dx >= 0.0) ? side : -side;
+        const double sy = (dy >= 0.0) ? side : -side;
+        sel_end_world_ = QPointF(sel_start_world_.x() + sx, sel_start_world_.y() + sy);
         update();
     }
     event->accept();
@@ -575,7 +584,14 @@ void MapPanel::mouseReleaseEvent(QMouseEvent* event)
     else if (selecting_)
     {
         selecting_ = false;
-        sel_end_world_ = widgetToWorld(event->pos());
+        // Same 1:1 square constraint applied at release as during the drag.
+        QPointF raw = widgetToWorld(event->pos());
+        const double rdx = raw.x() - sel_start_world_.x();
+        const double rdy = raw.y() - sel_start_world_.y();
+        const double rside = std::max(std::abs(rdx), std::abs(rdy));
+        const double rsx = (rdx >= 0.0) ? rside : -rside;
+        const double rsy = (rdy >= 0.0) ? rside : -rside;
+        sel_end_world_ = QPointF(sel_start_world_.x() + rsx, sel_start_world_.y() + rsy);
 
         const QPointF delta = sel_end_world_ - sel_start_world_;
         if (std::abs(delta.x()) > 4 && std::abs(delta.y()) > 4)

@@ -55,22 +55,52 @@ Result<int> ExportCoordinator::exportForUnigine(const QString& base_output_dir, 
     if (base_output_dir.isEmpty())
         return Result<int>::fail(1, "Output directory not set.");
 
-    if (qgis_root.isEmpty())
-        return Result<int>::fail(1, "QGIS root path not set.");
+    // Auto-resolve a GDAL/OSGeo4W root when the caller didn't supply one.
+    // The "QGIS root" field was removed from the UI; we now probe common
+    // install paths (the plugin already ships OSGeo4W runtime DLLs) so
+    // export works out of the box.
+    QString resolved_root = qgis_root;
+    if (resolved_root.isEmpty())
+    {
+        const QStringList candidates = {
+            qEnvironmentVariable("OSGEO4W_ROOT"),
+            QDir::homePath() + "/AppData/Local/Programs/OSGeo4W",
+            "C:/OSGeo4W",
+            "C:/OSGeo4W64",
+            "C:/Program Files/QGIS 3.34/bin",
+            "C:/Program Files/QGIS 3.28/bin",
+        };
+        for (const QString& c : candidates)
+        {
+            if (c.isEmpty()) continue;
+            // Each candidate should contain bin/gdal_translate.exe, so peel
+            // off a trailing "/bin" before testing when the candidate points
+            // straight at the binaries (QGIS app layout).
+            QString root = c.endsWith("/bin") ? c.left(c.size() - 4) : c;
+            if (QFileInfo::exists(root + "/bin/gdal_translate.exe"))
+            {
+                resolved_root = root;
+                break;
+            }
+        }
+    }
 
-    if (!QDir(qgis_root).exists())
-        return Result<int>::fail(1, "QGIS root directory does not exist: " + qgis_root.toStdString());
+    if (resolved_root.isEmpty() || !QDir(resolved_root).exists())
+        return Result<int>::fail(1, "No GDAL/OSGeo4W installation found. Install OSGeo4W "
+                                    "or set the OSGEO4W_ROOT environment variable.");
 
-    const QString gdal_translate = qgis_root + "/bin/gdal_translate.exe";
-    const QString ogr2ogr = qgis_root + "/bin/ogr2ogr.exe";
+    const QString gdal_translate = resolved_root + "/bin/gdal_translate.exe";
+    const QString ogr2ogr = resolved_root + "/bin/ogr2ogr.exe";
     if (!QFileInfo::exists(gdal_translate))
         return Result<int>::fail(1, "gdal_translate.exe not found at: " + gdal_translate.toStdString() +
                                    "\nPlease verify QGIS/OSGeo4W installation.");
 
+    log("[Export] Using GDAL root: " + resolved_root);
+
     QProcessEnvironment env = QProcessEnvironment::systemEnvironment();
-    env.insert("GDAL_DATA", qgis_root + "/share/gdal");
-    env.insert("PROJ_DATA", qgis_root + "/share/proj");
-    env.insert("PATH", qgis_root + "/bin;" + env.value("PATH"));
+    env.insert("GDAL_DATA", resolved_root + "/share/gdal");
+    env.insert("PROJ_DATA", resolved_root + "/share/proj");
+    env.insert("PATH", resolved_root + "/bin;" + env.value("PATH"));
 
     auto runProc = [&](const QString& prog, const QStringList& args, const QString& label) -> bool
     {

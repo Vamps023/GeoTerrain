@@ -210,18 +210,23 @@ Result<RasterArtifact> TileDownloader::download(const GeoBounds& bounds, const C
     if (config.target_size > 0)
     {
         const int ts = config.target_size;
-        report(context, "Resampling albedo to " + std::to_string(ts) + "x" + std::to_string(ts) + "...", 88);
+        report(context, "Cropping+resampling albedo to user bbox at " +
+               std::to_string(ts) + "x" + std::to_string(ts) + "...", 88);
         const std::string tmp_path = config.output_path + ".tmp.tif";
 
         GDALDataset* src_ds = static_cast<GDALDataset*>(GDALOpen(config.output_path.c_str(), GA_ReadOnly));
         if (src_ds)
         {
-            double src_gt[6];
-            src_ds->GetGeoTransform(src_gt);
-            const double new_px = (src_gt[1] * src_ds->GetRasterXSize()) / ts;
-            const double new_py = (-src_gt[5] * src_ds->GetRasterYSize()) / ts;
-            src_gt[1] = new_px;
-            src_gt[5] = -new_py;
+            // Target geotransform: EXACT user bbox mapped to target_size^2
+            // pixels. This crops the tile-snapped source down to the user's
+            // selection so albedo aligns 1:1 with the heightmap.
+            double dst_gt[6];
+            dst_gt[0] = bounds.west;
+            dst_gt[1] = bounds.width()  / static_cast<double>(ts);
+            dst_gt[2] = 0.0;
+            dst_gt[3] = bounds.north;
+            dst_gt[4] = 0.0;
+            dst_gt[5] = -bounds.height() / static_cast<double>(ts);
 
             GDALDriver* drv = GetGDALDriverManager()->GetDriverByName("GTiff");
             char** opts2 = nullptr;
@@ -230,7 +235,7 @@ Result<RasterArtifact> TileDownloader::download(const GeoBounds& bounds, const C
             CSLDestroy(opts2);
             if (dst_ds)
             {
-                dst_ds->SetGeoTransform(src_gt);
+                dst_ds->SetGeoTransform(dst_gt);
                 dst_ds->SetProjection(src_ds->GetProjectionRef());
                 GDALWarpOptions* wo = GDALCreateWarpOptions();
                 wo->hSrcDS = src_ds;

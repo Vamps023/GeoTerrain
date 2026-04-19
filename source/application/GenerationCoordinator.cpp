@@ -85,14 +85,28 @@ public slots:
             GenerationRequest chunk_request = request_;
             chunk_request.bounds = chunk.bounds;
 
+            // Resolve the square target size once and apply it to BOTH
+            // rasters. Anything <=0 is forced to a sensible default so the
+            // 1:1 alignment invariant is never silently broken by a stale
+            // setting or a 0 selection.
+            int square_target = request_.sources.tiles.target_size;
+            if (square_target <= 0)
+                square_target = 2048;
+            emit_log("[Cfg] Square target size for heightmap + albedo: "
+                     + std::to_string(square_target) + "x" + std::to_string(square_target));
+
             TileDownloader::Config tile_cfg;
             tile_cfg.url_template = request_.sources.tiles.url_template;
             tile_cfg.zoom_level = request_.sources.tiles.zoom_level;
-            tile_cfg.target_size = request_.sources.tiles.target_size;
+            tile_cfg.target_size = square_target;
             tile_cfg.output_path = (output_dir + "/albedo.tif").toStdString();
 
             DEMFetcher::Config dem_cfg = request_.sources.dem;
             dem_cfg.output_path = (output_dir + "/heightmap.tif").toStdString();
+            // Force the heightmap to the same square target resolution as
+            // the albedo tiles so downstream LandscapeLayerMap tiles align
+            // 1:1 with each other.
+            dem_cfg.target_size = square_target;
 
             OSMParser::Config osm_cfg;
             osm_cfg.overpass_url = request_.sources.osm.overpass_url;

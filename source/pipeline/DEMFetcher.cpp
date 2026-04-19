@@ -229,6 +229,17 @@ Result<DemArtifact> DEMFetcher::convertToHeightmapTiff(const std::string& src_pa
         }
     }
 
+    // If a square target size was requested (from the "Map Size" combo),
+    // force both dimensions to it and recompute the pixel scale so the
+    // GeoTransform remains consistent with the (square) bbox.
+    if (config.target_size > 0)
+    {
+        out_w = config.target_size;
+        out_h = config.target_size;
+        pixel_deg_x = bounds.width()  / static_cast<double>(out_w);
+        pixel_deg_y = bounds.height() / static_cast<double>(out_h);
+    }
+
     report(context, "Output heightmap size: " + std::to_string(out_w) + "x" + std::to_string(out_h), 65);
 
     GDALDriver* driver = GetGDALDriverManager()->GetDriverByName("GTiff");

@@ -36,19 +36,6 @@ struct TerrainBuildRequest
     int tile_resolution = 0;
 };
 
-// Geo-referenced extent of a single GeoTIFF, expressed in metres so that
-// multiple layers with different native CRS/units can be placed on a common
-// ground plane. Center is the file's geographic centre relative to the
-// heightmap's centre (i.e. the heightmap's centre is always (0,0)).
-struct GeoExtent
-{
-    double width_m = 0.0;
-    double height_m = 0.0;
-    double center_offset_x_m = 0.0;  // metres east of heightmap centre
-    double center_offset_y_m = 0.0;  // metres north of heightmap centre
-    bool has_geo_transform = false;
-};
-
 struct TerrainAutoParams
 {
     double world_size_m = 0.0;

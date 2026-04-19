@@ -1,5 +1,6 @@
 #include "application/TerrainBuilder.h"
 
+#include <QFile>
 #include <QFileInfo>
 
 #include <algorithm>
@@ -322,16 +323,20 @@ Result<TerrainBuildReport> TerrainBuilder::build(const TerrainBuildRequest& requ
 
     const int tile_res = req.tile_resolution;
 
-    // ---- Write TWO .lmap files -----------------------------------------
-    // Following Sandworm's approach: one .lmap holds the heightmap, the
-    // other holds the albedo. They are attached as two separate
-    // LandscapeLayerMap nodes under the same ObjectLandscapeTerrain so they
-    // can have independent resolution / extent.
+    // ---- Write ONE combined .lmap file ---------------------------------
+    // Match Sandworm's output: a single .lmap per "Refrnace_31.68mpx.lmap"
+    // carries BOTH the heightmap plane and the albedo plane. UNIGINE binds
+    // one LandscapeLayerMap node to it and drives both channels at once.
+    //
+    // Filename convention: <basename>_<density>mpx.lmap where density is the
+    // effective metres-per-texel (world_size / tile_res). Mirrors Sandworm's
+    // naming so outputs from the two tools are directly comparable.
     const QFileInfo out_info(req.output_lmap_path);
     const QString out_dir  = out_info.absolutePath();
     const QString out_base = out_info.completeBaseName();
-    const QString height_lmap_path = out_dir + "/" + out_base + "_height.lmap";
-    const QString albedo_lmap_path = out_dir + "/" + out_base + "_albedo.lmap";
+    const double  density_m_per_px = req.world_size_m / static_cast<double>(tile_res);
+    const QString density_suffix = QString::number(density_m_per_px, 'f', 2) + "mpx";
+    const QString combined_lmap_path = out_dir + "/" + out_base + "_" + density_suffix + ".lmap";
 
     auto writeSingleLayerLmap = [&](const QString& path,
                                     int src_w, int src_h,
@@ -387,32 +392,30 @@ Result<TerrainBuildReport> TerrainBuilder::build(const TerrainBuildRequest& requ
         return Result<std::pair<int,int>>::ok(std::make_pair(grid, grid));
     };
 
-    // Height-only .lmap (writes the height plane, leaves albedo black).
+    // Combined .lmap — fill BOTH planes in the same tile callback so the
+    // single output carries height + albedo like Sandworm does.
     auto height_fill = [height](const ImagePtr& dst, int tr, int gx, int gy, int tx, int ty)
     {
         fillHeightTile(dst, height, tr, gx, gy, tx, ty);
     };
-    auto height_result_pair = writeSingleLayerLmap(
-        height_lmap_path, height.width, height.height, height_fill, nullptr);
-    if (!height_result_pair.success)
-        return Result<TerrainBuildReport>::fail(
-            height_result_pair.error_code, height_result_pair.message);
-    const int height_grid = height_result_pair.value.first;
-
-    // Albedo-only .lmap.
     auto albedo_fill = [albedo](const ImagePtr& dst, int tr, int gx, int gy, int tx, int ty)
     {
         fillAlbedoTile(dst, albedo, tr, gx, gy, tx, ty);
     };
-    auto albedo_result_pair = writeSingleLayerLmap(
-        albedo_lmap_path, albedo.width, albedo.height, nullptr, albedo_fill);
-    if (!albedo_result_pair.success)
+    // Grid sizing uses the larger of the two sources so we don't drop detail
+    // when heightmap and albedo have mismatched dims (they are the same in
+    // the common 1:1 pipeline, but stay defensive).
+    const int combined_src = std::max({height.width, height.height,
+                                       albedo.width, albedo.height});
+    auto combined_result = writeSingleLayerLmap(
+        combined_lmap_path, combined_src, combined_src, height_fill, albedo_fill);
+    if (!combined_result.success)
         return Result<TerrainBuildReport>::fail(
-            albedo_result_pair.error_code, albedo_result_pair.message);
-    const int albedo_grid = albedo_result_pair.value.first;
+            combined_result.error_code, combined_result.message);
+    const int combined_grid = combined_result.value.first;
 
     if (log)
-        log("[Terrain] Both .lmap files written successfully.");
+        log(QString("[Terrain] Combined .lmap written: %1").arg(combined_lmap_path));
 
     // ---- Scene wiring --------------------------------------------------
     if (!World::isLoaded())
@@ -468,31 +471,120 @@ Result<TerrainBuildReport> TerrainBuilder::build(const TerrainBuildRequest& requ
         return Result<LandscapeLayerMapPtr>::ok(lm);
     };
 
-    // Heightmap covers the full world extent; albedo uses its own extent
-    // (often smaller) and is rendered on top via a higher order value so its
-    // colours win wherever it's defined.
+    // Single LandscapeLayerMap bound to the combined .lmap — mirrors the
+    // Sandworm output where one node drives both height and albedo.
     const float height_scale = static_cast<float>(req.height_max_m - req.height_min_m);
-    auto h_lm = spawnLayerMap(height_lmap_path, "height", req.world_size_m, height_scale, 0);
-    if (!h_lm.success)
-        return Result<TerrainBuildReport>::fail(h_lm.error_code, h_lm.message);
+    const QString layer_node_name = out_base + "_" + density_suffix;
+    auto combined_lm = spawnLayerMap(combined_lmap_path, density_suffix,
+                                     req.world_size_m, height_scale, 0);
+    if (!combined_lm.success)
+        return Result<TerrainBuildReport>::fail(combined_lm.error_code, combined_lm.message);
 
-    // For now albedo uses the same world size so it aligns 1:1 with the
-    // heightmap (same GeoTIFF extent case). True geo-offset positioning can
-    // be added later once per-file geo extents are plumbed through.
-    auto a_lm = spawnLayerMap(albedo_lmap_path, "albedo", req.world_size_m, height_scale, 1);
-    if (!a_lm.success)
-        return Result<TerrainBuildReport>::fail(a_lm.error_code, a_lm.message);
+    // ---- Persist the node into the .world XML -------------------------
+    // The UNIGINE API's LandscapeLayerMap::setSize() races the async .lmap
+    // load — by the time the user sees the node the Size often resets to
+    // the 1000 m default. Workaround: save the world, patch <size> and
+    // <height_scale> on our node directly in the XML, then reload. This
+    // matches how Sandworm ships a preconfigured node.
+    const char* world_path_c = World::getPath();
+    QString world_path = world_path_c ? QString::fromUtf8(world_path_c) : QString();
+    if (log)
+        log(QString("[Terrain] Saving world to persist LandscapeLayerMap node (%1)...")
+                .arg(world_path.isEmpty() ? "no path" : world_path));
+
+    if (World::saveWorld() && !world_path.isEmpty() && QFileInfo::exists(world_path))
+    {
+        QFile wf(world_path);
+        if (wf.open(QIODevice::ReadOnly | QIODevice::Text))
+        {
+            QString xml = QString::fromUtf8(wf.readAll());
+            wf.close();
+
+            // Locate our node block by name attribute (unique per build).
+            const QString name_attr = QString("name=\"%1\"").arg(layer_node_name);
+            const int name_pos = xml.indexOf(name_attr);
+            if (name_pos < 0)
+            {
+                if (log)
+                    log(QString("[Terrain] WARNING: node '%1' not found in world XML; "
+                                "size patch skipped.").arg(layer_node_name));
+            }
+            else
+            {
+                // Find the opening <node ...> that owns this name, then its
+                // closing </node>. Search within that range only.
+                const int block_start = xml.lastIndexOf("<node ", name_pos);
+                const int block_end_tag = xml.indexOf("</node>", name_pos);
+                if (block_start >= 0 && block_end_tag > block_start)
+                {
+                    const int block_end = block_end_tag + 7; // include </node>
+                    QString block = xml.mid(block_start, block_end - block_start);
+
+                    auto replaceOrInsert = [&block](const QString& tag, const QString& value)
+                    {
+                        const QString open  = "<" + tag + ">";
+                        const QString close = "</" + tag + ">";
+                        const int o = block.indexOf(open);
+                        const int c = block.indexOf(close);
+                        if (o >= 0 && c > o)
+                        {
+                            block.replace(o + open.size(), c - (o + open.size()), value);
+                        }
+                        else
+                        {
+                            // Insert the element just before </node>.
+                            const int end = block.indexOf("</node>");
+                            if (end > 0)
+                            {
+                                const QString line = "\t\t\t" + open + value + close + "\n\t\t";
+                                block.insert(end, line);
+                            }
+                        }
+                    };
+
+                    const QString size_val = QString("%1 %2")
+                        .arg(req.world_size_m, 0, 'f', 6)
+                        .arg(req.world_size_m, 0, 'f', 6);
+                    const QString hs_val = QString::number(height_scale, 'f', 6);
+                    replaceOrInsert("size", size_val);
+                    replaceOrInsert("height_scale", hs_val);
+                    replaceOrInsert("order", "0");
+
+                    xml.replace(block_start, block_end - block_start, block);
+
+                    QFile wfw(world_path);
+                    if (wfw.open(QIODevice::WriteOnly | QIODevice::Truncate | QIODevice::Text))
+                    {
+                        wfw.write(xml.toUtf8());
+                        wfw.close();
+                        if (log)
+                            log(QString("[Terrain] Patched world XML: size=%1, height_scale=%2")
+                                    .arg(size_val).arg(hs_val));
+                        // Reload so the editor picks up the patched values.
+                        World::reloadWorld();
+                    }
+                    else if (log)
+                    {
+                        log("[Terrain] WARNING: failed to write patched world XML.");
+                    }
+                }
+            }
+        }
+    }
+    else if (log)
+    {
+        log("[Terrain] WARNING: World::saveWorld failed or world path empty; "
+            "LandscapeLayerMap Size may show the default.");
+    }
 
     TerrainBuildReport report;
-    report.lmap_path = height_lmap_path;  // primary
-    report.grid_x = height_grid;
-    report.grid_y = height_grid;
+    report.lmap_path = combined_lmap_path;
+    report.grid_x = combined_grid;
+    report.grid_y = combined_grid;
     report.tile_resolution = tile_res;
     if (log)
-    {
-        log(QString("[Terrain] Build complete. Height grid=%1, Albedo grid=%2.")
-                .arg(height_grid).arg(albedo_grid));
-    }
+        log(QString("[Terrain] Build complete. Grid=%1x%1, density=%2 m/px.")
+                .arg(combined_grid).arg(density_m_per_px, 0, 'f', 2));
     return Result<TerrainBuildReport>::ok(std::move(report));
 }
 
@@ -536,6 +628,7 @@ PixelScaleMeters pixelScaleInMeters(GDALDataset* ds, const double gt[6])
     }
     return out;
 }
+
 } // namespace
 
 Result<TerrainAutoParams> TerrainBuilder::computeAutoParams(const QString& heightmap_path)
@@ -606,9 +699,25 @@ Result<TerrainAutoParams> TerrainBuilder::computeAutoParams(const QString& heigh
 
     GDALClose(ds);
 
-    // Tile resolution: keep at 1024 (matches UNIGINE landscape defaults and
-    // is a good balance of detail vs memory).
-    p.tile_resolution = 1024;
+    // Tile resolution auto-picked so the resulting .lmap density matches
+    // the source GeoTIFF's native pixel scale. This mirrors Sandworm's
+    // behaviour where the exported file is named after its real m/px
+    // (e.g. "project_31.74mpx"): world_size / tile_res ≈ native_pixel_scale.
+    //
+    // We round the longer source side UP to the next power of two and clamp
+    // to [256, 4096]. If the source is 567 px the result is 1024 tile, giving
+    // density = world / 1024. If the source is 2100 px we use 2048, etc.
+    auto nextPowerOfTwo = [](int v) {
+        if (v < 1) return 1;
+        int p = 1;
+        while (p < v) p <<= 1;
+        return p;
+    };
+    const int max_src = std::max(p.heightmap_width, p.heightmap_height);
+    int tile = nextPowerOfTwo(max_src);
+    if (tile < 256)  tile = 256;
+    if (tile > 4096) tile = 4096;
+    p.tile_resolution = tile;
 
     return Result<TerrainAutoParams>::ok(std::move(p));
 }

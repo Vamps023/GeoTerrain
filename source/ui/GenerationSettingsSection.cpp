@@ -46,12 +46,15 @@ GenerationSettingsSection::GenerationSettingsSection(QWidget* parent)
     addRow(raster_gl, "Tile Zoom:", spin_zoom_);
 
     combo_map_size_ = new QComboBox(this);
-    combo_map_size_->addItem("Native (tile-snapped)", 0);
+    // Fixed square sizes only: guarantees heightmap + albedo share identical
+    // dimensions and bbox, so LandscapeLayerMap tiles align 1:1. The legacy
+    // "Native (tile-snapped)" option was removed because it produced
+    // mismatched extents between the two rasters.
     combo_map_size_->addItem("1K (1024 x 1024)", 1024);
     combo_map_size_->addItem("2K (2048 x 2048)", 2048);
     combo_map_size_->addItem("3K (3072 x 3072)", 3072);
     combo_map_size_->addItem("4K (4096 x 4096)", 4096);
-    combo_map_size_->setCurrentIndex(2);
+    combo_map_size_->setCurrentIndex(1);  // default 2K
     addRow(raster_gl, "Map Size:", combo_map_size_);
 
     auto* mask_gl = makeGroup("Mask Settings");

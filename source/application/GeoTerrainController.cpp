@@ -15,6 +15,11 @@
 #include "TerrainBuilder.h"
 #include "ui/TerrainBuilderSection.h"
 
+#ifndef _USE_MATH_DEFINES
+#define _USE_MATH_DEFINES
+#endif
+#include <cmath>
+
 #include <UnigineLog.h>
 
 #include <QDebug>
@@ -167,11 +172,42 @@ void GeoTerrainController::updateBoundsLabel()
         panel_->setBoundsText("No area selected");
         return;
     }
-    panel_->setBoundsText(QString("N:%1  S:%2  W:%3  E:%4")
+
+    // Ground-distance estimate using the standard WGS-84 degree ≈ 111 320 m
+    // approximation with a cosine-latitude correction for longitude. Good to
+    // ~0.5 % at mid-latitudes — plenty for a live preview.
+    constexpr double kMetresPerDegLat = 111320.0;
+    const double center_lat_rad =
+        0.5 * (current_bounds_.north + current_bounds_.south) * M_PI / 180.0;
+    const double metres_per_deg_lon = kMetresPerDegLat * std::cos(center_lat_rad);
+    const double width_m  = current_bounds_.width()  * metres_per_deg_lon;
+    const double height_m = current_bounds_.height() * kMetresPerDegLat;
+
+    // Expected LandscapeLayerMap density = max side / tile resolution.
+    // The terrain builder's auto-params pick tile_res = next pow-of-two of
+    // the source heightmap width, clamped to [256, 4096]. That source width
+    // is driven by the "Map Size" combo (e.g. 2048), so we read it live.
+    int tile_res = 1024;
+    if (panel_ && panel_->settingsSection())
+    {
+        const int combo_size = panel_->settingsSection()->mapSizeCombo()->currentData().toInt();
+        if (combo_size > 0)
+            tile_res = combo_size;
+    }
+    const double max_side_m = std::max(width_m, height_m);
+    const double density_m_per_px = max_side_m / static_cast<double>(tile_res);
+
+    panel_->setBoundsText(QString(
+        "N:%1  S:%2  W:%3  E:%4   |   Size: %5 x %6 km   |   "
+        "Expected density @ %7 tiles: %8 m/px")
         .arg(current_bounds_.north, 0, 'f', 5)
         .arg(current_bounds_.south, 0, 'f', 5)
-        .arg(current_bounds_.west, 0, 'f', 5)
-        .arg(current_bounds_.east, 0, 'f', 5));
+        .arg(current_bounds_.west,  0, 'f', 5)
+        .arg(current_bounds_.east,  0, 'f', 5)
+        .arg(width_m  / 1000.0, 0, 'f', 2)
+        .arg(height_m / 1000.0, 0, 'f', 2)
+        .arg(tile_res)
+        .arg(density_m_per_px, 0, 'f', 2));
 }
 
 void GeoTerrainController::centerOnLayerExtent()

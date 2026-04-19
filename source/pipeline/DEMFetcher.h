@@ -33,6 +33,10 @@ public:
         std::string output_path;
         std::string ref_tif_path;
         double resolution_m = 30.0;
+        // If > 0, the output heightmap is resampled to exactly
+        // target_size x target_size so it shares dimensions with the albedo
+        // and slots into a square LandscapeLayerMap tile without stretching.
+        int target_size = 0;
     };
 
     Result<DemArtifact> fetch(const GeoBounds& bounds,
