@@ -1,5 +1,5 @@
-#include "MaskGenerator.h"
-#include "GdalUtils.h"
+#include "pipeline/MaskGenerator.h"
+#include "infrastructure/GdalUtils.h"
 
 #include <gdal_priv.h>
 #include <ogr_spatialref.h>

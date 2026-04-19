@@ -1,5 +1,5 @@
-#include "DEMFetcher.h"
-#include "GdalUtils.h"
+#include "pipeline/DEMFetcher.h"
+#include "infrastructure/GdalUtils.h"
 
 #ifndef _USE_MATH_DEFINES
 #define _USE_MATH_DEFINES

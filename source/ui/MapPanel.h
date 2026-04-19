@@ -1,7 +1,8 @@
 #pragma once
 
-#include "GeoBounds.h"
+#include "domain/GeoBounds.h"
 
+#include <QCache>
 #include <QColor>
 #include <QMap>
 #include <QNetworkAccessManager>
@@ -76,11 +77,14 @@ private:
     QString tileKey(int z, int x, int y) const;
     void clearPendingRequests();
     void logImageFormats();
+    QString tileDecodeFailureReason() const;
 
     QString tile_url_template_;
     QString tile_source_name_;
     QNetworkAccessManager* net_manager_ = nullptr;
-    QMap<QString, QPixmap> tile_cache_;
+    // Bounded LRU tile cache. At 256x256 ARGB32 a tile is ~256 KiB, so
+    // max_cost=512 caps memory around ~130 MiB worst case.
+    QCache<QString, QPixmap> tile_cache_{512};
     QMap<QString, QNetworkReply*> pending_;
     int tile_success_count_ = 0;
     int tile_failure_count_ = 0;

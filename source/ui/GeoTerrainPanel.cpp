@@ -31,6 +31,8 @@ GeoTerrainPanel::GeoTerrainPanel(QWidget* parent)
     connect(map_section_->mapPanel(), &MapPanel::selectionChanged, this, &GeoTerrainPanel::selectionChanged);
 }
 
+GeoTerrainPanel::~GeoTerrainPanel() = default;
+
 void GeoTerrainPanel::setupUi()
 {
     auto* root = new QVBoxLayout(this);

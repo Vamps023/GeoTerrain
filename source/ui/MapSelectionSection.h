@@ -1,6 +1,6 @@
 #pragma once
 
-#include "../MapPanel.h"
+#include "ui/MapPanel.h"
 
 #include <QComboBox>
 #include <QDoubleSpinBox>

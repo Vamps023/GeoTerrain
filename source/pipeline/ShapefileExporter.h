@@ -1,6 +1,6 @@
 #pragma once
 
-#include "OSMParser.h"
+#include "pipeline/OSMParser.h"
 #include "domain/Result.h"
 #include "infrastructure/RunContext.h"
 

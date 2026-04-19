@@ -1,7 +1,7 @@
 #pragma once
 
-#include "GeoBounds.h"
-#include "OSMParser.h"
+#include "domain/GeoBounds.h"
+#include "pipeline/OSMParser.h"
 #include "domain/Result.h"
 #include "infrastructure/RunContext.h"
 

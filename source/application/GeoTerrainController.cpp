@@ -1,13 +1,14 @@
 #include "GeoTerrainController.h"
 
-#include "../GeoTerrainPanel.h"
-#include "../MapPanel.h"
-#include "../DEMFetcher.h"
+#include "ui/GeoTerrainPanel.h"
+#include "ui/MapPanel.h"
+#include "pipeline/DEMFetcher.h"
 #include "../infrastructure/OverlayLoader.h"
 #include "../ui/GenerationSettingsSection.h"
 #include "../ui/MapSelectionSection.h"
 #include "../ui/RunConsoleSection.h"
 #include "../ui/SourceSettingsSection.h"
+#include "AsyncJob.h"
 #include "ChunkPlanner.h"
 #include "ExportCoordinator.h"
 #include "GenerationCoordinator.h"
@@ -63,9 +64,11 @@ GeoTerrainController::GeoTerrainController(GeoTerrainPanel* panel, QObject* pare
     : QObject(parent)
     , panel_(panel)
     , generation_(new GenerationCoordinator(this))
-    , export_(new ExportCoordinator())
-    , sandworm_(new SandwormExporter())
+    , job_(new AsyncJob(this))
 {
+    connect(job_, &AsyncJob::logMessage, panel_, &GeoTerrainPanel::appendLog);
+    connect(job_, &AsyncJob::finished, this, &GeoTerrainController::onAsyncJobFinished);
+
     auto* map = panel_->mapSection();
     auto* source = panel_->sourceSection();
     auto* console = panel_->consoleSection();
@@ -364,6 +367,9 @@ void GeoTerrainController::onCancel()
 
 void GeoTerrainController::onExport()
 {
+    if (job_->isRunning())
+        return;
+
     const QString qgis_root = panel_->settingsSection()->qgisRootEdit()->text();
     if (qgis_root.isEmpty())
     {
@@ -371,18 +377,30 @@ void GeoTerrainController::onExport()
         return;
     }
 
-    auto result = export_->exportForUnigine(
-        panel_->settingsSection()->outputDirEdit()->text(),
-        qgis_root,
-        [this](const QString& line) { panel_->appendLog(line); });
-    if (!result.success)
-        panel_->appendLog("[Export] FAILED: " + QString::fromStdString(result.message));
-    else
-        panel_->appendLog(QString("[Export] Wrote %1 file(s).").arg(result.value));
+    const QString output_dir = panel_->settingsSection()->outputDirEdit()->text();
+    panel_->appendLog("Starting export...");
+    panel_->setControlsEnabled(false);
+    active_job_tag_ = "Export";
+
+    ExportCoordinator coordinator;
+    job_->start([coordinator, output_dir, qgis_root](AsyncJob::LogFn log) -> AsyncJob::Outcome
+    {
+        auto r = coordinator.exportForUnigine(output_dir, qgis_root, log);
+        AsyncJob::Outcome o;
+        o.success = r.success;
+        o.count = r.success ? r.value : 0;
+        o.message = r.success
+            ? QString("[Export] Wrote %1 file(s).").arg(r.value)
+            : QString("[Export] FAILED: %1").arg(QString::fromStdString(r.message));
+        return o;
+    });
 }
 
 void GeoTerrainController::onGather()
 {
+    if (job_->isRunning())
+        return;
+
     const QString output_dir = panel_->settingsSection()->outputDirEdit()->text();
     if (output_dir.isEmpty())
     {
@@ -390,16 +408,29 @@ void GeoTerrainController::onGather()
         return;
     }
 
-    auto result = export_->gatherChunks(output_dir,
-        [this](const QString& line) { panel_->appendLog(line); });
-    if (!result.success)
-        panel_->appendLog("[Gather] FAILED: " + QString::fromStdString(result.message));
-    else
-        panel_->appendLog(QString("[Gather] Copied %1 file(s).").arg(result.value));
+    panel_->appendLog("Starting gather...");
+    panel_->setControlsEnabled(false);
+    active_job_tag_ = "Gather";
+
+    ExportCoordinator coordinator;
+    job_->start([coordinator, output_dir](AsyncJob::LogFn log) -> AsyncJob::Outcome
+    {
+        auto r = coordinator.gatherChunks(output_dir, log);
+        AsyncJob::Outcome o;
+        o.success = r.success;
+        o.count = r.success ? r.value : 0;
+        o.message = r.success
+            ? QString("[Gather] Copied %1 file(s).").arg(r.value)
+            : QString("[Gather] FAILED: %1").arg(QString::fromStdString(r.message));
+        return o;
+    });
 }
 
 void GeoTerrainController::onCreateSandworm()
 {
+    if (job_->isRunning())
+        return;
+
     const QString output_dir = panel_->settingsSection()->outputDirEdit()->text();
     if (output_dir.isEmpty())
     {
@@ -407,24 +438,47 @@ void GeoTerrainController::onCreateSandworm()
         return;
     }
 
-    // Derive a project name from the output folder
     const QString project_name = QFileInfo(output_dir).fileName();
+    const GeoBounds bounds = current_bounds_;
 
-    auto result = sandworm_->createProject(
-        output_dir,
-        current_bounds_,
-        project_name,
-        [this](const QString& line) { panel_->appendLog(line); });
+    panel_->appendLog("Starting Sandworm project...");
+    panel_->setControlsEnabled(false);
+    active_job_tag_ = "Sandworm";
 
-    if (!result.success)
-        panel_->appendLog("[Sandworm] FAILED: " + QString::fromStdString(result.message));
-    else
-        panel_->appendLog("[Sandworm] Done — open in Sandworm: " + result.value);
+    SandwormExporter exporter;
+    job_->start([exporter, output_dir, bounds, project_name](AsyncJob::LogFn log) -> AsyncJob::Outcome
+    {
+        auto r = exporter.createProject(output_dir, bounds, project_name, log);
+        AsyncJob::Outcome o;
+        o.success = r.success;
+        o.count = r.success ? 1 : 0;
+        o.message = r.success
+            ? QString("[Sandworm] Done \u2014 open in Sandworm: ") + r.value
+            : QString("[Sandworm] FAILED: %1").arg(QString::fromStdString(r.message));
+        return o;
+    });
 }
 
 void GeoTerrainController::onProgress(int percent)
 {
     panel_->setProgress(percent);
+}
+
+void GeoTerrainController::onAsyncJobFinished(bool success, int /*count*/, const QString& message)
+{
+    panel_->appendLog(message);
+    panel_->setControlsEnabled(true);
+
+    // Restore per-action enablement based on state / which job just finished.
+    const bool chunked = panel_->settingsSection()->chunkSizeSpin()->value() >= 1.0;
+    panel_->setGatherEnabled(chunked);
+
+    if (active_job_tag_ == "Gather" && success)
+        panel_->setSandwormEnabled(true);
+    else if (active_job_tag_ == "Sandworm")
+        panel_->setSandwormEnabled(true);
+
+    active_job_tag_.clear();
 }
 
 void GeoTerrainController::onFinished(int status, const QString& message)

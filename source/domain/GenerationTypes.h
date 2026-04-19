@@ -1,7 +1,7 @@
 #pragma once
 
-#include "../GeoBounds.h"
-#include "../DEMFetcher.h"
+#include "domain/GeoBounds.h"
+#include "pipeline/DEMFetcher.h"
 
 #include <string>
 #include <vector>

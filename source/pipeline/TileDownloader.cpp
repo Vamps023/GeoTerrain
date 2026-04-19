@@ -1,5 +1,5 @@
-#include "TileDownloader.h"
-#include "GdalUtils.h"
+#include "pipeline/TileDownloader.h"
+#include "infrastructure/GdalUtils.h"
 
 #ifndef _USE_MATH_DEFINES
 #define _USE_MATH_DEFINES

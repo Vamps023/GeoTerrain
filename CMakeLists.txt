@@ -59,55 +59,57 @@ include_directories(
 )
 
 set(SOURCES
-    source/GeoTerrainEditorPlugin.cpp
-    source/GeoTerrainPanel.cpp
-    source/MapPanel.cpp
-    source/DEMFetcher.cpp
-    source/TileDownloader.cpp
-    source/OSMParser.cpp
-    source/ShapefileExporter.cpp
-    source/MaskGenerator.cpp
-    source/GdalUtils.cpp
+    source/plugin/GeoTerrainEditorPlugin.cpp
+    source/ui/GeoTerrainPanel.cpp
+    source/ui/MapPanel.cpp
+    source/ui/MapSelectionSection.cpp
+    source/ui/SourceSettingsSection.cpp
+    source/ui/GenerationSettingsSection.cpp
+    source/ui/RunConsoleSection.cpp
+    source/pipeline/DEMFetcher.cpp
+    source/pipeline/TileDownloader.cpp
+    source/pipeline/OSMParser.cpp
+    source/pipeline/ShapefileExporter.cpp
+    source/pipeline/MaskGenerator.cpp
+    source/infrastructure/GdalUtils.cpp
+    source/infrastructure/ManifestWriter.cpp
+    source/infrastructure/OverlayLoader.cpp
     source/domain/Validation.cpp
+    source/application/AsyncJob.cpp
     source/application/ChunkPlanner.cpp
     source/application/ExportCoordinator.cpp
     source/application/GenerationCoordinator.cpp
     source/application/SandwormExporter.cpp
     source/application/GeoTerrainController.cpp
-    source/infrastructure/ManifestWriter.cpp
-    source/infrastructure/OverlayLoader.cpp
-    source/ui/MapSelectionSection.cpp
-    source/ui/SourceSettingsSection.cpp
-    source/ui/GenerationSettingsSection.cpp
-    source/ui/RunConsoleSection.cpp
 )
 
 set(HEADERS
-    source/GeoTerrainEditorPlugin.h
-    source/GeoTerrainPanel.h
-    source/MapPanel.h
-    source/DEMFetcher.h
-    source/TileDownloader.h
-    source/OSMParser.h
-    source/ShapefileExporter.h
-    source/MaskGenerator.h
-    source/GeoBounds.h
-    source/GdalUtils.h
+    source/plugin/GeoTerrainEditorPlugin.h
+    source/ui/GeoTerrainPanel.h
+    source/ui/MapPanel.h
+    source/ui/MapSelectionSection.h
+    source/ui/SourceSettingsSection.h
+    source/ui/GenerationSettingsSection.h
+    source/ui/RunConsoleSection.h
+    source/pipeline/DEMFetcher.h
+    source/pipeline/TileDownloader.h
+    source/pipeline/OSMParser.h
+    source/pipeline/ShapefileExporter.h
+    source/pipeline/MaskGenerator.h
+    source/infrastructure/GdalUtils.h
+    source/infrastructure/RunContext.h
+    source/infrastructure/ManifestWriter.h
+    source/infrastructure/OverlayLoader.h
+    source/domain/GeoBounds.h
     source/domain/Result.h
     source/domain/GenerationTypes.h
     source/domain/Validation.h
+    source/application/AsyncJob.h
     source/application/ChunkPlanner.h
     source/application/ExportCoordinator.h
     source/application/GenerationCoordinator.h
     source/application/SandwormExporter.h
     source/application/GeoTerrainController.h
-    source/infrastructure/RunContext.h
-    source/infrastructure/ManifestWriter.h
-    source/infrastructure/OverlayLoader.h
-    source/ui/MapSelectionSection.h
-    source/ui/SourceSettingsSection.h
-    source/ui/GenerationSettingsSection.h
-    source/ui/RunConsoleSection.h
 )
 
 add_library(${target_name} SHARED ${SOURCES} ${HEADERS})
@@ -138,7 +140,7 @@ if(GEOTERRAIN_ENABLE_DEPLOY)
             "$<TARGET_FILE:${target_name}>"
             "${DEPLOY_DIR}/$<TARGET_FILE_NAME:${target_name}>"
         COMMAND ${CMAKE_COMMAND} -E copy_if_different
-            "${CMAKE_CURRENT_SOURCE_DIR}/source/GeoTerrainEditorPlugin.json"
+            "${CMAKE_CURRENT_SOURCE_DIR}/source/plugin/GeoTerrainEditorPlugin.json"
             "${DEPLOY_DIR}/GeoTerrainEditorPlugin.json"
         COMMENT "Deploying plugin files"
     )

@@ -1,7 +1,7 @@
 #pragma once
 
-#include "../MapPanel.h"
-#include "../domain/Result.h"
+#include "ui/MapPanel.h"
+#include "domain/Result.h"
 
 #include <QString>
 

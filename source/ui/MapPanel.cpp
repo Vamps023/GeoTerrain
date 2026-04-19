@@ -188,6 +188,20 @@ QString MapPanel::tileKey(int z, int x, int y) const
     return QString("%1/%2/%3").arg(z).arg(x).arg(y);
 }
 
+QString MapPanel::tileDecodeFailureReason() const
+{
+    const bool expects_jpeg = tile_url_template_.contains("arcgisonline.com")
+                           || tile_url_template_.contains("nationalmap.gov");
+    if (!expects_jpeg)
+        return "Failed to decode PNG tile";
+
+    const QList<QByteArray> formats = QImageReader::supportedImageFormats();
+    const bool has_jpeg = formats.contains("jpeg") || formats.contains("jpg");
+    return has_jpeg
+        ? "Failed to decode JPEG tile despite JPEG support"
+        : "Cannot decode JPEG tiles - Qt JPEG plugin (qjpeg.dll) missing";
+}
+
 void MapPanel::logImageFormats()
 {
     if (image_formats_logged_)
@@ -264,7 +278,7 @@ void MapPanel::onTileDownloaded(QNetworkReply* reply)
         
         if (pix.loadFromData(data))
         {
-            tile_cache_[key] = pix;
+            tile_cache_.insert(key, new QPixmap(pix));
             ++tile_success_count_;
             if (!refresh_timer_->isActive())
                 refresh_timer_->start();
@@ -272,39 +286,10 @@ void MapPanel::onTileDownloaded(QNetworkReply* reply)
         else
         {
             ++tile_failure_count_;
-            
-            // Try to determine the image format from the URL
-            QString expected_format = "PNG";
-            if (tile_url_template_.contains("arcgisonline.com") || 
-                tile_url_template_.contains("nationalmap.gov"))
-                expected_format = "JPEG";
-            
-            // Check if JPEG plugin is available for JPEG tiles
-            if (expected_format == "JPEG")
+            if (!jpeg_error_logged_)
             {
-                QList<QByteArray> formats = QImageReader::supportedImageFormats();
-                bool has_jpeg = formats.contains("jpeg") || formats.contains("jpg");
-                if (!has_jpeg && !jpeg_error_logged_)
-                {
-                    jpeg_error_logged_ = true;
-                    emit logMessage(QString("[Map] ERROR: Cannot decode %1 tiles - Qt JPEG plugin missing")
-                        .arg(expected_format));
-                    emit logMessage("[Map] SOLUTION: Install Qt JPEG plugin (qjpeg.dll) or use PNG tile sources");
-                }
-                else if (!has_jpeg)
-                {
-                    // JPEG error already logged, don't spam
-                }
-                else if (!jpeg_error_logged_)
-                {
-                    jpeg_error_logged_ = true;
-                    emit logMessage(QString("[Map] ERROR: Failed to decode %1 tile despite JPEG support")
-                        .arg(expected_format));
-                }
-            }
-            else
-            {
-                emit logMessage(QString("[Map] ERROR: Failed to decode %1 tile").arg(expected_format));
+                jpeg_error_logged_ = true;
+                emit logMessage("[Map] ERROR: " + tileDecodeFailureReason());
             }
         }
     }
@@ -317,30 +302,9 @@ void MapPanel::onTileDownloaded(QNetworkReply* reply)
     if (!tile_problem_reported_ && tile_success_count_ == 0 && tile_failure_count_ >= 6)
     {
         tile_problem_reported_ = true;
-        QString detail;
-        if (reply->error() != QNetworkReply::NoError)
-        {
-            detail = reply->errorString();
-        }
-        else
-        {
-            // Check if it's likely a JPEG plugin issue
-            if (tile_url_template_.contains("arcgisonline.com") || 
-                tile_url_template_.contains("nationalmap.gov"))
-            {
-                QList<QByteArray> formats = QImageReader::supportedImageFormats();
-                bool has_jpeg = formats.contains("jpeg") || formats.contains("jpg");
-                if (!has_jpeg)
-                    detail = "JPEG plugin missing - install Qt JPEG plugin";
-                else
-                    detail = "Tiles downloaded but could not be decoded";
-            }
-            else
-            {
-                detail = "Tiles downloaded but could not be decoded";
-            }
-        }
-        
+        const QString detail = reply->error() != QNetworkReply::NoError
+            ? reply->errorString()
+            : tileDecodeFailureReason();
         emit logMessage(QString("[Map] %1 preview is having trouble: %2").arg(tile_source_name_, detail));
         emit tileSourceProblem(tile_source_name_, detail);
     }
@@ -371,9 +335,9 @@ void MapPanel::paintEvent(QPaintEvent*)
             const int wx = static_cast<int>(std::round(tx * TILE_SIZE - view_origin_x_));
             const int wy = static_cast<int>(std::round(ty * TILE_SIZE - view_origin_y_));
 
-            if (tile_cache_.contains(key))
+            if (QPixmap* cached = tile_cache_.object(key))
             {
-                p.drawPixmap(wx, wy, TILE_SIZE, TILE_SIZE, tile_cache_[key]);
+                p.drawPixmap(wx, wy, TILE_SIZE, TILE_SIZE, *cached);
             }
             else
             {
@@ -535,8 +499,6 @@ void MapPanel::paintEvent(QPaintEvent*)
                    Qt::AlignBottom | Qt::AlignHCenter,
                    "Right-drag: pan  |  Shift+drag: select area  |  Scroll: zoom");
     }
-
-    requestVisibleTiles();
 }
 
 void MapPanel::mousePressEvent(QMouseEvent* event)

@@ -1,6 +1,6 @@
 #pragma once
 
-#include "GeoBounds.h"
+#include "domain/GeoBounds.h"
 #include "domain/Result.h"
 #include "infrastructure/RunContext.h"
 

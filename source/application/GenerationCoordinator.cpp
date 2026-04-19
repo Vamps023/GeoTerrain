@@ -1,11 +1,11 @@
 #include "GenerationCoordinator.h"
 
-#include "../DEMFetcher.h"
-#include "../MaskGenerator.h"
-#include "../OSMParser.h"
-#include "../ShapefileExporter.h"
-#include "../TileDownloader.h"
-#include "../domain\Validation.h"
+#include "pipeline/DEMFetcher.h"
+#include "pipeline/MaskGenerator.h"
+#include "pipeline/OSMParser.h"
+#include "pipeline/ShapefileExporter.h"
+#include "pipeline/TileDownloader.h"
+#include "../domain/Validation.h"
 #include "../infrastructure/ManifestWriter.h"
 #include "../infrastructure/RunContext.h"
 #include "ChunkPlanner.h"
@@ -244,6 +244,13 @@ GenerationCoordinator::GenerationCoordinator(QObject* parent)
 GenerationCoordinator::~GenerationCoordinator()
 {
     cancel();
+    if (thread_)
+    {
+        thread_->quit();
+        // Bound wait so the editor never hangs on shutdown; background
+        // stages respect cancel_flag and exit quickly.
+        thread_->wait(5000);
+    }
 }
 
 bool GenerationCoordinator::isRunning() const

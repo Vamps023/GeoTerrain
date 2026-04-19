@@ -1,7 +1,7 @@
 #pragma once
 
 #include "../domain/Result.h"
-#include "../GeoBounds.h"
+#include "domain/GeoBounds.h"
 
 #include <QString>
 #include <functional>

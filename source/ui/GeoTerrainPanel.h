@@ -19,7 +19,7 @@ class GeoTerrainPanel : public QWidget
 
 public:
     explicit GeoTerrainPanel(QWidget* parent = nullptr);
-    ~GeoTerrainPanel() override = default;
+    ~GeoTerrainPanel() override;
 
     MapSelectionSection* mapSection() const { return map_section_; }
     SourceSettingsSection* sourceSection() const { return source_section_; }

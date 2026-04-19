@@ -1,5 +1,5 @@
-#include "GeoTerrainEditorPlugin.h"
-#include "GeoTerrainPanel.h"
+#include "plugin/GeoTerrainEditorPlugin.h"
+#include "ui/GeoTerrainPanel.h"
 
 #include <editor/UnigineWindowManager.h>
 

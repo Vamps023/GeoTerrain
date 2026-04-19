@@ -1,10 +1,53 @@
 #include "ExportCoordinator.h"
 
+#include <QCoreApplication>
 #include <QDir>
+#include <QElapsedTimer>
 #include <QFile>
 #include <QFileInfo>
 #include <QProcess>
 #include <QProcessEnvironment>
+
+namespace
+{
+    // Process timeouts (milliseconds)
+    constexpr int kStartTimeoutMs    = 10'000;     // 10 s to launch child process
+    constexpr int kRunTimeoutMs      = 180'000;    // 3 min per file
+    constexpr int kKillWaitMs        = 5'000;      // 5 s for forced kill to complete
+    constexpr int kEventPumpSliceMs  = 50;         // UI responsiveness granularity
+
+    // Raster assets exported per source directory (in order)
+    const QStringList kRasterAssets = {
+        "heightmap.tif",
+        "albedo.tif",
+        "mask.tif",
+        "vegetation_mask.tif",
+        "mask_preview.tif"
+    };
+
+    // Vector layers exported per source directory
+    const QStringList kVectorLayers = {
+        "roads", "railways", "buildings", "vegetation", "water"
+    };
+
+    // Wait for a QProcess to finish while keeping the Qt event loop alive so
+    // the editor UI (log text, progress, cancel buttons) stays responsive.
+    // Returns true if the process finished within timeout_ms, false on timeout.
+    bool waitForFinishedPumping(QProcess& proc, int timeout_ms)
+    {
+        QElapsedTimer timer;
+        timer.start();
+        while (proc.state() != QProcess::NotRunning)
+        {
+            if (proc.waitForFinished(kEventPumpSliceMs))
+                return true;
+            QCoreApplication::processEvents(QEventLoop::ExcludeUserInputEvents);
+            if (timer.hasExpired(timeout_ms))
+                return false;
+        }
+        return true;
+    }
+}
 
 Result<int> ExportCoordinator::exportForUnigine(const QString& base_output_dir, const QString& qgis_root,
                                                 std::function<void(const QString&)> log) const
@@ -37,17 +80,19 @@ Result<int> ExportCoordinator::exportForUnigine(const QString& base_output_dir, 
         proc.setProcessEnvironment(env);
         proc.setWorkingDirectory(base_output_dir);
 
-        if (!proc.start())
+        proc.start();
+        if (!proc.waitForStarted(kStartTimeoutMs))
         {
-            log("[FAIL] " + label + ": Failed to start process");
+            log("[FAIL] " + label + ": Failed to start process: " + proc.errorString());
             return false;
         }
 
-        if (!proc.waitForFinished(180000)) // 3 minute timeout per file
+        if (!waitForFinishedPumping(proc, kRunTimeoutMs))
         {
             proc.kill();
-            proc.waitForFinished(5000);
-            log("[FAIL] " + label + ": Process timed out (3 minutes)");
+            proc.waitForFinished(kKillWaitMs);
+            log("[FAIL] " + label + ": Process timed out (" +
+                QString::number(kRunTimeoutMs / 1000) + "s)");
             return false;
         }
 
@@ -69,8 +114,7 @@ Result<int> ExportCoordinator::exportForUnigine(const QString& base_output_dir, 
     {
         QDir().mkpath(dst_dir);
         int count = 0;
-        const QStringList tifs = { "heightmap.tif", "albedo.tif", "mask.tif", "vegetation_mask.tif", "mask_preview.tif" };
-        for (const QString& file : tifs)
+        for (const QString& file : kRasterAssets)
         {
             const QString src = src_dir + "/" + file;
             if (!QFileInfo::exists(src))
@@ -86,8 +130,7 @@ Result<int> ExportCoordinator::exportForUnigine(const QString& base_output_dir, 
 
         if (QFileInfo::exists(ogr2ogr))
         {
-            const QStringList shps = { "roads", "railways", "buildings", "vegetation", "water" };
-            for (const QString& layer : shps)
+            for (const QString& layer : kVectorLayers)
             {
                 const QString src = src_dir + "/" + layer + ".shp";
                 if (!QFileInfo::exists(src))

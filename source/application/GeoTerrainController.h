@@ -1,14 +1,15 @@
 #pragma once
 
 #include "../domain/GenerationTypes.h"
+#include "ExportCoordinator.h"
+#include "SandwormExporter.h"
 
 #include <QObject>
 #include <QString>
 
+class AsyncJob;
 class GeoTerrainPanel;
 class GenerationCoordinator;
-class ExportCoordinator;
-class SandwormExporter;
 
 class GeoTerrainController : public QObject
 {
@@ -35,6 +36,7 @@ private slots:
     void onCreateSandworm();
     void onProgress(int percent);
     void onFinished(int status, const QString& message);
+    void onAsyncJobFinished(bool success, int count, const QString& message);
 
 private:
     GenerationRequest buildRequest() const;
@@ -45,8 +47,10 @@ private:
 
     GeoTerrainPanel* panel_ = nullptr;
     GenerationCoordinator* generation_ = nullptr;
-    ExportCoordinator* export_ = nullptr;
-    SandwormExporter* sandworm_ = nullptr;
+    AsyncJob* job_ = nullptr;
+    ExportCoordinator export_;
+    SandwormExporter sandworm_;
+    QString active_job_tag_;
     GeoBounds current_bounds_;
     GeoBounds layer_extent_;
     QString vector_path_;
