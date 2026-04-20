@@ -216,9 +216,20 @@ Result<int> ExportCoordinator::gatherChunks(const QString& base_output_dir,
     if (!QDir(base_output_dir).exists())
         return Result<int>::fail(1, "Output directory does not exist: " + base_output_dir.toStdString());
 
-    const QString gather_dir = base_output_dir + "/GatheredExport";
-    if (!QDir().mkpath(gather_dir))
-        return Result<int>::fail(1, "Failed to create GatheredExport directory: " + gather_dir.toStdString());
+    const QString gather_dir      = base_output_dir + "/GatheredExport";
+    const QString heightmap_dir   = gather_dir + "/heightmap";
+    const QString albedo_dir      = gather_dir + "/albedo";
+
+    for (const QString& dir : { gather_dir, heightmap_dir, albedo_dir })
+    {
+        if (!QDir().mkpath(dir))
+            return Result<int>::fail(1, "Failed to create directory: " + dir.toStdString());
+    }
+
+    // Files routed into heightmap/ subfolder.
+    const QStringList kHeightmapFiles = { "heightmap.tif" };
+    // Files routed into albedo/ subfolder.
+    const QStringList kAlbedoFiles    = { "albedo.tif" };
 
     QDir base_dir(base_output_dir);
     const QStringList chunk_names = base_dir.entryList(QStringList() << "chunk_*", QDir::Dirs | QDir::NoDotAndDotDot, QDir::Name);
@@ -245,12 +256,23 @@ Result<int> ExportCoordinator::gatherChunks(const QString& base_output_dir,
         for (const QString& file : files)
         {
             const QString src = src_export + "/" + file;
-            const QString dst = gather_dir + "/" + chunk + "_" + file;
+
+            // Route into the correct subfolder based on file name.
+            QString dst_dir;
+            if (kHeightmapFiles.contains(file, Qt::CaseInsensitive))
+                dst_dir = heightmap_dir;
+            else if (kAlbedoFiles.contains(file, Qt::CaseInsensitive))
+                dst_dir = albedo_dir;
+            else
+                dst_dir = gather_dir;
+
+            const QString dst = dst_dir + "/" + chunk + "_" + file;
             QFile::remove(dst);
             if (QFile::copy(src, dst))
             {
                 ++total;
                 ++chunk_count;
+                log("[" + chunk + "] -> " + QDir(base_output_dir).relativeFilePath(dst));
             }
             else
             {
@@ -265,6 +287,7 @@ Result<int> ExportCoordinator::gatherChunks(const QString& base_output_dir,
     if (chunks_with_files == 0)
         return Result<int>::fail(1, "No files gathered. Run Export for UNIGINE first, then try gathering again.");
 
-    log(QString("[Gather] Complete: %1 chunks, %2 files gathered to %3").arg(chunks_with_files).arg(total).arg(gather_dir));
+    log(QString("[Gather] Complete: %1 chunks, %2 files — heightmap/ and albedo/ under %3")
+            .arg(chunks_with_files).arg(total).arg(gather_dir));
     return Result<int>::ok(total);
 }
