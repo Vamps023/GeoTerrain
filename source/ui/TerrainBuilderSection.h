@@ -19,6 +19,7 @@ class TerrainBuilderSection : public QWidget
 public:
     explicit TerrainBuilderSection(QWidget* parent = nullptr);
 
+    // Single-tile mode
     QString heightmapPath() const;
     QString albedoPath() const;
     QString outputLmapPath() const;
@@ -26,6 +27,13 @@ public:
     void setHeightmapPath(const QString& path);
     void setAlbedoPath(const QString& path);
     void setOutputLmapPath(const QString& path);
+
+    // Multi-tile (folder) mode
+    QString heightmapFolderPath() const;
+    QString albedoFolderPath() const;
+    QString outputLmapFolderPath() const;
+    bool isMultiTileMode() const;
+
     void setBuildEnabled(bool enabled);
 
     // Display auto-computed parameters after the heightmap is scanned.
@@ -39,11 +47,23 @@ private slots:
     void onBrowseHeightmap();
     void onBrowseAlbedo();
     void onBrowseOutput();
+    void onBrowseHeightmapFolder();
+    void onBrowseAlbedoFolder();
+    void onBrowseOutputFolder();
+    void onModeToggled(bool multi_tile);
 
 private:
+    // Single-tile widgets
+    QWidget*   single_tile_widget_ = nullptr;
     QLineEdit* edit_heightmap_ = nullptr;
     QLineEdit* edit_albedo_ = nullptr;
     QLineEdit* edit_output_ = nullptr;
-    QLabel*    label_auto_params_ = nullptr;
+    // Multi-tile widgets
+    QWidget*   multi_tile_widget_ = nullptr;
+    QLineEdit* edit_heightmap_folder_ = nullptr;
+    QLineEdit* edit_albedo_folder_ = nullptr;
+    QLineEdit* edit_output_folder_ = nullptr;
+
+    QLabel*      label_auto_params_ = nullptr;
     QPushButton* btn_build_ = nullptr;
 };

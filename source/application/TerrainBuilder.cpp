@@ -1,5 +1,6 @@
 #include "application/TerrainBuilder.h"
 
+#include <QDir>
 #include <QFile>
 #include <QFileInfo>
 
@@ -158,19 +159,26 @@ void fillHeightTile(const ImagePtr& dst, const HeightSource& src,
 
     const double range = std::max(1e-6, static_cast<double>(src.height_max - src.height_min));
     const double inv_range = 1.0 / range;
-    const double total_x = static_cast<double>(grid_x) * tile_res;
-    const double total_y = static_cast<double>(grid_y) * tile_res;
+    // Nearest-neighbour: map each destination pixel to the closest source pixel.
+    // total_src_* is the full source extent this tile grid covers.
+    const double total_src_x = static_cast<double>(src.width);
+    const double total_src_y = static_cast<double>(src.height);
+    const int total_tile_x   = grid_x * tile_res;
+    const int total_tile_y   = grid_y * tile_res;
 
     for (int y = 0; y < tile_res; ++y)
     {
-        const int global_y = tile_y * tile_res + y;
+        // Flip Y in GLOBAL space: GeoTIFF row 0 = north, UNIGINE y=0 = south.
+        // global_y counts from the top of the full mosaic for this tile's row.
+        const int global_y_fwd = tile_y * tile_res + y;
+        const int global_y     = (total_tile_y - 1) - global_y_fwd;
         const int sy = std::min(src.height - 1,
-            static_cast<int>((global_y + 0.5) * src.height / total_y));
+            static_cast<int>(global_y * total_src_y / total_tile_y));
         for (int x = 0; x < tile_res; ++x)
         {
             const int global_x = tile_x * tile_res + x;
             const int sx = std::min(src.width - 1,
-                static_cast<int>((global_x + 0.5) * src.width / total_x));
+                static_cast<int>(global_x * total_src_x / total_tile_x));
 
             Image::Pixel s = src.image->get2D(sx, sy);
             const double v_m = static_cast<double>(s.f.r);
@@ -189,19 +197,24 @@ void fillAlbedoTile(const ImagePtr& dst, const AlbedoSource& src,
     if (dst->getWidth() != tile_res || dst->getHeight() != tile_res)
         dst->create2D(tile_res, tile_res, Image::FORMAT_RGBA8);
 
-    const double total_x = static_cast<double>(grid_x) * tile_res;
-    const double total_y = static_cast<double>(grid_y) * tile_res;
+    // Nearest-neighbour: map each destination pixel to the closest source pixel.
+    const double total_src_x = static_cast<double>(src.width);
+    const double total_src_y = static_cast<double>(src.height);
+    const int total_tile_x   = grid_x * tile_res;
+    const int total_tile_y   = grid_y * tile_res;
 
     for (int y = 0; y < tile_res; ++y)
     {
-        const int global_y = tile_y * tile_res + y;
+        // Flip Y in GLOBAL space: GeoTIFF row 0 = north, UNIGINE y=0 = south.
+        const int global_y_fwd = tile_y * tile_res + y;
+        const int global_y     = (total_tile_y - 1) - global_y_fwd;
         const int sy = std::min(src.height - 1,
-            static_cast<int>((global_y + 0.5) * src.height / total_y));
+            static_cast<int>(global_y * total_src_y / total_tile_y));
         for (int x = 0; x < tile_res; ++x)
         {
             const int global_x = tile_x * tile_res + x;
             const int sx = std::min(src.width - 1,
-                static_cast<int>((global_x + 0.5) * src.width / total_x));
+                static_cast<int>(global_x * total_src_x / total_tile_x));
             dst->set2D(x, y, src.image->get2D(sx, sy));
         }
     }
@@ -817,4 +830,248 @@ Result<TerrainAutoParams> TerrainBuilder::computeAutoParams(const QString& heigh
     p.tile_resolution = tile;
 
     return Result<TerrainAutoParams>::ok(std::move(p));
+}
+
+// ---------------------------------------------------------------------------
+// buildMultiTile
+//
+// Scans heightmap_folder for files named chunk_N_heightmap.tif (N=0,1,2,…)
+// and albedo_folder for chunk_N_albedo.tif. Detects the grid dimensions
+// (e.g. 9 chunks → 3x3) and builds one .lmap per chunk. Each
+// LandscapeLayerMap is placed at the correct world-space X/Y offset so the
+// full mosaic tiles seamlessly without gaps or overlaps.
+//
+// World origin is the top-left corner of the full mosaic (chunk_0 = top-left,
+// chunk indices increase left-to-right then top-to-bottom, matching UNIGINE
+// editor convention where X goes East and Y goes North):
+//
+//   chunk_6  chunk_7  chunk_8      (row 2 — top in world)
+//   chunk_3  chunk_4  chunk_5
+//   chunk_0  chunk_1  chunk_2      (row 0 — bottom in world)
+//
+// ---------------------------------------------------------------------------
+Result<MultiTileBuildReport> TerrainBuilder::buildMultiTile(
+    const MultiTileBuildRequest& req, LogFn log) const
+{
+    if (req.heightmap_folder.isEmpty() || req.albedo_folder.isEmpty()
+        || req.output_lmap_folder.isEmpty())
+        return Result<MultiTileBuildReport>::fail(1,
+            "heightmap_folder, albedo_folder and output_lmap_folder must all be set.");
+
+    if (!World::isLoaded())
+        return Result<MultiTileBuildReport>::fail(1,
+            "No world is loaded. Please create or load a world first.");
+
+    // ---- Discover chunks -----------------------------------------------
+    // Expect files named chunk_N_heightmap.tif in the heightmap folder.
+    QDir hm_dir(req.heightmap_folder);
+    if (!hm_dir.exists())
+        return Result<MultiTileBuildReport>::fail(1,
+            "Heightmap folder not found: " + req.heightmap_folder.toStdString());
+
+    const QStringList hm_files = hm_dir.entryList(
+        QStringList() << "chunk_*_heightmap.tif", QDir::Files, QDir::Name);
+    if (hm_files.isEmpty())
+        return Result<MultiTileBuildReport>::fail(1,
+            "No chunk_N_heightmap.tif files found in: "
+            + req.heightmap_folder.toStdString());
+
+    // Parse chunk indices and build sorted list.
+    // Filenames follow the pattern produced by ChunkPlanner + gatherChunks:
+    //   chunk_<ROW>_<COL>_heightmap.tif  (e.g. chunk_1_0_heightmap.tif)
+    // The ROW and COL encode the exact position in the original grid.
+    // We must determine the FULL grid dimensions from the max ROW/COL across
+    // ALL heightmap files (including those without albedo pairs) so that
+    // chunks that were skipped during generation still occupy their correct
+    // slot in the world-space layout.
+
+    // First pass: scan all heightmap files to find max row and col.
+    int max_row = 0;
+    int max_col = 0;
+    for (const QString& fname : hm_files)
+    {
+        if (!fname.endsWith("_heightmap.tif", Qt::CaseInsensitive)) continue;
+        // fname = "chunk_R_C_heightmap.tif"
+        const QStringList parts = fname.split('_');
+        // parts: ["chunk", "R", "C", "heightmap.tif"]
+        if (parts.size() < 4) continue;
+        bool rok = false, cok = false;
+        const int r = parts[1].toInt(&rok);
+        const int c = parts[2].toInt(&cok);
+        if (!rok || !cok) continue;
+        if (r > max_row) max_row = r;
+        if (c > max_col) max_col = c;
+    }
+    const int grid_rows = max_row + 1;
+    const int grid_cols = max_col + 1;
+
+    if (log)
+        log(QString("[MultiTile] Full grid detected: %1 rows x %2 cols (from filenames)")
+                .arg(grid_rows).arg(grid_cols));
+
+    // Second pass: build paired chunk list with correct row/col position.
+    std::vector<ChunkEntry> chunks;
+    for (const QString& fname : hm_files)
+    {
+        if (!fname.endsWith("_heightmap.tif", Qt::CaseInsensitive)) continue;
+        const QStringList parts = fname.split('_');
+        if (parts.size() < 4) continue;
+        bool rok = false, cok = false;
+        const int r = parts[1].toInt(&rok);
+        const int c = parts[2].toInt(&cok);
+        if (!rok || !cok) continue;
+
+        // Strip "_heightmap.tif" to get the shared prefix (e.g. "chunk_1_0")
+        const QString prefix = fname.left(fname.size() - static_cast<int>(strlen("_heightmap.tif")));
+        const QString alb_name = prefix + "_albedo.tif";
+        const QString alb_path = req.albedo_folder + "/" + alb_name;
+        if (!QFileInfo::exists(alb_path))
+        {
+            if (log)
+                log(QString("[MultiTile] SKIP '%1': albedo not found").arg(fname));
+            continue;
+        }
+        // Encode position as flat index: row * grid_cols + col
+        ChunkEntry ce;
+        ce.index    = r * grid_cols + c;
+        ce.hm_path  = req.heightmap_folder + "/" + fname;
+        ce.alb_path = alb_path;
+        chunks.push_back(ce);
+        if (log)
+            log(QString("[MultiTile] Paired [row=%1 col=%2 idx=%3]: %4")
+                    .arg(r).arg(c).arg(ce.index).arg(fname));
+    }
+    if (chunks.empty())
+        return Result<MultiTileBuildReport>::fail(1,
+            "No valid heightmap+albedo chunk pairs found.");
+
+    std::sort(chunks.begin(), chunks.end(),
+              [](const ChunkEntry& a, const ChunkEntry& b){ return a.index < b.index; });
+
+    const int n_chunks = static_cast<int>(chunks.size());
+    const int cols     = grid_cols;
+    const int rows     = grid_rows;
+
+    if (log)
+        log(QString("[MultiTile] Building %1 chunks into %2x%3 world grid")
+                .arg(n_chunks).arg(cols).arg(rows));
+
+    // ---- Global elevation range ----------------------------------------
+    // Compute the height range across ALL chunks so every tile normalises
+    // relative to the same baseline (prevents seams at tile boundaries).
+    double global_min =  1e10;
+    double global_max = -1e10;
+    double chunk_world_size = 0.0;
+    for (int ci = 0; ci < static_cast<int>(chunks.size()); ++ci)
+    {
+        auto ap = computeAutoParams(chunks[ci].hm_path);
+        if (!ap.success) continue;
+        if (ap.value.height_min_m < global_min) global_min = ap.value.height_min_m;
+        if (ap.value.height_max_m > global_max) global_max = ap.value.height_max_m;
+        if (chunk_world_size <= 0.0) chunk_world_size = ap.value.world_size_m;
+    }
+    if (global_min >= global_max)
+    {
+        global_min = 0.0; global_max = 1000.0;
+    }
+    if (chunk_world_size <= 0.0) chunk_world_size = 1000.0;
+
+    const double full_width  = chunk_world_size * cols;
+    const double full_height = chunk_world_size * rows;
+
+    if (log)
+        log(QString("[MultiTile] Chunk size=%1m, full mosaic=%2x%3m, "
+                    "elevation=%4..%5m")
+                .arg(chunk_world_size, 0, 'f', 1)
+                .arg(full_width, 0, 'f', 1)
+                .arg(full_height, 0, 'f', 1)
+                .arg(global_min, 0, 'f', 2)
+                .arg(global_max, 0, 'f', 2));
+
+    QDir().mkpath(req.output_lmap_folder);
+
+    // ---- Ensure one shared ObjectLandscapeTerrain ----------------------
+    ensureActiveTerrain(log);
+
+    // ---- Build each chunk ----------------------------------------------
+    MultiTileBuildReport report;
+    for (int ci = 0; ci < static_cast<int>(chunks.size()); ++ci)
+    {
+        const int chunk_idx = chunks[ci].index;
+        const QString& hm_path  = chunks[ci].hm_path;
+        const QString& alb_path = chunks[ci].alb_path;
+
+        // Grid position: col = index % cols, row = index / cols
+        const int col = chunk_idx % cols;
+        const int row = chunk_idx / cols;
+
+        // World-space offset: origin at mosaic centre (0,0).
+        // Col 0 = west (-X), col N = east (+X).
+        // GeoTIFF row 0 = north (top of image), but UNIGINE Y increases northward,
+        // so we flip: row 0 maps to +Y (north), row max maps to -Y (south).
+        const double offset_x =  (col - cols * 0.5 + 0.5) * chunk_world_size;
+        const double offset_y = -(row - rows * 0.5 + 0.5) * chunk_world_size;
+
+        const QString lmap_name =
+            QString("chunk_%1_%2x%3.lmap").arg(chunk_idx).arg(col).arg(row);
+        const QString lmap_path = req.output_lmap_folder + "/" + lmap_name;
+
+        if (log)
+            log(QString("[MultiTile] Chunk %1 -> col=%2 row=%3 offset=(%4,%5) -> %6")
+                    .arg(chunk_idx).arg(col).arg(row)
+                    .arg(offset_x, 0, 'f', 1)
+                    .arg(offset_y, 0, 'f', 1)
+                    .arg(lmap_name));
+
+        TerrainBuildRequest tile_req;
+        tile_req.heightmap_path   = hm_path;
+        tile_req.albedo_path      = alb_path;
+        tile_req.output_lmap_path = lmap_path;
+        tile_req.height_min_m     = global_min;
+        tile_req.height_max_m     = global_max;
+        tile_req.world_size_m     = chunk_world_size;
+
+        auto result = build(tile_req, log);
+        if (!result.success)
+        {
+            if (log)
+                log(QString("[MultiTile] FAIL chunk %1: %2")
+                        .arg(chunk_idx)
+                        .arg(QString::fromStdString(result.message)));
+            ++report.chunks_failed;
+            continue;
+        }
+
+        // Shift the node to its correct mosaic position.
+        // build() spawns the LandscapeLayerMap at world origin (0,0).
+        // We find it by name and translate it.
+        const QString node_name = QFileInfo(lmap_path).completeBaseName()
+                                  + "_"
+                                  + QString::number(chunk_world_size / result.value.tile_resolution, 'f', 2)
+                                  + "mpx";
+        Vector<Ptr<Node>> found;
+        World::getNodesByName(node_name.toUtf8().constData(), found);
+        if (!found.empty())
+        {
+            found[0]->setWorldPosition(
+                Math::Vec3(static_cast<Math::Scalar>(offset_x),
+                           static_cast<Math::Scalar>(offset_y),
+                           0.0));
+        }
+        else if (log)
+        {
+            log(QString("[MultiTile] WARNING: could not find node '%1' to reposition")
+                    .arg(node_name));
+        }
+
+        ++report.chunks_built;
+    }
+
+    // Save and reload once after all chunks are placed.
+    World::saveWorld();
+
+    if (log)
+        log(QString("[MultiTile] Done: %1 built, %2 failed.")
+                .arg(report.chunks_built).arg(report.chunks_failed));
+    return Result<MultiTileBuildReport>::ok(std::move(report));
 }

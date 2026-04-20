@@ -55,12 +55,41 @@ struct TerrainBuildReport
     int tile_resolution = 0;
 };
 
+// Request for building a full multi-chunk terrain from gathered folders.
+// heightmap_folder must contain files named chunk_N_heightmap.tif
+// albedo_folder    must contain files named chunk_N_albedo.tif
+// output_lmap_folder is the directory where per-chunk .lmap files are written.
+struct MultiTileBuildRequest
+{
+    QString heightmap_folder;
+    QString albedo_folder;
+    QString output_lmap_folder;
+};
+
+struct MultiTileBuildReport
+{
+    int chunks_built = 0;
+    int chunks_failed = 0;
+};
+
+struct ChunkEntry
+{
+    int     index   = 0;
+    QString hm_path;
+    QString alb_path;
+};
+
 class TerrainBuilder
 {
 public:
     using LogFn = std::function<void(const QString&)>;
 
     Result<TerrainBuildReport> build(const TerrainBuildRequest& request, LogFn log) const;
+
+    // Multi-chunk: scan heightmap/ and albedo/ folders, detect NxN grid,
+    // build one .lmap per chunk and place each LandscapeLayerMap at the
+    // correct world-space offset so they tile seamlessly.
+    Result<MultiTileBuildReport> buildMultiTile(const MultiTileBuildRequest& request, LogFn log) const;
 
     // Exposed for unit testing / pre-flight validation (no engine calls).
     static Result<QString> validate(const TerrainBuildRequest& request);

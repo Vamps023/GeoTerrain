@@ -487,48 +487,66 @@ void GeoTerrainController::onBuildTerrain()
         panel_->appendLog("[Terrain] ERROR: Terrain section not found.");
         return;
     }
-    TerrainBuildRequest request;
-    request.heightmap_path   = terrain_section->heightmapPath();
-    request.albedo_path      = terrain_section->albedoPath();
-    request.output_lmap_path = terrain_section->outputLmapPath();
-    // world_size_m, height_min/max_m and tile_resolution are left at 0 so
-    // TerrainBuilder::build() auto-computes them from the heightmap GeoTIFF.
 
-    if (auto pre = TerrainBuilder::validate(request); !pre.success)
-    {
-        panel_->appendLog("[Terrain] " + QString::fromStdString(pre.message));
-        return;
-    }
-
-    // UNIGINE API calls MUST run on the engine main thread (same thread as
-    // the editor UI), so this runs synchronously rather than through the
-    // worker-thread AsyncJob used by Export/Gather. The build is CPU-heavy
-    // (.lmap serialization) and will briefly freeze the panel.
-    panel_->appendLog("Building terrain...");
-    terrain_section->setBuildEnabled(false);
-
-    // Mirror log output to both the panel AND qDebug (editor_log.txt) so we
-    // can see terrain build progress even if the editor crashes before the
-    // panel can render the message.
     auto log_fn = [this](const QString& line)
     {
-        // Use Unigine::Log so messages are flushed to editor_log.txt
-        // immediately (qDebug may be buffered and lost on crash).
         Unigine::Log::message("%s\n", line.toUtf8().constData());
         panel_->appendLog(line);
     };
-    auto result = terrain_builder_.build(request, log_fn);
 
-    if (result.success)
+    terrain_section->setBuildEnabled(false);
+
+    if (terrain_section->isMultiTileMode())
     {
-        panel_->appendLog(QString("[Terrain] Done \u2014 .lmap: %1 (grid %2x%3)")
-            .arg(result.value.lmap_path)
-            .arg(result.value.grid_x).arg(result.value.grid_y));
+        // ---- Multi-tile (folder) mode ------------------------------------
+        MultiTileBuildRequest mt_req;
+        mt_req.heightmap_folder    = terrain_section->heightmapFolderPath();
+        mt_req.albedo_folder       = terrain_section->albedoFolderPath();
+        mt_req.output_lmap_folder  = terrain_section->outputLmapFolderPath();
+
+        if (mt_req.heightmap_folder.isEmpty() || mt_req.albedo_folder.isEmpty()
+            || mt_req.output_lmap_folder.isEmpty())
+        {
+            panel_->appendLog("[Terrain] ERROR: All three folders must be set in multi-tile mode.");
+            terrain_section->setBuildEnabled(true);
+            return;
+        }
+
+        panel_->appendLog("[Terrain] Starting multi-tile build...");
+        auto result = terrain_builder_.buildMultiTile(mt_req, log_fn);
+        if (result.success)
+            panel_->appendLog(QString("[Terrain] Multi-tile done — %1 built, %2 failed.")
+                .arg(result.value.chunks_built).arg(result.value.chunks_failed));
+        else
+            panel_->appendLog("[Terrain] Multi-tile FAILED: "
+                + QString::fromStdString(result.message));
     }
     else
     {
-        panel_->appendLog("[Terrain] FAILED: " + QString::fromStdString(result.message));
+        // ---- Single-tile mode -------------------------------------------
+        TerrainBuildRequest request;
+        request.heightmap_path   = terrain_section->heightmapPath();
+        request.albedo_path      = terrain_section->albedoPath();
+        request.output_lmap_path = terrain_section->outputLmapPath();
+
+        if (auto pre = TerrainBuilder::validate(request); !pre.success)
+        {
+            panel_->appendLog("[Terrain] " + QString::fromStdString(pre.message));
+            terrain_section->setBuildEnabled(true);
+            return;
+        }
+
+        panel_->appendLog("Building terrain...");
+        auto result = terrain_builder_.build(request, log_fn);
+        if (result.success)
+            panel_->appendLog(QString("[Terrain] Done \u2014 .lmap: %1 (grid %2x%3)")
+                .arg(result.value.lmap_path)
+                .arg(result.value.grid_x).arg(result.value.grid_y));
+        else
+            panel_->appendLog("[Terrain] FAILED: "
+                + QString::fromStdString(result.message));
     }
+
     terrain_section->setBuildEnabled(true);
 }
 

@@ -248,7 +248,7 @@ Result<RasterArtifact> TileDownloader::download(const GeoBounds& bounds, const C
                     wo->panSrcBands[b] = b + 1;
                     wo->panDstBands[b] = b + 1;
                 }
-                wo->eResampleAlg = GRA_Bilinear;
+                wo->eResampleAlg = GRA_NearestNeighbour;
                 wo->pfnTransformer = GDALGenImgProjTransform;
                 wo->pTransformerArg = GDALCreateGenImgProjTransformer(
                     src_ds, src_ds->GetProjectionRef(), dst_ds, dst_ds->GetProjectionRef(), FALSE, 0.0, 1);
