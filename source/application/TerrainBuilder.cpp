@@ -17,6 +17,10 @@
 #include <UnigineNode.h>
 #include <UnigineWorld.h>
 #include <UnigineFileSystem.h>
+#include <UnigineGUID.h>
+
+#include <editor/UnigineActions.h>
+#include <editor/UnigineUndo.h>
 
 #include <functional>
 #include <limits>
@@ -37,6 +41,7 @@ using Unigine::ObjectLandscapeTerrainPtr;
 using Unigine::Ptr;
 using Unigine::Vector;
 using Unigine::World;
+using Unigine::UGUID;
 
 namespace Math = Unigine::Math;
 
@@ -145,8 +150,11 @@ void fillHeightTile(const ImagePtr& dst, const HeightSource& src,
                     int tile_res, int grid_x, int grid_y,
                     int tile_x, int tile_y)
 {
+    // Do NOT call create2D on the image UNIGINE provided — it owns the format.
+    // If somehow it is the wrong size, create it in R32F (float) which matches
+    // what LandscapeMapFileCreator expects for height data.
     if (dst->getWidth() != tile_res || dst->getHeight() != tile_res)
-        dst->create2D(tile_res, tile_res, Image::FORMAT_R16);
+        dst->create2D(tile_res, tile_res, Image::FORMAT_R32F);
 
     const double range = std::max(1e-6, static_cast<double>(src.height_max - src.height_min));
     const double inv_range = 1.0 / range;
@@ -236,6 +244,9 @@ ObjectLandscapeTerrainPtr ensureActiveTerrain(const TerrainBuilder::LogFn& log)
     }
     terrain->setActiveTerrain(true);
     terrain->setName("GeoTerrain_LandscapeTerrain");
+    // Register with the editor so it appears in World Nodes and is saved.
+    UnigineEditor::Undo::apply(
+        new UnigineEditor::CreateNodesAction(Unigine::NodePtr(terrain)));
     if (log)
         log("[Terrain] ensureActiveTerrain: New terrain created successfully.");
     return terrain;
@@ -458,6 +469,10 @@ Result<TerrainBuildReport> TerrainBuilder::build(const TerrainBuildRequest& requ
         lm->setHeightScale(height_scale_m);
         lm->setOrder(order);
 
+        // Register with the editor so it appears in World Nodes and is saved.
+        UnigineEditor::Undo::apply(
+            new UnigineEditor::CreateNodesAction(Unigine::NodePtr(lm)));
+
         const Math::Vec2 actual = lm->getSize();
         if (log)
             log(QString("[Terrain] Spawned LandscapeLayerMap '%1' requested size=%2m "
@@ -480,19 +495,82 @@ Result<TerrainBuildReport> TerrainBuilder::build(const TerrainBuildRequest& requ
     if (!combined_lm.success)
         return Result<TerrainBuildReport>::fail(combined_lm.error_code, combined_lm.message);
 
-    // ---- Persist the node into the .world XML -------------------------
-    // The UNIGINE API's LandscapeLayerMap::setSize() races the async .lmap
-    // load — by the time the user sees the node the Size often resets to
-    // the 1000 m default. Workaround: save the world, patch <size> and
-    // <height_scale> on our node directly in the XML, then reload. This
-    // matches how Sandworm ships a preconfigured node.
-    const char* world_path_c = World::getPath();
-    QString world_path = world_path_c ? QString::fromUtf8(world_path_c) : QString();
+    // Capture actual node name (UNIGINE may have deduplicated it) and GUID.
+    // Both must be queried before saveWorld()/reloadWorld() destroys the ptr.
+    const QString actual_node_name =
+        QString::fromUtf8(combined_lm.value->getName());
+    const UGUID lmap_guid = combined_lm.value->getGUID();
+    const QString lmap_guid_str = lmap_guid != UGUID::empty
+        ? QString::fromLatin1(lmap_guid.getFileSystemString())
+        : QString();
     if (log)
-        log(QString("[Terrain] Saving world to persist LandscapeLayerMap node (%1)...")
-                .arg(world_path.isEmpty() ? "no path" : world_path));
+        log(QString("[Terrain] Node actual name: '%1', GUID: %2")
+                .arg(actual_node_name).arg(lmap_guid_str));
 
-    if (World::saveWorld() && !world_path.isEmpty() && QFileInfo::exists(world_path))
+    // ---- Persist correct values into the .world XML -------------------
+    // Strategy: save the world first so UNIGINE serialises our new node,
+    // then read the XML back, REMOVE every stale <node type="LANDSCAPE_LAYER_MAP">
+    // block, inject a single clean node block with correct size/height_scale,
+    // write it back, and reload.  This avoids the async-reset problem and
+    // accumulating duplicate nodes across runs.
+    //
+    // World::getPath() returns a virtual path ("data/myworld").
+    // FileSystem::getRealPath() converts it to an absolute OS path.
+
+    const char* vworld_c = World::getPath();
+    const QString vworld = vworld_c ? QString::fromUtf8(vworld_c) : QString();
+
+    // Resolve virtual → absolute using FileSystem::getAbsolutePath.
+    // World::getPath() returns e.g. "data/myworld" (no .world suffix).
+    // We try both with and without ".world" appended.
+    QString world_path;
+    if (!vworld.isEmpty())
+    {
+        Unigine::String rp = Unigine::FileSystem::getAbsolutePath(
+            (vworld + ".world").toUtf8().constData());
+        if (!rp.empty())
+            world_path = QString::fromUtf8(rp.get());
+        if (world_path.isEmpty() || !QFileInfo::exists(world_path))
+        {
+            rp = Unigine::FileSystem::getAbsolutePath(vworld.toUtf8().constData());
+            if (!rp.empty())
+                world_path = QString::fromUtf8(rp.get());
+        }
+    }
+    if (log)
+    {
+        log(QString("[Terrain] World path resolved: '%1'").arg(
+                world_path.isEmpty() ? "(empty)" : world_path));
+        log(QString("[Terrain] .lmap GUID: %1").arg(
+                lmap_guid_str.isEmpty() ? "(none - will use virtual path)" : lmap_guid_str));
+    }
+
+    // Prefer guid://HASH path so UNIGINE's asset registry resolves it on load.
+    // Fall back to virtual path, then bare filename, in that order.
+    QString lmap_vpath;
+    if (!lmap_guid_str.isEmpty())
+    {
+        lmap_vpath = lmap_guid_str;
+    }
+    else
+    {
+        const QByteArray abs_utf8 = combined_lmap_path.toUtf8();
+        Unigine::String vp = Unigine::FileSystem::getVirtualPath(abs_utf8.constData());
+        lmap_vpath = vp.empty()
+            ? QFileInfo(combined_lmap_path).fileName()
+            : QString::fromUtf8(vp.get());
+    }
+
+    const QString size_val = QString("%1 %2")
+        .arg(req.world_size_m, 0, 'f', 6)
+        .arg(req.world_size_m, 0, 'f', 6);
+    const QString hs_val = QString::number(static_cast<double>(height_scale), 'f', 6);
+
+    // Let UNIGINE serialise the node first — it knows all element names.
+    // We then patch only <size> and <height_scale> inside the block it wrote.
+    World::saveWorld();
+
+    if (!world_path.isEmpty() && QFileInfo::exists(world_path))
     {
         QFile wf(world_path);
         if (wf.open(QIODevice::ReadOnly | QIODevice::Text))
@@ -500,81 +578,100 @@ Result<TerrainBuildReport> TerrainBuilder::build(const TerrainBuildRequest& requ
             QString xml = QString::fromUtf8(wf.readAll());
             wf.close();
 
-            // Locate our node block by name attribute (unique per build).
-            const QString name_attr = QString("name=\"%1\"").arg(layer_node_name);
-            const int name_pos = xml.indexOf(name_attr);
+            // Find the node block UNIGINE wrote for our named node.
+            // Try actual_node_name first, fall back to layer_node_name.
+            // Also try matching by GUID in the landscape element.
+            const QStringList candidates = { actual_node_name, layer_node_name };
+            int name_pos = -1;
+            QString matched_name;
+            for (const QString& candidate : candidates)
+            {
+                const QString attr = QString("name=\"%1\"").arg(candidate);
+                const int pos = xml.indexOf(attr);
+                if (pos >= 0) { name_pos = pos; matched_name = candidate; break; }
+            }
+            if (name_pos < 0 && !lmap_guid_str.isEmpty())
+            {
+                // Last resort: find by GUID string in the XML body.
+                name_pos = xml.indexOf(lmap_guid_str);
+                if (name_pos >= 0) matched_name = "(by GUID)";
+            }
             if (name_pos < 0)
             {
                 if (log)
-                    log(QString("[Terrain] WARNING: node '%1' not found in world XML; "
-                                "size patch skipped.").arg(layer_node_name));
+                    log(QString("[Terrain] WARNING: node '%1' not found in saved "
+                                "world XML — size patch skipped.").arg(actual_node_name));
             }
             else
             {
-                // Find the opening <node ...> that owns this name, then its
-                // closing </node>. Search within that range only.
                 const int block_start = xml.lastIndexOf("<node ", name_pos);
-                const int block_end_tag = xml.indexOf("</node>", name_pos);
-                if (block_start >= 0 && block_end_tag > block_start)
+                const int block_end   = xml.indexOf("</node>", name_pos);
+                if (block_start >= 0 && block_end > block_start)
                 {
-                    const int block_end = block_end_tag + 7; // include </node>
-                    QString block = xml.mid(block_start, block_end - block_start);
+                    QString block = xml.mid(block_start,
+                                            block_end + 7 - block_start);
 
-                    auto replaceOrInsert = [&block](const QString& tag, const QString& value)
+                    // Replace or insert a tag value inside the block.
+                    auto patchTag = [&block](const QString& tag, const QString& val)
                     {
-                        const QString open  = "<" + tag + ">";
+                        const QString open  = "<"  + tag + ">";
                         const QString close = "</" + tag + ">";
                         const int o = block.indexOf(open);
                         const int c = block.indexOf(close);
                         if (o >= 0 && c > o)
                         {
-                            block.replace(o + open.size(), c - (o + open.size()), value);
+                            block.replace(o + open.size(),
+                                          c - (o + open.size()), val);
                         }
                         else
                         {
-                            // Insert the element just before </node>.
-                            const int end = block.indexOf("</node>");
-                            if (end > 0)
-                            {
-                                const QString line = "\t\t\t" + open + value + close + "\n\t\t";
-                                block.insert(end, line);
-                            }
+                            // Insert before </node>.
+                            const int end = block.lastIndexOf("</node>");
+                            if (end >= 0)
+                                block.insert(end, "\t\t\t" + open + val + close + "\n\t\t");
                         }
                     };
 
-                    const QString size_val = QString("%1 %2")
-                        .arg(req.world_size_m, 0, 'f', 6)
-                        .arg(req.world_size_m, 0, 'f', 6);
-                    const QString hs_val = QString::number(height_scale, 'f', 6);
-                    replaceOrInsert("size", size_val);
-                    replaceOrInsert("height_scale", hs_val);
-                    replaceOrInsert("order", "0");
+                    patchTag("size",         size_val);
+                    patchTag("height_scale", hs_val);
 
-                    xml.replace(block_start, block_end - block_start, block);
+                    xml.replace(block_start,
+                                block_end + 7 - block_start,
+                                block);
 
                     QFile wfw(world_path);
-                    if (wfw.open(QIODevice::WriteOnly | QIODevice::Truncate | QIODevice::Text))
+                    if (wfw.open(QIODevice::WriteOnly | QIODevice::Truncate
+                                 | QIODevice::Text))
                     {
                         wfw.write(xml.toUtf8());
                         wfw.close();
                         if (log)
-                            log(QString("[Terrain] Patched world XML: size=%1, height_scale=%2")
+                            log(QString("[Terrain] Patched world XML — "
+                                        "size=%1, height_scale=%2. Reloading...")
                                     .arg(size_val).arg(hs_val));
-                        // Reload so the editor picks up the patched values.
                         World::reloadWorld();
                     }
                     else if (log)
                     {
-                        log("[Terrain] WARNING: failed to write patched world XML.");
+                        log("[Terrain] WARNING: could not write patched world XML.");
                     }
                 }
+                else if (log)
+                {
+                    log("[Terrain] WARNING: could not locate node block bounds in XML.");
+                }
             }
+        }
+        else if (log)
+        {
+            log(QString("[Terrain] WARNING: could not open world file: %1")
+                    .arg(world_path));
         }
     }
     else if (log)
     {
-        log("[Terrain] WARNING: World::saveWorld failed or world path empty; "
-            "LandscapeLayerMap Size may show the default.");
+        log(QString("[Terrain] WARNING: world path not found (%1).")
+                .arg(world_path.isEmpty() ? vworld : world_path));
     }
 
     TerrainBuildReport report;
