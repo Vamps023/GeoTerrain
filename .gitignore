@@ -8,6 +8,17 @@ build/
 *.obj
 *.o
 
+# Plugin build package output
+BuildPackage/Output/
+
+# Local terrain export data (large GeoTIFFs, never commit)
+GeoTerrainExport/
+GatheredExport/
+*.tif
+*.tiff
+*.r16
+*.lmap
+
 # CMake generated
 CMakeCache.txt
 CMakeFiles/

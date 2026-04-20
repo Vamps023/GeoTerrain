@@ -7,6 +7,7 @@
 #include <QLabel>
 #include <QPushButton>
 #include <QScrollArea>
+#include <QToolButton>
 #include <QVBoxLayout>
 
 SourceSettingsSection::SourceSettingsSection(QWidget* parent)
@@ -55,8 +56,29 @@ SourceSettingsSection::SourceSettingsSection(QWidget* parent)
     combo_dem_source_->addItem("Local GeoTIFF file", 6);
     addRow(dem_gl, "DEM Source:", combo_dem_source_);
 
+    auto* api_row = new QHBoxLayout();
     edit_api_key_ = new QLineEdit(inner);
-    addRow(dem_gl, "API Key:", edit_api_key_);
+    edit_api_key_->setEchoMode(QLineEdit::Password);
+    edit_api_key_->setPlaceholderText("Enter OpenTopography API key...");
+    btn_toggle_api_key_ = new QToolButton(inner);
+    btn_toggle_api_key_->setText("Show");
+    btn_toggle_api_key_->setCheckable(true);
+    btn_toggle_api_key_->setFixedWidth(44);
+    api_row->addWidget(edit_api_key_);
+    api_row->addWidget(btn_toggle_api_key_);
+    connect(btn_toggle_api_key_, &QToolButton::toggled, this, [this](bool checked)
+    {
+        edit_api_key_->setEchoMode(checked ? QLineEdit::Normal : QLineEdit::Password);
+        btn_toggle_api_key_->setText(checked ? "Hide" : "Show");
+    });
+    auto* api_widget = new QWidget(inner);
+    auto* api_widget_layout = new QHBoxLayout(api_widget);
+    api_widget_layout->setContentsMargins(0, 0, 0, 0);
+    auto* api_lbl = new QLabel("API Key:", inner);
+    api_lbl->setFixedWidth(120);
+    api_widget_layout->addWidget(api_lbl);
+    api_widget_layout->addLayout(api_row);
+    dem_gl->addWidget(api_widget);
 
     auto* local_row = new QHBoxLayout();
     edit_local_tiff_ = new QLineEdit(inner);

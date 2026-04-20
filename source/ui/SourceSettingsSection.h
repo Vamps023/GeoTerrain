@@ -2,6 +2,7 @@
 
 #include <QComboBox>
 #include <QLineEdit>
+#include <QToolButton>
 #include <QWidget>
 
 class SourceSettingsSection : public QWidget
@@ -28,6 +29,7 @@ signals:
 private:
     QComboBox* combo_dem_source_ = nullptr;
     QLineEdit* edit_api_key_ = nullptr;
+    QToolButton* btn_toggle_api_key_ = nullptr;
     QLineEdit* edit_local_tiff_ = nullptr;
     QLineEdit* edit_tms_url_ = nullptr;
     QLineEdit* edit_overpass_url_ = nullptr;
