@@ -5,9 +5,9 @@ setlocal
 
 set PROJECT_ROOT=%~dp0
 set BUILD_DIR=%PROJECT_ROOT%build
-set DEPLOY_DIR=C:\Users\snare.ext\Documents\UNIGINE Projects\unigine_project_3\bin\plugins\Vamps\GeoTerrain
-set UNIGINE_BIN=C:\Users\snare.ext\Documents\UNIGINE Projects\unigine_project_3\bin
-set OSGEO4W_BIN=C:\Users\snare.ext\AppData\Local\Programs\OSGeo4W\bin
+set DEPLOY_DIR=D:\Unigine\unigine_project\bin\plugins\Vamps\GeoTerrain
+set UNIGINE_BIN=D:\Unigine\unigine_project\bin
+set OSGEO4W_BIN=C:\Users\nares\AppData\Local\Programs\OSGeo4W\bin
 set TARGET_NAME=GeoTerrain
 set BINARY_NAME=%TARGET_NAME%_editorplugin_double_x64
 
@@ -28,7 +28,7 @@ if not exist "%PROJECT_ROOT%third_party\nlohmann\json.hpp" (
 
 REM Setup VS2022
 echo Setting up VS2022 Developer Command Prompt...
-call "C:\Program Files\Microsoft Visual Studio\2022\Community\Common7\Tools\VsDevCmd.bat" -arch=x64 -host_arch=x64 >nul 2>&1
+call "C:\Program Files (x86)\Microsoft Visual Studio\2022\BuildTools\Common7\Tools\VsDevCmd.bat" -arch=x64 -host_arch=x64 >nul 2>&1
 echo VS2022 initialized.
 
 cd /d "%BUILD_DIR%"

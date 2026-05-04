@@ -23,12 +23,12 @@ set(Qt5_DIR "C:/Qt/Qt5.12.3/5.12.3/msvc2017_64/lib/cmake/Qt5")
 find_package(Qt5 REQUIRED COMPONENTS Core Gui Widgets Network)
 
 # Unigine SDK
-set(UNIGINE_SDK_DIR "C:/Users/snare.ext/AppData/Local/unigine/browser/sdks/sim_windows_2.18.0.1_bin")
+set(UNIGINE_SDK_DIR "C:/Users/nares/AppData/Local/unigine/browser/sdks/sim_windows_2.18.1_bin")
 set(UNIGINE_INCLUDE_DIR "${UNIGINE_SDK_DIR}/include")
 set(UNIGINE_LIB_DIR "${UNIGINE_SDK_DIR}/lib")
 
 # Deploy path
-set(DEPLOY_DIR "C:/Users/snare.ext/Documents/UNIGINE Projects/unigine_project_3/bin/plugins/${vendor_name}/${target_name}")
+set(DEPLOY_DIR "D:/Unigine/unigine_project/bin/plugins/${vendor_name}/${target_name}")
 set(LOCAL_RUNTIME_DIR "${CMAKE_BINARY_DIR}/bin")
 
 set(binary_name ${target_name}_editorplugin)
@@ -36,15 +36,15 @@ string(APPEND binary_name "_double")
 string(APPEND binary_name "_x64")
 
 # GDAL (set GDAL_DIR or provide paths here)
-set(OSGEO4W_DIR "C:/Users/snare.ext/AppData/Local/Programs/OSGeo4W")
-set(QGIS_ROOT "C:/Users/snare.ext/Documents/Sogeclair Rail Simulation/Track Editor/cots/qgis" CACHE PATH "QGIS installation root")
+set(OSGEO4W_DIR "C:/Users/nares/AppData/Local/Programs/OSGeo4W")
+set(QGIS_ROOT "C:/Users/nares/Documents/Sogeclair Rail Simulation/Track Editor/cots/qgis" CACHE PATH "QGIS installation root")
 
-set(GDAL_INCLUDE_DIR "${OSGEO4W_DIR}/include" CACHE PATH "GDAL include directory")
-set(GDAL_LIB        "${OSGEO4W_DIR}/lib/gdal_i.lib" CACHE FILEPATH "GDAL import library")
+set(GDAL_INCLUDE_DIR "${CMAKE_CURRENT_SOURCE_DIR}/third_party/gdal/include" CACHE PATH "GDAL include directory")
+set(GDAL_LIB        "${CMAKE_CURRENT_SOURCE_DIR}/third_party/gdal/lib/gdal_i.lib" CACHE FILEPATH "GDAL import library")
 
 # libcurl
-set(CURL_INCLUDE_DIR "${OSGEO4W_DIR}/include" CACHE PATH "libcurl include directory")
-set(CURL_LIB        "${OSGEO4W_DIR}/lib/libcurl_imp.lib" CACHE FILEPATH "libcurl import library")
+set(CURL_INCLUDE_DIR "${CMAKE_CURRENT_SOURCE_DIR}/third_party/curl/include" CACHE PATH "libcurl include directory")
+set(CURL_LIB        "${CMAKE_CURRENT_SOURCE_DIR}/third_party/curl/lib/libcurl_imp.lib" CACHE FILEPATH "libcurl import library")
 
 # nlohmann/json (header-only)
 set(JSON_INCLUDE_DIR "${CMAKE_CURRENT_SOURCE_DIR}/third_party/nlohmann" CACHE PATH "nlohmann/json include directory")
