@@ -687,15 +687,23 @@ Result<TerrainBuildReport> TerrainBuilder::build(const TerrainBuildRequest& requ
                 .arg(world_path.isEmpty() ? vworld : world_path));
     }
 
+    // Capture the actual size UNIGINE is using — this may differ from
+    // req.world_size_m due to internal snapping or the .lmap metadata.
+    // For multi-tile placement we need this exact value to avoid seams.
+    const Math::Vec2 actual_size_vec = combined_lm.value->getSize();
+    const double actual_size_m = static_cast<double>(actual_size_vec.x);
+
     TerrainBuildReport report;
     report.lmap_path = combined_lmap_path;
     report.grid_x = combined_grid;
     report.grid_y = combined_grid;
     report.tile_resolution = tile_res;
     report.node_name = actual_node_name;
+    report.actual_size_m = actual_size_m;
     if (log)
-        log(QString("[Terrain] Build complete. Grid=%1x%1, density=%2 m/px.")
-                .arg(combined_grid).arg(density_m_per_px, 0, 'f', 2));
+        log(QString("[Terrain] Build complete. Grid=%1x%1, density=%2 m/px, actualSize=%3m")
+                .arg(combined_grid).arg(density_m_per_px, 0, 'f', 2)
+                .arg(actual_size_m, 0, 'f', 2));
     return Result<TerrainBuildReport>::ok(std::move(report));
 }
 
@@ -958,30 +966,30 @@ Result<MultiTileBuildReport> TerrainBuilder::buildMultiTile(
     // relative to the same baseline (prevents seams at tile boundaries).
     double global_min =  1e10;
     double global_max = -1e10;
-    double chunk_world_size = 0.0;
+    double nominal_chunk_size = 0.0;
     for (int ci = 0; ci < static_cast<int>(chunks.size()); ++ci)
     {
         auto ap = computeAutoParams(chunks[ci].hm_path);
         if (!ap.success) continue;
         if (ap.value.height_min_m < global_min) global_min = ap.value.height_min_m;
         if (ap.value.height_max_m > global_max) global_max = ap.value.height_max_m;
-        if (chunk_world_size <= 0.0) chunk_world_size = ap.value.world_size_m;
+        if (nominal_chunk_size <= 0.0) nominal_chunk_size = ap.value.world_size_m;
     }
     if (global_min >= global_max)
     {
         global_min = 0.0; global_max = 1000.0;
     }
-    if (chunk_world_size <= 0.0) chunk_world_size = 1000.0;
+    if (nominal_chunk_size <= 0.0) nominal_chunk_size = 1000.0;
 
-    const double full_width  = chunk_world_size * cols;
-    const double full_height = chunk_world_size * rows;
+    // We will determine the ACTUAL placement size from the first built chunk.
+    // UNIGINE may snap the LandscapeLayerMap size, so we use the reported
+    // value rather than the nominal GeoTIFF size to avoid pixel gaps.
+    double actual_chunk_size = 0.0;
 
     if (log)
-        log(QString("[MultiTile] Chunk size=%1m, full mosaic=%2x%3m, "
-                    "elevation=%4..%5m")
-                .arg(chunk_world_size, 0, 'f', 1)
-                .arg(full_width, 0, 'f', 1)
-                .arg(full_height, 0, 'f', 1)
+        log(QString("[MultiTile] Nominal chunk size=%1m, grid=%2x%3, elevation=%4..%5m")
+                .arg(nominal_chunk_size, 0, 'f', 1)
+                .arg(cols).arg(rows)
                 .arg(global_min, 0, 'f', 2)
                 .arg(global_max, 0, 'f', 2));
 
@@ -1002,22 +1010,13 @@ Result<MultiTileBuildReport> TerrainBuilder::buildMultiTile(
         const int col = chunk_idx % cols;
         const int row = chunk_idx / cols;
 
-        // World-space offset: origin at mosaic centre (0,0).
-        // Col 0 = west (-X), col N = east (+X).
-        // Row 0 = south (bottom), row max = north (top).
-        // UNIGINE Y increases northward, so row 0 → south (-Y), row max → north (+Y).
-        const double offset_x =  (col - cols * 0.5 + 0.5) * chunk_world_size;
-        const double offset_y =  (row - rows * 0.5 + 0.5) * chunk_world_size;
-
         const QString lmap_name =
             QString("chunk_%1_%2x%3.lmap").arg(chunk_idx).arg(col).arg(row);
         const QString lmap_path = req.output_lmap_folder + "/" + lmap_name;
 
         if (log)
-            log(QString("[MultiTile] Chunk %1 -> col=%2 row=%3 offset=(%4,%5) -> %6")
+            log(QString("[MultiTile] Chunk %1 -> col=%2 row=%3 -> %4")
                     .arg(chunk_idx).arg(col).arg(row)
-                    .arg(offset_x, 0, 'f', 1)
-                    .arg(offset_y, 0, 'f', 1)
                     .arg(lmap_name));
 
         TerrainBuildRequest tile_req;
@@ -1026,7 +1025,8 @@ Result<MultiTileBuildReport> TerrainBuilder::buildMultiTile(
         tile_req.output_lmap_path = lmap_path;
         tile_req.height_min_m     = global_min;
         tile_req.height_max_m     = global_max;
-        tile_req.world_size_m     = chunk_world_size;
+        // Force every chunk to the same nominal size so they align edge-to-edge.
+        tile_req.world_size_m     = nominal_chunk_size;
 
         auto result = build(tile_req, log);
         if (!result.success)
@@ -1038,6 +1038,22 @@ Result<MultiTileBuildReport> TerrainBuilder::buildMultiTile(
             ++report.chunks_failed;
             continue;
         }
+
+        // On the first successful chunk, capture the ACTUAL size UNIGINE uses.
+        // This may differ from nominal_chunk_size due to internal snapping.
+        if (actual_chunk_size <= 0.0 && result.value.actual_size_m > 0.0)
+        {
+            actual_chunk_size = result.value.actual_size_m;
+            if (log)
+                log(QString("[MultiTile] Actual placement size locked to %1m (from chunk %2)")
+                        .arg(actual_chunk_size, 0, 'f', 2).arg(chunk_idx));
+        }
+
+        // Recompute offset using the actual size if available.
+        const double placement_size = (actual_chunk_size > 0.0)
+            ? actual_chunk_size : nominal_chunk_size;
+        const double final_offset_x = (col - cols * 0.5 + 0.5) * placement_size;
+        const double final_offset_y = (row - rows * 0.5 + 0.5) * placement_size;
 
         // Shift the node to its correct mosaic position.
         // build() spawns the LandscapeLayerMap at world origin (0,0).
@@ -1056,14 +1072,15 @@ Result<MultiTileBuildReport> TerrainBuilder::buildMultiTile(
             if (!found.empty())
             {
                 found[0]->setWorldPosition(
-                    Math::Vec3(static_cast<Math::Scalar>(offset_x),
-                               static_cast<Math::Scalar>(offset_y),
+                    Math::Vec3(static_cast<Math::Scalar>(final_offset_x),
+                               static_cast<Math::Scalar>(final_offset_y),
                                0.0));
                 if (log)
-                    log(QString("[MultiTile] Chunk %1 node '%2' moved to (%3, %4)")
+                    log(QString("[MultiTile] Chunk %1 node '%2' moved to (%3, %4) size=%5")
                             .arg(chunk_idx).arg(node_name)
-                            .arg(offset_x, 0, 'f', 1)
-                            .arg(offset_y, 0, 'f', 1));
+                            .arg(final_offset_x, 0, 'f', 1)
+                            .arg(final_offset_y, 0, 'f', 1)
+                            .arg(placement_size, 0, 'f', 2));
             }
             else if (log)
             {

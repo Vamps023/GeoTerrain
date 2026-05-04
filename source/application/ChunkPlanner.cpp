@@ -35,6 +35,12 @@ Result<ChunkPlan> ChunkPlanner::buildPlan(const GeoBounds& bounds, double chunk_
     plan.rows = std::max(1, static_cast<int>(std::ceil((bounds.north - bounds.south) / chunk_lat)));
     plan.columns = std::max(1, static_cast<int>(std::ceil((bounds.east - bounds.west) / chunk_lon)));
 
+    // Redistribute the total span evenly so every chunk has the same size.
+    // This avoids sliver chunks at the right/bottom edges that can be too
+    // small for upstream services (e.g. OpenTopography's 250 m minimum).
+    const double step_lat = (bounds.north - bounds.south) / plan.rows;
+    const double step_lon = (bounds.east  - bounds.west) / plan.columns;
+
     for (int r = 0; r < plan.rows; ++r)
     {
         for (int c = 0; c < plan.columns; ++c)
@@ -43,10 +49,10 @@ Result<ChunkPlan> ChunkPlanner::buildPlan(const GeoBounds& bounds, double chunk_
             chunk.index = plan.chunks.size();
             chunk.row = r;
             chunk.column = c;
-            chunk.bounds.south = bounds.south + r * chunk_lat;
-            chunk.bounds.north = std::min(bounds.north, chunk.bounds.south + chunk_lat);
-            chunk.bounds.west = bounds.west + c * chunk_lon;
-            chunk.bounds.east = std::min(bounds.east, chunk.bounds.west + chunk_lon);
+            chunk.bounds.south = bounds.south + r * step_lat;
+            chunk.bounds.north = bounds.south + (r + 1) * step_lat;
+            chunk.bounds.west  = bounds.west  + c * step_lon;
+            chunk.bounds.east  = bounds.west  + (c + 1) * step_lon;
             chunk.directory_name = base_output_dir + "/chunk_" + std::to_string(r) + "_" + std::to_string(c);
             plan.chunks.push_back(chunk);
         }

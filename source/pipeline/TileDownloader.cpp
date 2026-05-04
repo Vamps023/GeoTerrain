@@ -111,6 +111,10 @@ Result<RasterArtifact> TileDownloader::download(const GeoBounds& bounds, const C
     if (!out_ds)
         return Result<RasterArtifact>::fail(3, "Cannot create output raster.");
 
+    // Pre-fill with white so any missing tiles don't leave black holes.
+    for (int b = 1; b <= 3; ++b)
+        out_ds->GetRasterBand(b)->Fill(255);
+
     double gt[6] = { geo_west, (geo_east - geo_west) / out_w, 0.0, geo_north, 0.0,
                      -(geo_north - geo_south) / out_h };
     out_ds->SetGeoTransform(gt);
@@ -232,6 +236,16 @@ Result<RasterArtifact> TileDownloader::download(const GeoBounds& bounds, const C
             CSLDestroy(opts2);
             if (dst_ds)
             {
+                // Fill output with white before warping so any uncovered edge
+                // pixels (outside the source tile coverage) stay white instead
+                // of black. This prevents dark borders on the final image.
+                for (int b = 1; b <= 3; ++b)
+                {
+                    GDALRasterBand* band = dst_ds->GetRasterBand(b);
+                    band->Fill(255);
+                    band->SetNoDataValue(0);
+                }
+
                 dst_ds->SetGeoTransform(dst_gt);
                 dst_ds->SetProjection(src_ds->GetProjectionRef());
                 GDALWarpOptions* wo = GDALCreateWarpOptions();
@@ -249,6 +263,22 @@ Result<RasterArtifact> TileDownloader::download(const GeoBounds& bounds, const C
                 wo->pfnTransformer = GDALGenImgProjTransform;
                 wo->pTransformerArg = GDALCreateGenImgProjTransformer(
                     src_ds, src_ds->GetProjectionRef(), dst_ds, dst_ds->GetProjectionRef(), FALSE, 0.0, 1);
+
+                // Enable alpha blending so nodata (black) source pixels don't
+                // pollute the destination edges.
+                wo->nSrcAlphaBand = 0;
+                wo->nDstAlphaBand = 0;
+                wo->padfSrcNoDataReal = reinterpret_cast<double*>(CPLMalloc(3 * sizeof(double)));
+                wo->padfSrcNoDataImag = reinterpret_cast<double*>(CPLMalloc(3 * sizeof(double)));
+                wo->padfDstNoDataReal = reinterpret_cast<double*>(CPLMalloc(3 * sizeof(double)));
+                wo->padfDstNoDataImag = reinterpret_cast<double*>(CPLMalloc(3 * sizeof(double)));
+                for (int b = 0; b < 3; ++b)
+                {
+                    wo->padfSrcNoDataReal[b] = 0.0;  // black = transparent in source
+                    wo->padfSrcNoDataImag[b] = 0.0;
+                    wo->padfDstNoDataReal[b] = 255.0; // fallback to white
+                    wo->padfDstNoDataImag[b] = 0.0;
+                }
 
                 GDALWarpOperation wop;
                 if (wop.Initialize(wo) == CE_None)

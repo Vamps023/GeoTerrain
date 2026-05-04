@@ -53,7 +53,8 @@ struct TerrainBuildReport
     int grid_x = 0;
     int grid_y = 0;
     int tile_resolution = 0;
-    QString node_name;   // Actual UNIGINE node name (may be deduplicated)
+    QString node_name;        // Actual UNIGINE node name (may be deduplicated)
+    double actual_size_m = 0; // Size UNIGINE reports after setPath (may differ from request)
 };
 
 // Request for building a full multi-chunk terrain from gathered folders.
