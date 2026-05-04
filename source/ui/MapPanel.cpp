@@ -1,10 +1,5 @@
 #include "MapPanel.h"
 
-#ifndef _USE_MATH_DEFINES
-#define _USE_MATH_DEFINES
-#endif
-#include <cmath>
-
 #include <QBrush>
 #include <QFont>
 #include <QFontMetrics>
@@ -17,10 +12,6 @@
 #include <QWheelEvent>
 
 #include <algorithm>
-
-#ifndef M_PI
-#define M_PI 3.14159265358979323846
-#endif
 
 MapPanel::MapPanel(QWidget* parent)
     : QWidget(parent)
@@ -158,19 +149,19 @@ QPointF MapPanel::latLonToWorld(double lat, double lon) const
 {
     const double n = std::pow(2.0, zoom_);
     const double tx = (lon + 180.0) / 360.0 * n;
-    const double lat_r = lat * M_PI / 180.0;
-    const double ty = (1.0 - std::log(std::tan(lat_r) + 1.0 / std::cos(lat_r)) / M_PI) / 2.0 * n;
-    return QPointF(tx * TILE_SIZE, ty * TILE_SIZE);
+    const double lat_r = lat * 3.14159265358979323846 / 180.0;
+    const double ty = (1.0 - std::log(std::tan(lat_r) + 1.0 / std::cos(lat_r)) / 3.14159265358979323846) / 2.0 * n;
+    return QPointF(tx * kTileSize, ty * kTileSize);
 }
 
 void MapPanel::worldToLatLon(double wx, double wy, double& lat, double& lon) const
 {
     const double n = std::pow(2.0, zoom_);
-    const double tx = wx / TILE_SIZE;
-    const double ty = wy / TILE_SIZE;
+    const double tx = wx / kTileSize;
+    const double ty = wy / kTileSize;
     lon = tx / n * 360.0 - 180.0;
-    const double sinh_val = std::sinh(M_PI * (1.0 - 2.0 * ty / n));
-    lat = std::atan(sinh_val) * 180.0 / M_PI;
+    const double sinh_val = std::sinh(3.14159265358979323846 * (1.0 - 2.0 * ty / n));
+    lat = std::atan(sinh_val) * 180.0 / 3.14159265358979323846;
 }
 
 QPointF MapPanel::worldToWidget(double world_x, double world_y) const
@@ -224,10 +215,10 @@ void MapPanel::logImageFormats()
 void MapPanel::requestVisibleTiles()
 {
     const int max_tile = static_cast<int>(std::pow(2.0, zoom_)) - 1;
-    const int tile_x0 = std::max(0, static_cast<int>(std::floor(view_origin_x_ / TILE_SIZE)));
-    const int tile_y0 = std::max(0, static_cast<int>(std::floor(view_origin_y_ / TILE_SIZE)));
-    const int tile_x1 = std::min(max_tile, static_cast<int>(std::floor((view_origin_x_ + width()) / TILE_SIZE)));
-    const int tile_y1 = std::min(max_tile, static_cast<int>(std::floor((view_origin_y_ + height()) / TILE_SIZE)));
+    const int tile_x0 = std::max(0, static_cast<int>(std::floor(view_origin_x_ / kTileSize)));
+    const int tile_y0 = std::max(0, static_cast<int>(std::floor(view_origin_y_ / kTileSize)));
+    const int tile_x1 = std::min(max_tile, static_cast<int>(std::floor((view_origin_x_ + width()) / kTileSize)));
+    const int tile_y1 = std::min(max_tile, static_cast<int>(std::floor((view_origin_y_ + height()) / kTileSize)));
 
     for (int ty = tile_y0; ty <= tile_y1; ++ty)
     {
@@ -319,10 +310,10 @@ void MapPanel::paintEvent(QPaintEvent*)
     p.fillRect(rect(), QColor(30, 30, 30));
 
     const int max_tile = static_cast<int>(std::pow(2.0, zoom_)) - 1;
-    const int tile_x0 = static_cast<int>(std::floor(view_origin_x_ / TILE_SIZE));
-    const int tile_y0 = static_cast<int>(std::floor(view_origin_y_ / TILE_SIZE));
-    const int tile_x1 = static_cast<int>(std::floor((view_origin_x_ + width()) / TILE_SIZE));
-    const int tile_y1 = static_cast<int>(std::floor((view_origin_y_ + height()) / TILE_SIZE));
+    const int tile_x0 = static_cast<int>(std::floor(view_origin_x_ / kTileSize));
+    const int tile_y0 = static_cast<int>(std::floor(view_origin_y_ / kTileSize));
+    const int tile_x1 = static_cast<int>(std::floor((view_origin_x_ + width()) / kTileSize));
+    const int tile_y1 = static_cast<int>(std::floor((view_origin_y_ + height()) / kTileSize));
 
     for (int ty = tile_y0; ty <= tile_y1; ++ty)
     {
@@ -332,20 +323,20 @@ void MapPanel::paintEvent(QPaintEvent*)
             const int cy = std::max(0, std::min(ty, max_tile));
             const QString key = tileKey(zoom_, cx, cy);
 
-            const int wx = static_cast<int>(std::round(tx * TILE_SIZE - view_origin_x_));
-            const int wy = static_cast<int>(std::round(ty * TILE_SIZE - view_origin_y_));
+            const int wx = static_cast<int>(std::round(tx * kTileSize - view_origin_x_));
+            const int wy = static_cast<int>(std::round(ty * kTileSize - view_origin_y_));
 
             if (QPixmap* cached = tile_cache_.object(key))
             {
-                p.drawPixmap(wx, wy, TILE_SIZE, TILE_SIZE, *cached);
+                p.drawPixmap(wx, wy, kTileSize, kTileSize, *cached);
             }
             else
             {
-                p.fillRect(wx, wy, TILE_SIZE, TILE_SIZE, QColor(50, 50, 55));
+                p.fillRect(wx, wy, kTileSize, kTileSize, QColor(50, 50, 55));
                 p.setPen(QColor(70, 70, 75));
-                p.drawRect(wx, wy, TILE_SIZE - 1, TILE_SIZE - 1);
+                p.drawRect(wx, wy, kTileSize - 1, kTileSize - 1);
                 p.setPen(QColor(100, 100, 110));
-                p.drawText(QRect(wx, wy, TILE_SIZE, TILE_SIZE), Qt::AlignCenter,
+                p.drawText(QRect(wx, wy, kTileSize, kTileSize), Qt::AlignCenter,
                            QString("%1/%2/%3").arg(zoom_).arg(cx).arg(cy));
             }
         }

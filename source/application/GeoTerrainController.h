@@ -1,15 +1,15 @@
 #pragma once
 
-#include "../domain/GenerationTypes.h"
-#include "ExportCoordinator.h"
-#include "TerrainBuilder.h"
+#include "domain/GenerationTypes.h"
 
 #include <QObject>
 #include <QString>
 
 class AsyncJob;
+class ExportCoordinator;
 class GeoTerrainPanel;
 class GenerationCoordinator;
+class TerrainBuilder;
 
 class GeoTerrainController : public QObject
 {
@@ -49,8 +49,8 @@ private:
     GeoTerrainPanel* panel_ = nullptr;
     GenerationCoordinator* generation_ = nullptr;
     AsyncJob* job_ = nullptr;
-    ExportCoordinator export_;
-    TerrainBuilder terrain_builder_;
+    ExportCoordinator* export_ = nullptr;
+    TerrainBuilder* terrain_builder_ = nullptr;
     QString active_job_tag_;
     GeoBounds current_bounds_;
     GeoBounds layer_extent_;

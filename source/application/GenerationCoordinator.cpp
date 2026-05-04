@@ -5,9 +5,9 @@
 #include "pipeline/OSMParser.h"
 #include "pipeline/ShapefileExporter.h"
 #include "pipeline/TileDownloader.h"
-#include "../domain/Validation.h"
-#include "../infrastructure/ManifestWriter.h"
-#include "../infrastructure/RunContext.h"
+#include "domain/Validation.h"
+#include "infrastructure/ManifestWriter.h"
+#include "infrastructure/RunContext.h"
 #include "ChunkPlanner.h"
 
 #include <QDir>

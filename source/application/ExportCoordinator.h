@@ -1,6 +1,6 @@
 #pragma once
 
-#include "../domain/Result.h"
+#include "domain/Result.h"
 
 #include <QString>
 #include <functional>

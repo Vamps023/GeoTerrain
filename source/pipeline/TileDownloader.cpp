@@ -1,9 +1,6 @@
 #include "pipeline/TileDownloader.h"
 #include "infrastructure/GdalUtils.h"
 
-#ifndef _USE_MATH_DEFINES
-#define _USE_MATH_DEFINES
-#endif
 #include <cmath>
 
 #include <gdal_priv.h>
@@ -81,7 +78,7 @@ Result<RasterArtifact> TileDownloader::download(const GeoBounds& bounds, const C
 
     report(context, "Starting tile download (zoom=" + std::to_string(config.zoom_level) + ")...", 0);
 
-    constexpr int TILE_SIZE = 256;
+    constexpr int kTileSize = 256;
     const int zoom = config.zoom_level;
     const TileCoord tl = latLonToTile(bounds.north, bounds.west, zoom);
     const TileCoord br = latLonToTile(bounds.south, bounds.east, zoom);
@@ -92,8 +89,8 @@ Result<RasterArtifact> TileDownloader::download(const GeoBounds& bounds, const C
     const int ty1 = br.y;
     const int num_tiles_x = tx1 - tx0 + 1;
     const int num_tiles_y = ty1 - ty0 + 1;
-    const int out_w = num_tiles_x * TILE_SIZE;
-    const int out_h = num_tiles_y * TILE_SIZE;
+    const int out_w = num_tiles_x * kTileSize;
+    const int out_h = num_tiles_y * kTileSize;
 
     const double geo_west = tileToLon(tx0, zoom);
     const double geo_north = tileToLat(ty0, zoom);
@@ -124,11 +121,11 @@ Result<RasterArtifact> TileDownloader::download(const GeoBounds& bounds, const C
     out_ds->SetProjection(wkt);
     CPLFree(wkt);
 
-    constexpr int BAND_PIXELS = TILE_SIZE * TILE_SIZE;
-    std::vector<uint8_t> band_r(BAND_PIXELS, 255u);
-    std::vector<uint8_t> band_g(BAND_PIXELS, 255u);
-    std::vector<uint8_t> band_b(BAND_PIXELS, 255u);
-    std::vector<uint8_t> band_a(BAND_PIXELS, 255u);
+    constexpr int kBandPixels = kTileSize * kTileSize;
+    std::vector<uint8_t> band_r(kBandPixels, 255u);
+    std::vector<uint8_t> band_g(kBandPixels, 255u);
+    std::vector<uint8_t> band_b(kBandPixels, 255u);
+    std::vector<uint8_t> band_a(kBandPixels, 255u);
 
     int tiles_done = 0;
     const int total_tiles = num_tiles_x * num_tiles_y;
@@ -176,8 +173,8 @@ Result<RasterArtifact> TileDownloader::download(const GeoBounds& bounds, const C
             const int nb = tds->GetRasterCount();
             if (nb == 1 || nb == 2)
             {
-                tds->GetRasterBand(1)->RasterIO(GF_Read, 0, 0, TILE_SIZE, TILE_SIZE,
-                    band_r.data(), TILE_SIZE, TILE_SIZE, GDT_Byte, 1, TILE_SIZE);
+                tds->GetRasterBand(1)->RasterIO(GF_Read, 0, 0, kTileSize, kTileSize,
+                    band_r.data(), kTileSize, kTileSize, GDT_Byte, 1, kTileSize);
                 std::copy(band_r.begin(), band_r.end(), band_g.begin());
                 std::copy(band_r.begin(), band_r.end(), band_b.begin());
             }
@@ -187,21 +184,21 @@ Result<RasterArtifact> TileDownloader::download(const GeoBounds& bounds, const C
                 const int read_bands = std::min(nb, 4);
                 for (int b = 0; b < read_bands; ++b)
                 {
-                    tds->GetRasterBand(b + 1)->RasterIO(GF_Read, 0, 0, TILE_SIZE, TILE_SIZE,
-                        planes[b], TILE_SIZE, TILE_SIZE, GDT_Byte, 1, TILE_SIZE);
+                    tds->GetRasterBand(b + 1)->RasterIO(GF_Read, 0, 0, kTileSize, kTileSize,
+                        planes[b], kTileSize, kTileSize, GDT_Byte, 1, kTileSize);
                 }
             }
             GDALClose(tds);
             VSIUnlink(vpath.c_str());
 
-            const int px = (tx - tx0) * TILE_SIZE;
-            const int py = (ty - ty0) * TILE_SIZE;
-            out_ds->GetRasterBand(1)->RasterIO(GF_Write, px, py, TILE_SIZE, TILE_SIZE,
-                band_r.data(), TILE_SIZE, TILE_SIZE, GDT_Byte, 1, TILE_SIZE);
-            out_ds->GetRasterBand(2)->RasterIO(GF_Write, px, py, TILE_SIZE, TILE_SIZE,
-                band_g.data(), TILE_SIZE, TILE_SIZE, GDT_Byte, 1, TILE_SIZE);
-            out_ds->GetRasterBand(3)->RasterIO(GF_Write, px, py, TILE_SIZE, TILE_SIZE,
-                band_b.data(), TILE_SIZE, TILE_SIZE, GDT_Byte, 1, TILE_SIZE);
+            const int px = (tx - tx0) * kTileSize;
+            const int py = (ty - ty0) * kTileSize;
+            out_ds->GetRasterBand(1)->RasterIO(GF_Write, px, py, kTileSize, kTileSize,
+                band_r.data(), kTileSize, kTileSize, GDT_Byte, 1, kTileSize);
+            out_ds->GetRasterBand(2)->RasterIO(GF_Write, px, py, kTileSize, kTileSize,
+                band_g.data(), kTileSize, kTileSize, GDT_Byte, 1, kTileSize);
+            out_ds->GetRasterBand(3)->RasterIO(GF_Write, px, py, kTileSize, kTileSize,
+                band_b.data(), kTileSize, kTileSize, GDT_Byte, 1, kTileSize);
         }
     }
 

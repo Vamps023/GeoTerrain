@@ -1,9 +1,6 @@
 #include "pipeline/DEMFetcher.h"
 #include "infrastructure/GdalUtils.h"
 
-#ifndef _USE_MATH_DEFINES
-#define _USE_MATH_DEFINES
-#endif
 #include <cmath>
 
 #include <gdal_priv.h>
@@ -220,7 +217,8 @@ Result<DemArtifact> DEMFetcher::convertToHeightmapTiff(const std::string& src_pa
         }
         else
         {
-            const double deg_per_m = 1.0 / 111320.0;
+            constexpr double kMetersPerDeg = 111320.0;
+            const double deg_per_m = 1.0 / kMetersPerDeg;
             const double pixel_deg = config.resolution_m * deg_per_m;
             pixel_deg_x = pixel_deg;
             pixel_deg_y = pixel_deg;

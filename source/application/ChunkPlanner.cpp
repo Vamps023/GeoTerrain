@@ -1,8 +1,5 @@
 #include "ChunkPlanner.h"
 
-#ifndef _USE_MATH_DEFINES
-#define _USE_MATH_DEFINES
-#endif
 #include <cmath>
 
 Result<ChunkPlan> ChunkPlanner::buildPlan(const GeoBounds& bounds, double chunk_size_km,
@@ -13,7 +10,8 @@ Result<ChunkPlan> ChunkPlanner::buildPlan(const GeoBounds& bounds, double chunk_
 
     ChunkPlan plan;
 
-    if (chunk_size_km < 1.0)
+    constexpr double kMinChunkSizeKm = 1.0;
+    if (chunk_size_km < kMinChunkSizeKm)
     {
         ChunkDefinition chunk;
         chunk.index = 0;
@@ -27,8 +25,10 @@ Result<ChunkPlan> ChunkPlanner::buildPlan(const GeoBounds& bounds, double chunk_
     }
 
     const double centre_lat = (bounds.north + bounds.south) * 0.5;
-    const double deg_per_km_lat = 1.0 / 111.0;
-    const double deg_per_km_lon = 1.0 / (111.0 * std::cos(centre_lat * M_PI / 180.0));
+    constexpr double kKmPerDegLat = 111.0;
+    constexpr double kPi = 3.14159265358979323846;
+    const double deg_per_km_lat = 1.0 / kKmPerDegLat;
+    const double deg_per_km_lon = 1.0 / (kKmPerDegLat * std::cos(centre_lat * kPi / 180.0));
     const double chunk_lat = chunk_size_km * deg_per_km_lat;
     const double chunk_lon = chunk_size_km * deg_per_km_lon;
 

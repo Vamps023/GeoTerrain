@@ -19,8 +19,9 @@ bool GeoTerrainEditorPlugin::init()
 {
     try
     {
-        // Add Qt plugin paths to ensure image format plugins (JPEG, etc.) are found
-        // This is critical for satellite tile decoding
+        // Add Qt plugin paths to ensure image format plugins (JPEG, etc.) are found.
+        // The first path is the typical Qt install location; the others probe
+        // relative to the editor binary for portable / non-standard installs.
         QCoreApplication::addLibraryPath("C:/Qt/Qt5.12.3/5.12.3/msvc2017_64/plugins");
         QCoreApplication::addLibraryPath(QCoreApplication::applicationDirPath() + "/../plugins");
         QCoreApplication::addLibraryPath(QCoreApplication::applicationDirPath() + "/plugins");

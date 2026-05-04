@@ -1,32 +1,17 @@
 #pragma once
 
 #include "domain/GeoBounds.h"
+#include "infrastructure/OverlayLoader.h"
 
 #include <QCache>
-#include <QColor>
 #include <QMap>
 #include <QNetworkAccessManager>
 #include <QNetworkReply>
 #include <QPixmap>
-#include <QPoint>
-#include <QRect>
 #include <QString>
 #include <QTimer>
 #include <QVector>
 #include <QWidget>
-
-struct OverlayRing
-{
-    QVector<QPointF> points;
-    bool closed = false;
-};
-
-struct OverlayLayer
-{
-    QString name;
-    QColor color = QColor(255, 165, 0);
-    QVector<OverlayRing> rings;
-};
 
 class MapPanel : public QWidget
 {
@@ -92,7 +77,7 @@ private:
     bool image_formats_logged_ = false;
     bool jpeg_error_logged_ = false;
 
-    static constexpr int TILE_SIZE = 256;
+    static constexpr int kTileSize = 256;
 
     double view_origin_x_ = 0.0;
     double view_origin_y_ = 0.0;

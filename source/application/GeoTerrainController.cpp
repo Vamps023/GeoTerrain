@@ -3,11 +3,11 @@
 #include "ui/GeoTerrainPanel.h"
 #include "ui/MapPanel.h"
 #include "pipeline/DEMFetcher.h"
-#include "../infrastructure/OverlayLoader.h"
-#include "../ui/GenerationSettingsSection.h"
-#include "../ui/MapSelectionSection.h"
-#include "../ui/RunConsoleSection.h"
-#include "../ui/SourceSettingsSection.h"
+#include "infrastructure/OverlayLoader.h"
+#include "ui/GenerationSettingsSection.h"
+#include "ui/MapSelectionSection.h"
+#include "ui/RunConsoleSection.h"
+#include "ui/SourceSettingsSection.h"
 #include "AsyncJob.h"
 #include "ChunkPlanner.h"
 #include "ExportCoordinator.h"
@@ -15,9 +15,6 @@
 #include "TerrainBuilder.h"
 #include "ui/TerrainBuilderSection.h"
 
-#ifndef _USE_MATH_DEFINES
-#define _USE_MATH_DEFINES
-#endif
 #include <cmath>
 
 #include <UnigineLog.h>
@@ -74,6 +71,8 @@ GeoTerrainController::GeoTerrainController(GeoTerrainPanel* panel, QObject* pare
     , panel_(panel)
     , generation_(new GenerationCoordinator(this))
     , job_(new AsyncJob(this))
+    , export_(new ExportCoordinator)
+    , terrain_builder_(new TerrainBuilder)
 {
     connect(job_, &AsyncJob::logMessage, panel_, &GeoTerrainPanel::appendLog);
     connect(job_, &AsyncJob::finished, this, &GeoTerrainController::onAsyncJobFinished);
@@ -177,8 +176,9 @@ void GeoTerrainController::updateBoundsLabel()
     // approximation with a cosine-latitude correction for longitude. Good to
     // ~0.5 % at mid-latitudes — plenty for a live preview.
     constexpr double kMetresPerDegLat = 111320.0;
+    constexpr double kPi = 3.14159265358979323846;
     const double center_lat_rad =
-        0.5 * (current_bounds_.north + current_bounds_.south) * M_PI / 180.0;
+        0.5 * (current_bounds_.north + current_bounds_.south) * kPi / 180.0;
     const double metres_per_deg_lon = kMetresPerDegLat * std::cos(center_lat_rad);
     const double width_m  = current_bounds_.width()  * metres_per_deg_lon;
     const double height_m = current_bounds_.height() * kMetresPerDegLat;
@@ -433,10 +433,9 @@ void GeoTerrainController::onExport()
     panel_->setControlsEnabled(false);
     active_job_tag_ = "Export";
 
-    ExportCoordinator coordinator;
-    job_->start([coordinator, output_dir, qgis_root](AsyncJob::LogFn log) -> AsyncJob::Outcome
+    job_->start([this, output_dir, qgis_root](AsyncJob::LogFn log) -> AsyncJob::Outcome
     {
-        auto r = coordinator.exportForUnigine(output_dir, qgis_root, log);
+        auto r = export_->exportForUnigine(output_dir, qgis_root, log);
         AsyncJob::Outcome o;
         o.success = r.success;
         o.count = r.success ? r.value : 0;
@@ -463,10 +462,9 @@ void GeoTerrainController::onGather()
     panel_->setControlsEnabled(false);
     active_job_tag_ = "Gather";
 
-    ExportCoordinator coordinator;
-    job_->start([coordinator, output_dir](AsyncJob::LogFn log) -> AsyncJob::Outcome
+    job_->start([this, output_dir](AsyncJob::LogFn log) -> AsyncJob::Outcome
     {
-        auto r = coordinator.gatherChunks(output_dir, log);
+        auto r = export_->gatherChunks(output_dir, log);
         AsyncJob::Outcome o;
         o.success = r.success;
         o.count = r.success ? r.value : 0;
@@ -490,7 +488,6 @@ void GeoTerrainController::onBuildTerrain()
 
     auto log_fn = [this](const QString& line)
     {
-        Unigine::Log::message("%s\n", line.toUtf8().constData());
         panel_->appendLog(line);
     };
 
@@ -513,7 +510,7 @@ void GeoTerrainController::onBuildTerrain()
         }
 
         panel_->appendLog("[Terrain] Starting multi-tile build...");
-        auto result = terrain_builder_.buildMultiTile(mt_req, log_fn);
+        auto result = terrain_builder_->buildMultiTile(mt_req, log_fn);
         if (result.success)
             panel_->appendLog(QString("[Terrain] Multi-tile done — %1 built, %2 failed.")
                 .arg(result.value.chunks_built).arg(result.value.chunks_failed));
@@ -537,7 +534,7 @@ void GeoTerrainController::onBuildTerrain()
         }
 
         panel_->appendLog("Building terrain...");
-        auto result = terrain_builder_.build(request, log_fn);
+        auto result = terrain_builder_->build(request, log_fn);
         if (result.success)
             panel_->appendLog(QString("[Terrain] Done \u2014 .lmap: %1 (grid %2x%3)")
                 .arg(result.value.lmap_path)

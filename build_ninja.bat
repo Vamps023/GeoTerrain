@@ -19,13 +19,6 @@ echo.
 if not exist "%BUILD_DIR%"   mkdir "%BUILD_DIR%"
 if not exist "%DEPLOY_DIR%"  mkdir "%DEPLOY_DIR%"
 
-REM Copy third_party nlohmann/json if not present
-if not exist "%PROJECT_ROOT%third_party\nlohmann\json.hpp" (
-    echo [INFO] Downloading nlohmann/json single-header...
-    if not exist "%PROJECT_ROOT%third_party\nlohmann" mkdir "%PROJECT_ROOT%third_party\nlohmann"
-    powershell -Command "Invoke-WebRequest -Uri 'https://github.com/nlohmann/json/releases/download/v3.11.3/json.hpp' -OutFile '%PROJECT_ROOT%third_party\nlohmann\json.hpp'"
-)
-
 REM Setup VS2022
 echo Setting up VS2022 Developer Command Prompt...
 call "C:\Program Files (x86)\Microsoft Visual Studio\2022\BuildTools\Common7\Tools\VsDevCmd.bat" -arch=x64 -host_arch=x64 >nul 2>&1
@@ -58,19 +51,25 @@ if exist "%DEPLOY_DIR%\GeoTerrainEditorPlugin.json" (
     echo [OK] Plugin JSON: %DEPLOY_DIR%\GeoTerrainEditorPlugin.json
 )
 
-REM Copy ALL OSGeo4W runtime DLLs into the plugin folder.
-REM gdal312.dll has ~30 transitive dependencies — copy everything to be safe.
-echo.
-echo Step 4: Copying OSGeo4W runtime DLLs to plugin folder...
-xcopy /Y /Q "%OSGEO4W_BIN%\*.dll" "%DEPLOY_DIR%\" >nul 2>&1
-if %ERRORLEVEL% EQU 0 (
-    echo [OK] OSGeo4W DLLs deployed to plugin folder
+REM Copy OSGeo4W runtime DLLs if OSGEO4W_BIN is set.
+if defined OSGEO4W_BIN (
+    echo.
+    echo Step 4: Copying OSGeo4W runtime DLLs to plugin folder...
+    xcopy /Y /Q "%OSGEO4W_BIN%\*.dll" "%DEPLOY_DIR%\" >nul 2>&1
+    if %ERRORLEVEL% EQU 0 (
+        echo [OK] OSGeo4W DLLs deployed to plugin folder
+    ) else (
+        echo [WARN] Some DLLs may not have copied correctly
+    )
 ) else (
-    echo [WARN] Some DLLs may not have copied correctly
+    echo.
+    echo [INFO] OSGEO4W_BIN not set — skipping OSGeo4W DLL copy.
 )
 
 echo.
 echo === Build Complete ===
+echo.
+echo NOTE: If OSGeo4W runtime DLLs are needed, set OSGEO4W_BIN and they will be copied.
 echo.
 echo Usage in Unigine Editor:
 echo   Menu: VampsPlugin ^> GeoTerrain Generator

@@ -1,9 +1,25 @@
 #pragma once
 
-#include "ui/MapPanel.h"
+#include "domain/GeoBounds.h"
 #include "domain/Result.h"
 
+#include <QColor>
+#include <QPointF>
 #include <QString>
+#include <QVector>
+
+struct OverlayRing
+{
+    QVector<QPointF> points;
+    bool closed = false;
+};
+
+struct OverlayLayer
+{
+    QString name;
+    QColor color = QColor(255, 165, 0);
+    QVector<OverlayRing> rings;
+};
 
 struct OverlayLoadResult
 {

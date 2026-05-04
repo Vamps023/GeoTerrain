@@ -3,6 +3,8 @@
 #include <gdal_priv.h>
 #include <ogrsf_frmts.h>
 
+#include <functional>
+
 namespace
 {
 GeoBounds invalidExtent()

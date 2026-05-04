@@ -1,7 +1,7 @@
 #pragma once
 
-#include "../domain/GenerationTypes.h"
-#include "../domain/Result.h"
+#include "domain/GenerationTypes.h"
+#include "domain/Result.h"
 
 #include <string>
 

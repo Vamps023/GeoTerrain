@@ -164,8 +164,8 @@ Result<MaskArtifact> MaskGenerator::generate(const GeoBounds& bounds, const OSMP
 
     if (out_w <= 0 || out_h <= 0)
     {
-        constexpr double DEG_PER_M = 1.0 / 111320.0;
-        const double pixel_deg = config.resolution_m * DEG_PER_M;
+        constexpr double kMetersPerDeg = 111320.0;
+        const double pixel_deg = config.resolution_m / kMetersPerDeg;
         out_w = std::max(1, static_cast<int>(std::ceil(bounds.width() / pixel_deg)));
         out_h = std::max(1, static_cast<int>(std::ceil(bounds.height() / pixel_deg)));
     }
@@ -181,8 +181,8 @@ Result<MaskArtifact> MaskGenerator::generate(const GeoBounds& bounds, const OSMP
     const double px_deg_x = ref_bounds.width() / out_w;
     const double px_deg_y = ref_bounds.height() / out_h;
     const double px_deg = std::min(px_deg_x, px_deg_y);
-    constexpr double DEG_PER_M = 1.0 / 111320.0;
-    const int road_radius_px = std::max(1, static_cast<int>(config.road_width_m * DEG_PER_M / px_deg * 0.5));
+    constexpr double kMetersPerDeg = 111320.0;
+    const int road_radius_px = std::max(1, static_cast<int>(config.road_width_m / kMetersPerDeg / px_deg * 0.5));
 
     const int total_ways = static_cast<int>(osm.ways.size());
     for (int i = 0; i < total_ways; ++i)

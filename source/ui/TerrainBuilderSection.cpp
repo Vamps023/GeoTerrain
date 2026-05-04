@@ -85,8 +85,8 @@ TerrainBuilderSection::TerrainBuilderSection(QWidget* parent)
 
     auto* mt_hint = new QLabel(
         "Point to the heightmap/ and albedo/ folders from Gather. "
-        "Files must be named chunk_N_heightmap.tif / chunk_N_albedo.tif. "
-        "Each chunk becomes one aligned LandscapeLayerMap in the world.",
+        "Files must be named chunk_R_C_heightmap.tif / chunk_R_C_albedo.tif "
+        "(row and column indices). Each chunk becomes one aligned LandscapeLayerMap in the world.",
         multi_tile_widget_);
     mt_hint->setWordWrap(true);
     mt_hint->setStyleSheet("color: #9aa4ad;");

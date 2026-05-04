@@ -1,6 +1,6 @@
 #pragma once
 
-#include "../domain/GenerationTypes.h"
+#include "domain/GenerationTypes.h"
 
 #include <QObject>
 #include <memory>

@@ -725,8 +725,9 @@ PixelScaleMeters pixelScaleInMeters(GDALDataset* ds, const double gt[6])
         const int h = ds->GetRasterYSize();
         const double center_lat = gt[3] + gt[5] * (h / 2.0);
         constexpr double kPi = 3.14159265358979323846;
-        const double m_per_deg_lat = 111320.0;
-        const double m_per_deg_lon = 111320.0 * std::cos(center_lat * kPi / 180.0);
+        constexpr double kMetersPerDegLat = 111320.0;
+        const double m_per_deg_lat = kMetersPerDegLat;
+        const double m_per_deg_lon = kMetersPerDegLat * std::cos(center_lat * kPi / 180.0);
         out.px_x_m = raw_px * m_per_deg_lon;
         out.px_y_m = raw_py * m_per_deg_lat;
     }
@@ -835,19 +836,14 @@ Result<TerrainAutoParams> TerrainBuilder::computeAutoParams(const QString& heigh
 // ---------------------------------------------------------------------------
 // buildMultiTile
 //
-// Scans heightmap_folder for files named chunk_N_heightmap.tif (N=0,1,2,…)
-// and albedo_folder for chunk_N_albedo.tif. Detects the grid dimensions
-// (e.g. 9 chunks → 3x3) and builds one .lmap per chunk. Each
+// Scans heightmap_folder for files named chunk_R_C_heightmap.tif
+// and albedo_folder for chunk_R_C_albedo.tif. Detects the grid dimensions
+// from the max row/column in filenames and builds one .lmap per chunk. Each
 // LandscapeLayerMap is placed at the correct world-space X/Y offset so the
 // full mosaic tiles seamlessly without gaps or overlaps.
 //
-// World origin is the top-left corner of the full mosaic (chunk_0 = top-left,
-// chunk indices increase left-to-right then top-to-bottom, matching UNIGINE
-// editor convention where X goes East and Y goes North):
-//
-//   chunk_6  chunk_7  chunk_8      (row 2 — top in world)
-//   chunk_3  chunk_4  chunk_5
-//   chunk_0  chunk_1  chunk_2      (row 0 — bottom in world)
+// World origin is the centre of the full mosaic (matching UNIGINE
+// editor convention where X goes East and Y goes North).
 //
 // ---------------------------------------------------------------------------
 Result<MultiTileBuildReport> TerrainBuilder::buildMultiTile(
@@ -863,7 +859,7 @@ Result<MultiTileBuildReport> TerrainBuilder::buildMultiTile(
             "No world is loaded. Please create or load a world first.");
 
     // ---- Discover chunks -----------------------------------------------
-    // Expect files named chunk_N_heightmap.tif in the heightmap folder.
+    // Expect files named chunk_R_C_heightmap.tif in the heightmap folder.
     QDir hm_dir(req.heightmap_folder);
     if (!hm_dir.exists())
         return Result<MultiTileBuildReport>::fail(1,

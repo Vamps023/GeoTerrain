@@ -35,9 +35,8 @@ set(binary_name ${target_name}_editorplugin)
 string(APPEND binary_name "_double")
 string(APPEND binary_name "_x64")
 
-# GDAL (set GDAL_DIR or provide paths here)
-set(OSGEO4W_DIR "C:/Users/nares/AppData/Local/Programs/OSGeo4W")
-set(QGIS_ROOT "C:/Users/nares/Documents/Sogeclair Rail Simulation/Track Editor/cots/qgis" CACHE PATH "QGIS installation root")
+# GDAL / libcurl / nlohmann/json — vendored in third_party/
+# (OSGeo4W runtime DLLs are copied by build_ninja.bat for deployment)
 
 set(GDAL_INCLUDE_DIR "${CMAKE_CURRENT_SOURCE_DIR}/third_party/gdal/include" CACHE PATH "GDAL include directory")
 set(GDAL_LIB        "${CMAKE_CURRENT_SOURCE_DIR}/third_party/gdal/lib/gdal_i.lib" CACHE FILEPATH "GDAL import library")
