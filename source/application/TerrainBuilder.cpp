@@ -692,6 +692,7 @@ Result<TerrainBuildReport> TerrainBuilder::build(const TerrainBuildRequest& requ
     report.grid_x = combined_grid;
     report.grid_y = combined_grid;
     report.tile_resolution = tile_res;
+    report.node_name = actual_node_name;
     if (log)
         log(QString("[Terrain] Build complete. Grid=%1x%1, density=%2 m/px.")
                 .arg(combined_grid).arg(density_m_per_px, 0, 'f', 2));
@@ -1003,10 +1004,10 @@ Result<MultiTileBuildReport> TerrainBuilder::buildMultiTile(
 
         // World-space offset: origin at mosaic centre (0,0).
         // Col 0 = west (-X), col N = east (+X).
-        // GeoTIFF row 0 = north (top of image), but UNIGINE Y increases northward,
-        // so we flip: row 0 maps to +Y (north), row max maps to -Y (south).
+        // Row 0 = south (bottom), row max = north (top).
+        // UNIGINE Y increases northward, so row 0 → south (-Y), row max → north (+Y).
         const double offset_x =  (col - cols * 0.5 + 0.5) * chunk_world_size;
-        const double offset_y = -(row - rows * 0.5 + 0.5) * chunk_world_size;
+        const double offset_y =  (row - rows * 0.5 + 0.5) * chunk_world_size;
 
         const QString lmap_name =
             QString("chunk_%1_%2x%3.lmap").arg(chunk_idx).arg(col).arg(row);
@@ -1040,24 +1041,35 @@ Result<MultiTileBuildReport> TerrainBuilder::buildMultiTile(
 
         // Shift the node to its correct mosaic position.
         // build() spawns the LandscapeLayerMap at world origin (0,0).
-        // We find it by name and translate it.
-        const QString node_name = QFileInfo(lmap_path).completeBaseName()
-                                  + "_"
-                                  + QString::number(chunk_world_size / result.value.tile_resolution, 'f', 2)
-                                  + "mpx";
-        Vector<Ptr<Node>> found;
-        World::getNodesByName(node_name.toUtf8().constData(), found);
-        if (!found.empty())
+        // We find it by the actual node name it reported and translate it.
+        const QString& node_name = result.value.node_name;
+        if (node_name.isEmpty())
         {
-            found[0]->setWorldPosition(
-                Math::Vec3(static_cast<Math::Scalar>(offset_x),
-                           static_cast<Math::Scalar>(offset_y),
-                           0.0));
+            if (log)
+                log(QString("[MultiTile] WARNING: chunk %1 returned empty node name")
+                        .arg(chunk_idx));
         }
-        else if (log)
+        else
         {
-            log(QString("[MultiTile] WARNING: could not find node '%1' to reposition")
-                    .arg(node_name));
+            Vector<Ptr<Node>> found;
+            World::getNodesByName(node_name.toUtf8().constData(), found);
+            if (!found.empty())
+            {
+                found[0]->setWorldPosition(
+                    Math::Vec3(static_cast<Math::Scalar>(offset_x),
+                               static_cast<Math::Scalar>(offset_y),
+                               0.0));
+                if (log)
+                    log(QString("[MultiTile] Chunk %1 node '%2' moved to (%3, %4)")
+                            .arg(chunk_idx).arg(node_name)
+                            .arg(offset_x, 0, 'f', 1)
+                            .arg(offset_y, 0, 'f', 1));
+            }
+            else if (log)
+            {
+                log(QString("[MultiTile] WARNING: could not find node '%1' to reposition")
+                        .arg(node_name));
+            }
         }
 
         ++report.chunks_built;

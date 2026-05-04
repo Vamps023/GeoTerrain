@@ -53,6 +53,7 @@ struct TerrainBuildReport
     int grid_x = 0;
     int grid_y = 0;
     int tile_resolution = 0;
+    QString node_name;   // Actual UNIGINE node name (may be deduplicated)
 };
 
 // Request for building a full multi-chunk terrain from gathered folders.
