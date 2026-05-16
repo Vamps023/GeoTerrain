@@ -23,12 +23,12 @@ set(Qt5_DIR "C:/Qt/Qt5.12.3/5.12.3/msvc2017_64/lib/cmake/Qt5")
 find_package(Qt5 REQUIRED COMPONENTS Core Gui Widgets Network)
 
 # Unigine SDK
-set(UNIGINE_SDK_DIR "C:/Users/nares/AppData/Local/unigine/browser/sdks/sim_windows_2.18.1_bin")
+set(UNIGINE_SDK_DIR "C:/Users/snare/AppData/Local/unigine/browser/sdks/sim_windows_2.18.1_bin")
 set(UNIGINE_INCLUDE_DIR "${UNIGINE_SDK_DIR}/include")
 set(UNIGINE_LIB_DIR "${UNIGINE_SDK_DIR}/lib")
 
 # Deploy path
-set(DEPLOY_DIR "D:/Unigine/unigine_project/bin/plugins/${vendor_name}/${target_name}")
+set(DEPLOY_DIR "C:/Users/snare/Documents/UNIGINE Projects/unigine_project_3/bin/plugins/${vendor_name}/${target_name}")
 set(LOCAL_RUNTIME_DIR "${CMAKE_BINARY_DIR}/bin")
 
 set(binary_name ${target_name}_editorplugin)

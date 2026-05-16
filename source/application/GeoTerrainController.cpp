@@ -552,12 +552,21 @@ void GeoTerrainController::onProgress(int percent)
     panel_->setProgress(percent);
 }
 
-void GeoTerrainController::onAsyncJobFinished(bool /*success*/, int /*count*/, const QString& message)
+void GeoTerrainController::onAsyncJobFinished(bool success, int /*count*/, const QString& message)
 {
     panel_->appendLog(message);
-    panel_->setControlsEnabled(true);
 
     const bool chunked = panel_->mapSection()->chunkSizeKm() >= 1.0;
+
+    if (success && active_job_tag_ == "Export" && chunked)
+    {
+        active_job_tag_.clear();
+        panel_->appendLog("[Auto] Export complete — starting Gather automatically...");
+        onGather();
+        return;
+    }
+
+    panel_->setControlsEnabled(true);
     panel_->setGatherEnabled(chunked);
     active_job_tag_.clear();
 }

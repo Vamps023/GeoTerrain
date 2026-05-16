@@ -7,8 +7,12 @@
 #include <QtWidgets/QMainWindow>
 #include <QtWidgets/QMenuBar>
 #include <QCoreApplication>
+#include <QDir>
+#include <QFileInfo>
 
 #include <UnigineLog.h>
+
+#include <cpl_conv.h>
 
 using namespace UnigineEditor;
 
@@ -25,6 +29,13 @@ bool GeoTerrainEditorPlugin::init()
         QCoreApplication::addLibraryPath("C:/Qt/Qt5.12.3/5.12.3/msvc2017_64/plugins");
         QCoreApplication::addLibraryPath(QCoreApplication::applicationDirPath() + "/../plugins");
         QCoreApplication::addLibraryPath(QCoreApplication::applicationDirPath() + "/plugins");
+
+        // Point PROJ to the proj.db bundled alongside this plugin DLL so GDAL
+        // does not pick up a stale database from an old OSGeo4W installation.
+        const QString plugin_dir = QCoreApplication::applicationDirPath() + "/plugins/Vamps/GeoTerrain";
+        const QString proj_db_path = plugin_dir + "/proj.db";
+        if (QFileInfo::exists(proj_db_path))
+            CPLSetConfigOption("PROJ_DATA", plugin_dir.toUtf8().constData());
         
         geo_terrain_panel_ = std::make_unique<GeoTerrainPanel>();
 
