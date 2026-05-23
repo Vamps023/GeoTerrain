@@ -3,11 +3,18 @@
   "version": "2.0.0",
   "description": "Standalone real-world terrain data extractor and exporter",
   "private": true,
-  "main": "dist-electron/main.js",
+  "main": "electron/main.cjs",
   "author": "Vamps",
   "license": "UNLICENSED",
+  "pnpm": {
+    "onlyBuiltDependencies": [
+      "electron",
+      "esbuild"
+    ]
+  },
   "scripts": {
-    "dev": "vite",
+    "dev": "vite --open",
+    "dev:electron": "concurrently \"vite\" \"wait-on http://localhost:5173 && electron .\"",
     "build": "tsc && vite build && electron-builder",
     "build:win": "tsc && vite build && electron-builder --win",
     "build:mac": "tsc && vite build && electron-builder --mac",
@@ -17,25 +24,25 @@
     "rebuild:native": "cd electron/native && npx node-gyp rebuild"
   },
   "dependencies": {
-    "cesium": "^1.118.0",
-    "resium": "^1.17.2",
-    "zustand": "^4.5.2",
+    "clsx": "^2.1.1",
+    "lucide-react": "^0.378.0",
+    "maplibre-gl": "^5.24.0",
     "react": "^18.3.1",
     "react-dom": "^18.3.1",
     "react-router-dom": "^6.23.1",
-    "lucide-react": "^0.378.0",
-    "clsx": "^2.1.1",
-    "tailwind-merge": "^2.3.0"
+    "tailwind-merge": "^2.3.0",
+    "zustand": "^4.5.2"
   },
   "devDependencies": {
+    "@types/node": "^20.12.12",
     "@types/react": "^18.3.3",
     "@types/react-dom": "^18.3.0",
-    "@types/node": "^20.12.12",
     "@typescript-eslint/eslint-plugin": "^7.10.0",
     "@typescript-eslint/parser": "^7.10.0",
     "@vitejs/plugin-react": "^4.3.0",
     "autoprefixer": "^10.4.19",
-    "electron": "^30.0.6",
+    "concurrently": "^8.2.2",
+    "electron": "^34.0.0",
     "electron-builder": "^24.13.3",
     "eslint": "^8.57.0",
     "eslint-plugin-react-hooks": "^4.6.2",
@@ -47,8 +54,7 @@
     "tailwindcss": "^3.4.3",
     "typescript": "^5.4.5",
     "vite": "^5.2.11",
-    "vite-plugin-electron": "^0.28.7",
-    "vite-plugin-electron-renderer": "^0.14.5"
+    "wait-on": "^7.2.0"
   },
   "build": {
     "appId": "com.vamps.geoterrain-studio",
@@ -58,14 +64,16 @@
     },
     "files": [
       "dist",
-      "dist-electron",
+      "electron",
       "node_modules/cesium/Build/Cesium/**/*"
     ],
     "extraResources": [
       {
         "from": "electron/native/build/Release",
         "to": "native",
-        "filter": ["**/*"]
+        "filter": [
+          "**/*"
+        ]
       }
     ],
     "win": {
