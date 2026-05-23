@@ -1,0 +1,57 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  html, body, #root {
+    height: 100%;
+    overflow: hidden;
+  }
+
+  body {
+    font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+    background-color: #121212;
+    color: #ffffff;
+    -webkit-font-smoothing: antialiased;
+    -moz-osx-font-smoothing: grayscale;
+  }
+
+  /* Custom scrollbar for dark theme */
+  ::-webkit-scrollbar {
+    width: 6px;
+    height: 6px;
+  }
+
+  ::-webkit-scrollbar-track {
+    background: transparent;
+  }
+
+  ::-webkit-scrollbar-thumb {
+    background: #404040;
+    border-radius: 3px;
+  }
+
+  ::-webkit-scrollbar-thumb:hover {
+    background: #525252;
+  }
+
+  /* Cesium overrides for dark theme */
+  .cesium-viewer-bottom {
+    display: none !important;
+  }
+
+  .cesium-viewer-toolbar {
+    z-index: 10;
+  }
+
+  .cesium-viewer-animationContainer,
+  .cesium-viewer-timelineContainer {
+    display: none !important;
+  }
+}
+
+@layer components {
+  .panel-glass {
+    @apply bg-black/70 backdrop-blur-sm;
+  }
+}

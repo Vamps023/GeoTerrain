@@ -1,41 +1,90 @@
+# ============================================================================
+# GeoTerrain Split Architecture — .gitignore
+# Only GeoTerrainBridge/ and GeoTerrainStudio/ remain in this repo.
+# ============================================================================
+
+# ─── GeoTerrainStudio (Electron + React + TypeScript) ──────────────────────
+
+# Dependencies
+GeoTerrainStudio/node_modules/
+GeoTerrainStudio/.pnpm-store/
+
 # Build output
-build/
-*.dll
-*.exp
-*.pdb
-*.ilk
-*.obj
-*.o
+GeoTerrainStudio/dist/
+GeoTerrainStudio/dist-electron/
+GeoTerrainStudio/release/
+GeoTerrainStudio/out/
 
-# Plugin build package output
-BuildPackage/Output/
+# Native addon build
+GeoTerrainStudio/electron/native/build/
+GeoTerrainStudio/electron/native/*.node
+GeoTerrainStudio/electron/native/**/*.obj
+GeoTerrainStudio/electron/native/**/*.pdb
+GeoTerrainStudio/electron/native/**/*.ilk
 
-# Local terrain export data (large GeoTIFFs, never commit)
-GeoTerrainExport/
-GatheredExport/
+# Vite / TS cache
+GeoTerrainStudio/.vite/
+GeoTerrainStudio/*.tsbuildinfo
+
+# Logs
+GeoTerrainStudio/npm-debug.log*
+GeoTerrainStudio/yarn-debug.log*
+GeoTerrainStudio/yarn-error.log*
+GeoTerrainStudio/pnpm-debug.log*
+
+# OS / IDE
+GeoTerrainStudio/.DS_Store
+GeoTerrainStudio/Thumbs.db
+
+# ─── GeoTerrainBridge (C++ Qt UNIGINE Plugin) ──────────────────────────────
+
+# CMake / build
+GeoTerrainBridge/build/
+GeoTerrainBridge/build_bridge/
+GeoTerrainBridge/CMakeCache.txt
+GeoTerrainBridge/CMakeFiles/
+GeoTerrainBridge/cmake_install.cmake
+GeoTerrainBridge/Makefile
+GeoTerrainBridge/install_manifest.txt
+GeoTerrainBridge/CTestTestfile.cmake
+GeoTerrainBridge/_deps/
+
+# Compiled binaries
+GeoTerrainBridge/**/*.dll
+GeoTerrainBridge/**/*.exe
+GeoTerrainBridge/**/*.lib
+GeoTerrainBridge/**/*.exp
+GeoTerrainBridge/**/*.pdb
+GeoTerrainBridge/**/*.ilk
+GeoTerrainBridge/**/*.obj
+GeoTerrainBridge/**/*.o
+
+# Qt MOC / autogen
+GeoTerrainBridge/**/*_autogen/
+GeoTerrainBridge/**/moc_*.cpp
+GeoTerrainBridge/**/moc_*.h
+GeoTerrainBridge/**/qrc_*.cpp
+GeoTerrainBridge/**/ui_*.h
+
+# ─── Shared / Global ────────────────────────────────────────────────────────
+
+# Terrain data (large GeoTIFFs, never commit)
 *.tif
 *.tiff
 *.r16
+*.raw
+*.exr
 *.lmap
+*.heightmap
 
-# CMake generated
-CMakeCache.txt
-CMakeFiles/
-cmake_install.cmake
-Makefile
-install_manifest.txt
-CTestTestfile.cmake
-_deps/
+# Export folders
+GeoTerrainExport/
+GatheredExport/
+*.terrain/
 
-# Qt MOC / autogen
-*_autogen/
-moc_*.cpp
-moc_*.h
-qrc_*.cpp
-ui_*.h
-
-# VS / IDE
+# IDE
 .vs/
+.idea/
 *.user
 *.suo
 *.sdf
@@ -43,11 +92,19 @@ ui_*.h
 *.VC.db
 *.VC.opendb
 *.vcxproj.user
+.vscode/
 
 # OS
 Thumbs.db
 Desktop.ini
 .DS_Store
 
-# third_party — nlohmann json is a single header, keep it tracked
-# (no exclusion here)
+# Logs
+*.log
+
+# Temporary files
+*.tmp
+*.temp
+*.swp
+*.swo
+*~
