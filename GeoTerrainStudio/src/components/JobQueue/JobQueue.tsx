@@ -1,5 +1,5 @@
 import React, { useEffect, useState, useCallback } from 'react';
-import { Play, Square, Pause, RotateCcw, Download, CheckCircle, AlertCircle, Clock } from 'lucide-react';
+import { Play, Square, RotateCcw, Download, CheckCircle, AlertCircle, Clock } from 'lucide-react';
 import { useTerrainStore } from '../../core/store';
 import { Native, onProgressUpdate } from '../../core/ipc';
 import type { JobProgress } from '../../types/terrain';

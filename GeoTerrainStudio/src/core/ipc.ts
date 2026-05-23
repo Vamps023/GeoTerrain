@@ -54,8 +54,8 @@ export const Native = {
 export const Dialog = {
   async selectFolder(): Promise<string | null> {
     if (!isElectron()) {
-      // In web mode, return a mock path
-      return '/mock/output/path';
+      // In web mode, return null to indicate no folder selected
+      return null;
     }
     return window.electronAPI!.dialog.selectFolder();
   },
@@ -100,8 +100,9 @@ function mockPlanGeneration(bounds: GeoBounds, _profile: TerrainProfile): Genera
   const width = bounds.east - bounds.west;
   const height = bounds.north - bounds.south;
   const tiles: GenerationPlan['tiles'] = [];
-  const rows = Math.min(4, Math.max(1, Math.ceil(height * 10)));
-  const cols = Math.min(4, Math.max(1, Math.ceil(width * 10)));
+  // Calculate tiles based on actual area - use smaller multiplier for better performance
+  const rows = Math.min(4, Math.max(1, Math.ceil(height * 2)));
+  const cols = Math.min(4, Math.max(1, Math.ceil(width * 2)));
 
   for (let r = 0; r < rows; r++) {
     for (let c = 0; c < cols; c++) {
@@ -129,10 +130,10 @@ function mockPlanGeneration(bounds: GeoBounds, _profile: TerrainProfile): Genera
 function mockProgress(jobId: string): JobProgress {
   return {
     jobId,
-    state: 'downloading',
-    overallProgress: Math.random() * 0.8,
+    state: 'complete',
+    overallProgress: 1.0,
     currentTile: 'chunk_0_0',
-    tileProgress: Math.random(),
-    message: 'Downloading DEM tiles...',
+    tileProgress: 1.0,
+    message: 'Generation complete',
   };
 }

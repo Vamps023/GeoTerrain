@@ -10,6 +10,7 @@ const PRESETS: Array<{ id: ExportPreset; name: string; desc: string; icon: strin
   { id: 'unity', name: 'Unity', desc: 'RAW heightmap + splat textures', icon: 'U3D' },
   { id: 'godot', name: 'Godot', desc: 'EXR heightmap + JPG albedo', icon: 'G' },
   { id: 'generic', name: 'Generic / Custom', desc: 'GeoTIFF bundle for any engine', icon: '*' },
+  { id: 'babylon', name: 'Babylon.js', desc: 'Import all data for 3D viewport viewing', icon: 'BJS' },
 ];
 
 export const ExportPanel: React.FC = () => {
@@ -18,6 +19,9 @@ export const ExportPanel: React.FC = () => {
   const outputPath = useTerrainStore((s) => s.outputPath);
   const setOutputPath = useTerrainStore((s) => s.setOutputPath);
   const jobProgress = useTerrainStore((s) => s.jobProgress);
+  const selectedBounds = useTerrainStore((s) => s.selectedBounds);
+  const setExportedData = useTerrainStore((s) => s.setExportedData);
+  const setActiveTab = useTerrainStore((s) => s.setActiveTab);
   const [isExporting, setIsExporting] = useState(false);
   const [exportResult, setExportResult] = useState<string | null>(null);
 
@@ -34,10 +38,69 @@ export const ExportPanel: React.FC = () => {
     try {
       setIsExporting(true);
       const sessionId = `session-${Date.now()}`;
-      const result = await Native.exportPackage(sessionId, outputPath, selectedPreset);
-      setExportResult(result);
+
+      // Special handling for Babylon.js export
+      if (selectedPreset === 'babylon') {
+        // Create a mock manifest for Babylon.js 3D viewing
+        const mockManifest = {
+          version: '1.0.0',
+          createdBy: 'GeoTerrain Studio',
+          createdAt: new Date().toISOString(),
+          terrainName: 'Babylon.js Terrain',
+          description: 'Terrain for 3D viewport viewing',
+          bounds: selectedBounds || { west: 0, south: 0, east: 0.1, north: 0.1 },
+          crs: 'EPSG:4326',
+          tileGrid: {
+            rows: 1,
+            cols: 1,
+            chunkSizeM: 1000,
+            heightmapResolution: 1024,
+            albedoResolution: 1024,
+          },
+          tiles: [
+            {
+              row: 0,
+              col: 0,
+              bounds: selectedBounds || { west: 0, south: 0, east: 0.1, north: 0.1 },
+              worldOffset: { x: 0, y: 0, z: 0 },
+              files: {
+                heightmap: 'heightmap.tif',
+                albedo: 'albedo.png',
+              },
+              elevation: { min: 0, max: 100, units: 'meters' as const },
+            },
+          ],
+          sources: {
+            dem: { id: 'aws-terrain', name: 'AWS Terrain Tiles', attribution: 'AWS' },
+            imagery: { id: 'arcgis', name: 'ArcGIS World Imagery', attribution: 'Esri' },
+          },
+          exportPreset: 'babylon' as const,
+          processing: {
+            normalizeHeights: true,
+            heightScale: 1.0,
+            seamStitching: true,
+            fillNodata: true,
+            generateRoadMasks: false,
+            generateWaterMasks: false,
+            generateVegetationMasks: false,
+            generateBuildingMasks: false,
+            generateCliffMasks: false,
+            cliffThresholdDegrees: 45.0,
+          },
+        };
+
+        setExportedData(mockManifest, outputPath);
+        setExportResult(`Terrain prepared for 3D viewing. Output path: ${outputPath}`);
+        // Auto-switch to 3D view
+        setActiveTab('view3d');
+      } else {
+        // For other presets, use the native export
+        const result = await Native.exportPackage(sessionId, outputPath, selectedPreset);
+        setExportResult(`Export complete. Files saved to: ${result}`);
+      }
     } catch (err) {
       console.error('Export failed:', err);
+      setExportResult(`Export failed: ${err instanceof Error ? err.message : String(err)}`);
       alert('Export failed. See console for details.');
     } finally {
       setIsExporting(false);
@@ -95,9 +158,13 @@ export const ExportPanel: React.FC = () => {
             Output Location
           </h3>
           <div className="flex gap-2">
-            <div className="flex-1 bg-gray-800/50 border border-gray-700 rounded-lg px-3 py-2 text-sm text-gray-300 truncate">
-              {outputPath ?? 'No folder selected'}
-            </div>
+            <input
+              type="text"
+              value={outputPath ?? ''}
+              onChange={(e) => setOutputPath(e.target.value || null)}
+              placeholder="Enter output path..."
+              className="flex-1 bg-gray-800/50 border border-gray-700 rounded-lg px-3 py-2 text-sm text-gray-300 focus:outline-none focus:border-cyan-500"
+            />
             <button
               onClick={handleSelectFolder}
               className="flex items-center gap-1.5 bg-gray-700 hover:bg-gray-600 text-white text-xs py-2 px-3 rounded-lg transition-colors"
@@ -168,7 +235,10 @@ export const ExportPanel: React.FC = () => {
         {exportResult && (
           <div className="bg-green-500/10 border border-green-500/30 rounded-lg p-3">
             <p className="text-xs text-green-400">
-              ✅ Package exported to: <span className="font-mono">{exportResult}</span>
+              ✅ {exportResult}
+            </p>
+            <p className="text-[10px] text-gray-400 mt-1">
+              Note: In web mode, files are not actually written to disk. Use the Electron app for actual file export.
             </p>
           </div>
         )}

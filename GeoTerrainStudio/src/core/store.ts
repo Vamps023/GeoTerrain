@@ -1,5 +1,5 @@
 import { create } from 'zustand';
-import type { AppState, GeoBounds, TerrainProfile, GenerationPlan, JobProgress, ExportPreset } from '../types/terrain';
+import type { AppState, GeoBounds, TerrainProfile, GenerationPlan, JobProgress, ExportPreset, TerrainManifest } from '../types/terrain';
 
 const defaultProfile: TerrainProfile = {
   id: 'balanced',
@@ -39,6 +39,7 @@ export const useTerrainStore = create<AppState & {
   setOutputPath: (path: string | null) => void;
   setSelectedPreset: (preset: ExportPreset) => void;
   setActiveTab: (tab: AppState['activeTab']) => void;
+  setExportedData: (manifest: TerrainManifest | null, packagePath: string | null) => void;
   resetGeneration: () => void;
 }>((set) => ({
   // Initial state
@@ -49,6 +50,8 @@ export const useTerrainStore = create<AppState & {
   jobProgress: null,
   outputPath: null,
   selectedPreset: 'unigine',
+  exportedManifest: null,
+  exportedPackagePath: null,
   activeTab: 'map',
 
   // Actions
@@ -60,6 +63,7 @@ export const useTerrainStore = create<AppState & {
   setOutputPath: (path) => set({ outputPath: path }),
   setSelectedPreset: (preset) => set({ selectedPreset: preset }),
   setActiveTab: (tab) => set({ activeTab: tab }),
+  setExportedData: (manifest, packagePath) => set({ exportedManifest: manifest, exportedPackagePath: packagePath }),
   resetGeneration: () => set({
     generationPlan: null,
     activeJobId: null,

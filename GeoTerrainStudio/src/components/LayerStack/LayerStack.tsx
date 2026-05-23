@@ -28,13 +28,13 @@ export const LayerStack: React.FC = () => {
   };
 
   const layers = [
-    { id: 'dem', label: 'DEM (Heightmap)', icon: Mountain, active: true, color: 'text-amber-400' },
-    { id: 'imagery', label: 'Satellite Imagery', icon: Map, active: true, color: 'text-green-400' },
-    { id: 'roadMasks', label: 'Road Masks', icon: Eye, active: activeProfile.processing.generateRoadMasks, color: 'text-blue-400' },
-    { id: 'waterMasks', label: 'Water Masks', icon: Droplets, active: activeProfile.processing.generateWaterMasks, color: 'text-cyan-400' },
-    { id: 'vegetationMasks', label: 'Vegetation Masks', icon: TreePine, active: activeProfile.processing.generateVegetationMasks, color: 'text-emerald-400' },
-    { id: 'buildingMasks', label: 'Building Masks', icon: Building, active: activeProfile.processing.generateBuildingMasks, color: 'text-orange-400' },
-    { id: 'cliffMasks', label: 'Cliff Masks', icon: AlertTriangle, active: activeProfile.processing.generateCliffMasks, color: 'text-red-400' },
+    { id: 'dem', label: 'DEM (Heightmap)', icon: Mountain, active: true, color: 'text-amber-400', locked: true },
+    { id: 'imagery', label: 'Satellite Imagery', icon: Map, active: true, color: 'text-green-400', locked: true },
+    { id: 'generateRoadMasks', label: 'Road Masks', icon: Eye, active: activeProfile.processing.generateRoadMasks, color: 'text-blue-400', locked: false },
+    { id: 'generateWaterMasks', label: 'Water Masks', icon: Droplets, active: activeProfile.processing.generateWaterMasks, color: 'text-cyan-400', locked: false },
+    { id: 'generateVegetationMasks', label: 'Vegetation Masks', icon: TreePine, active: activeProfile.processing.generateVegetationMasks, color: 'text-emerald-400', locked: false },
+    { id: 'generateBuildingMasks', label: 'Building Masks', icon: Building, active: activeProfile.processing.generateBuildingMasks, color: 'text-orange-400', locked: false },
+    { id: 'generateCliffMasks', label: 'Cliff Masks', icon: AlertTriangle, active: activeProfile.processing.generateCliffMasks, color: 'text-red-400', locked: false },
   ];
 
   return (
@@ -57,11 +57,11 @@ export const LayerStack: React.FC = () => {
           return (
             <div
               key={layer.id}
-              className={`flex items-center gap-3 px-4 py-3 border-b border-gray-800 hover:bg-gray-800/50 transition-colors cursor-pointer ${
-                layer.id === 'dem' || layer.id === 'imagery' ? 'opacity-100' : ''
+              className={`flex items-center gap-3 px-4 py-3 border-b border-gray-800 transition-colors ${
+                layer.locked ? 'opacity-50 cursor-not-allowed' : 'hover:bg-gray-800/50 cursor-pointer'
               }`}
               onClick={() => {
-                if (layer.id !== 'dem' && layer.id !== 'imagery') {
+                if (!layer.locked) {
                   toggleMask(layer.id as keyof typeof activeProfile.processing);
                 }
               }}

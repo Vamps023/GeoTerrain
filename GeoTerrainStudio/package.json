@@ -24,7 +24,9 @@
     "rebuild:native": "cd electron/native && npx node-gyp rebuild"
   },
   "dependencies": {
+    "@babylonjs/core": "^7.8.1",
     "clsx": "^2.1.1",
+    "geotiff": "^2.1.3",
     "lucide-react": "^0.378.0",
     "maplibre-gl": "^5.24.0",
     "react": "^18.3.1",
@@ -42,6 +44,7 @@
     "@vitejs/plugin-react": "^4.3.0",
     "autoprefixer": "^10.4.19",
     "concurrently": "^8.2.2",
+    "cross-env": "^7.0.3",
     "electron": "^34.0.0",
     "electron-builder": "^24.13.3",
     "eslint": "^8.57.0",

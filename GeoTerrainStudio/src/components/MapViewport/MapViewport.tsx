@@ -14,8 +14,9 @@ export const MapViewport: React.FC<MapViewportProps> = ({ className }) => {
   const mapRef = useRef<maplibregl.Map | null>(null);
   const isDraggingRef = useRef(false);
   const dragStartRef = useRef<{ lng: number; lat: number } | null>(null);
+  const liveBoundsRef = useRef<GeoBounds | null>(null);
   
-  const [liveBounds, setLiveBounds] = useState<GeoBounds | null>(null);
+  const [liveBoundsState, setLiveBoundsState] = useState<GeoBounds | null>(null);
   
   const setSelectedBounds = useTerrainStore((s) => s.setSelectedBounds);
   const selectedBounds = useTerrainStore((s) => s.selectedBounds);
@@ -54,57 +55,88 @@ export const MapViewport: React.FC<MapViewportProps> = ({ className }) => {
       },
       center: [0, 20],
       zoom: 2,
-      attributionControl: true,
+      attributionControl: false,
     });
 
-    // Disable default box-zoom so Shift+drag is free for selection
+    // Disable default interactions that conflict with Shift+drag selection
     map.boxZoom.disable();
 
     map.addControl(new maplibregl.NavigationControl(), 'top-right');
     map.addControl(new maplibregl.ScaleControl(), 'bottom-left');
 
-    // Selection: Shift + drag
-    const handleMouseDown = (e: maplibregl.MapMouseEvent) => {
-      if (!e.originalEvent.shiftKey) return;
+    // Use DOM events on the canvas for reliable Shift+drag
+    const canvas = map.getCanvas();
+
+    const onMouseDown = (e: MouseEvent) => {
+      if (!e.shiftKey) return;
       e.preventDefault();
+      e.stopPropagation();
+      
+      // Disable map panning while selecting
+      map.dragPan.disable();
+      
       isDraggingRef.current = true;
-      dragStartRef.current = { lng: e.lngLat.lng, lat: e.lngLat.lat };
-      map.getCanvas().style.cursor = 'crosshair';
+      const point = new maplibregl.Point(e.offsetX, e.offsetY);
+      const lngLat = map.unproject(point);
+      dragStartRef.current = { lng: lngLat.lng, lat: lngLat.lat };
+      canvas.style.cursor = 'crosshair';
+      
+      console.log('[Map] Selection started at:', dragStartRef.current);
     };
 
-    const handleMouseMove = (e: maplibregl.MapMouseEvent) => {
+    const onMouseMove = (e: MouseEvent) => {
       if (!isDraggingRef.current || !dragStartRef.current) return;
+      e.preventDefault();
+      
+      const point = new maplibregl.Point(e.offsetX, e.offsetY);
+      const lngLat = map.unproject(point);
+      const current = { lng: lngLat.lng, lat: lngLat.lat };
       const start = dragStartRef.current;
-      const current = { lng: e.lngLat.lng, lat: e.lngLat.lat };
-      setLiveBounds({
+      
+      const bounds: GeoBounds = {
         west: Math.min(start.lng, current.lng),
         south: Math.min(start.lat, current.lat),
         east: Math.max(start.lng, current.lng),
         north: Math.max(start.lat, current.lat),
-      });
+      };
+      
+      liveBoundsRef.current = bounds;
+      setLiveBoundsState(bounds);
     };
 
-    const handleMouseUp = () => {
+    const onMouseUp = (e: MouseEvent) => {
       if (!isDraggingRef.current) return;
+      e.preventDefault();
+      
       isDraggingRef.current = false;
-      map.getCanvas().style.cursor = '';
-      if (liveBounds) {
-        setSelectedBounds(liveBounds);
+      canvas.style.cursor = '';
+      
+      // Re-enable map panning
+      map.dragPan.enable();
+      
+      if (liveBoundsRef.current) {
+        console.log('[Map] Selection finalized:', liveBoundsRef.current);
+        setSelectedBounds(liveBoundsRef.current);
       }
+      
       dragStartRef.current = null;
-      setLiveBounds(null);
+      liveBoundsRef.current = null;
+      setLiveBoundsState(null);
     };
 
-    map.on('mousedown', handleMouseDown);
-    map.on('mousemove', handleMouseMove);
-    map.on('mouseup', handleMouseUp);
+    canvas.addEventListener('mousedown', onMouseDown);
+    canvas.addEventListener('mousemove', onMouseMove);
+    canvas.addEventListener('mouseup', onMouseUp);
+    // Handle case where mouse is released outside canvas
+    window.addEventListener('mouseup', onMouseUp);
 
     mapRef.current = map;
 
     return () => {
-      map.off('mousedown', handleMouseDown);
-      map.off('mousemove', handleMouseMove);
-      map.off('mouseup', handleMouseUp);
+      canvas.removeEventListener('mousedown', onMouseDown);
+      canvas.removeEventListener('mousemove', onMouseMove);
+      canvas.removeEventListener('mouseup', onMouseUp);
+      window.removeEventListener('mouseup', onMouseUp);
       map.remove();
       mapRef.current = null;
     };
@@ -119,7 +151,7 @@ export const MapViewport: React.FC<MapViewportProps> = ({ className }) => {
     const fillLayerId = 'selection-fill';
     const outlineLayerId = 'selection-outline';
 
-    const bounds = selectedBounds || liveBounds;
+    const bounds = selectedBounds || liveBoundsState;
     
     if (bounds) {
       const geojson = {
@@ -152,7 +184,7 @@ export const MapViewport: React.FC<MapViewportProps> = ({ className }) => {
           source: sourceId,
           paint: {
             'fill-color': '#06b6d4',
-            'fill-opacity': liveBounds ? 0.15 : 0.25,
+            'fill-opacity': liveBoundsState ? 0.15 : 0.3,
           },
         });
         map.addLayer({
@@ -161,7 +193,7 @@ export const MapViewport: React.FC<MapViewportProps> = ({ className }) => {
           source: sourceId,
           paint: {
             'line-color': '#06b6d4',
-            'line-width': liveBounds ? 1.5 : 2.5,
+            'line-width': liveBoundsState ? 2 : 3,
           },
         });
       }
@@ -170,7 +202,7 @@ export const MapViewport: React.FC<MapViewportProps> = ({ className }) => {
       if (map.getLayer(outlineLayerId)) map.removeLayer(outlineLayerId);
       if (map.getSource(sourceId)) map.removeSource(sourceId);
     }
-  }, [selectedBounds, liveBounds]);
+  }, [selectedBounds, liveBoundsState]);
 
   // Update tile grid overlay
   useEffect(() => {
@@ -229,9 +261,10 @@ export const MapViewport: React.FC<MapViewportProps> = ({ className }) => {
 
   const handleClear = useCallback(() => {
     setSelectedBounds(null);
-    setLiveBounds(null);
+    setLiveBoundsState(null);
     dragStartRef.current = null;
     isDraggingRef.current = false;
+    liveBoundsRef.current = null;
   }, [setSelectedBounds]);
 
   const handlePlanGeneration = useCallback(async () => {

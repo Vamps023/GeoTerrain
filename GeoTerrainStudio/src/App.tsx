@@ -1,21 +1,24 @@
-import React from 'react';
-import { Map, Layers, Clock, Download } from 'lucide-react';
+import { Map, Layers, Clock, Download, Box } from 'lucide-react';
 import { useTerrainStore } from './core/store';
 import { MapViewport } from './components/MapViewport/MapViewport';
 import { LayerStack } from './components/LayerStack/LayerStack';
 import { JobQueue } from './components/JobQueue/JobQueue';
 import { ExportPanel } from './components/ExportPanel/ExportPanel';
+import { TerrainViewer3D } from './components/Viewer3D/TerrainViewer3D';
 
 const TABS = [
   { id: 'map' as const, label: 'Map', icon: Map },
   { id: 'layers' as const, label: 'Layers', icon: Layers },
   { id: 'jobs' as const, label: 'Jobs', icon: Clock },
   { id: 'export' as const, label: 'Export', icon: Download },
+  { id: 'view3d' as const, label: '3D View', icon: Box },
 ];
 
 function App(): JSX.Element {
   const activeTab = useTerrainStore((s) => s.activeTab);
   const setActiveTab = useTerrainStore((s) => s.setActiveTab);
+  const exportedManifest = useTerrainStore((s) => s.exportedManifest);
+  const exportedPackagePath = useTerrainStore((s) => s.exportedPackagePath);
 
   return (
     <div className="flex flex-col h-screen bg-[#121212] text-white overflow-hidden">
@@ -65,8 +68,13 @@ function App(): JSX.Element {
             <MapViewport />
           </div>
 
+          {/* 3D Viewport */}
+          <div className={`flex-1 relative ${activeTab === 'view3d' ? 'block' : 'hidden'}`}>
+            <TerrainViewer3D manifest={exportedManifest} packagePath={exportedPackagePath} />
+          </div>
+
           {/* Side Panels (Layers/Jobs/Export) */}
-          {activeTab !== 'map' && (
+          {activeTab !== 'map' && activeTab !== 'view3d' && (
             <div className="w-80 border-r border-gray-800">
               {activeTab === 'layers' && <LayerStack />}
               {activeTab === 'jobs' && <JobQueue />}
