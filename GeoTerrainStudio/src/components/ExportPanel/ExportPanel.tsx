@@ -2,7 +2,7 @@ import React, { useState } from 'react';
 import { Download, FolderOpen, FileArchive, Settings, Check } from 'lucide-react';
 import { useTerrainStore } from '../../core/store';
 import { Native, Dialog } from '../../core/ipc';
-import type { ExportPreset } from '../../types/terrain';
+import type { ExportPreset, HeightmapFormat, AlbedoFormat } from '../../types/terrain';
 
 const PRESETS: Array<{ id: ExportPreset; name: string; desc: string; icon: string }> = [
   { id: 'unigine', name: 'UNIGINE', desc: 'LandscapeLayerMap (.lmap) + materials', icon: 'U' },
@@ -16,9 +16,12 @@ const PRESETS: Array<{ id: ExportPreset; name: string; desc: string; icon: strin
 export const ExportPanel: React.FC = () => {
   const selectedPreset = useTerrainStore((s) => s.selectedPreset);
   const setSelectedPreset = useTerrainStore((s) => s.setSelectedPreset);
+  const heightmapFormat = useTerrainStore((s) => s.heightmapFormat);
+  const setHeightmapFormat = useTerrainStore((s) => s.setHeightmapFormat);
+  const albedoFormat = useTerrainStore((s) => s.albedoFormat);
+  const setAlbedoFormat = useTerrainStore((s) => s.setAlbedoFormat);
   const outputPath = useTerrainStore((s) => s.outputPath);
   const setOutputPath = useTerrainStore((s) => s.setOutputPath);
-  const jobProgress = useTerrainStore((s) => s.jobProgress);
   const selectedBounds = useTerrainStore((s) => s.selectedBounds);
   const setExportedData = useTerrainStore((s) => s.setExportedData);
   const setActiveTab = useTerrainStore((s) => s.setActiveTab);
@@ -95,7 +98,15 @@ export const ExportPanel: React.FC = () => {
         setActiveTab('view3d');
       } else {
         // For other presets, use the native export
-        const result = await Native.exportPackage(sessionId, outputPath, selectedPreset);
+        const bounds = selectedBounds || { west: 0, south: 0, east: 0.1, north: 0.1 };
+        const result = await Native.exportPackage(
+          sessionId,
+          outputPath,
+          selectedPreset,
+          bounds,
+          heightmapFormat,
+          albedoFormat
+        );
         setExportResult(`Export complete. Files saved to: ${result}`);
       }
     } catch (err) {
@@ -175,6 +186,39 @@ export const ExportPanel: React.FC = () => {
           </div>
         </div>
 
+        {/* Format Selection */}
+        <div>
+          <h3 className="text-xs font-semibold text-gray-400 uppercase tracking-wider mb-3">
+            Export Formats
+          </h3>
+          <div className="space-y-3">
+            <div className="space-y-1">
+              <label className="text-xs text-gray-400">Heightmap Format</label>
+              <select
+                value={heightmapFormat}
+                onChange={(e) => setHeightmapFormat(e.target.value as HeightmapFormat)}
+                className="w-full bg-gray-700 border border-gray-600 rounded text-sm py-1.5 px-2 text-white"
+              >
+                <option value="dem">DEM (GeoTIFF float32)</option>
+                <option value="geotiff">GeoTIFF (16-bit normalized)</option>
+                <option value="r16">R16 (Raw 16-bit)</option>
+                <option value="png">PNG (8-bit grayscale)</option>
+              </select>
+            </div>
+            <div className="space-y-1">
+              <label className="text-xs text-gray-400">Albedo Format</label>
+              <select
+                value={albedoFormat}
+                onChange={(e) => setAlbedoFormat(e.target.value as AlbedoFormat)}
+                className="w-full bg-gray-700 border border-gray-600 rounded text-sm py-1.5 px-2 text-white"
+              >
+                <option value="png">PNG (RGB)</option>
+                <option value="geotiff">GeoTIFF (RGB)</option>
+              </select>
+            </div>
+          </div>
+        </div>
+
         {/* Preset-specific Options */}
         {preset?.id === 'unigine' && (
           <div className="bg-gray-800/30 border border-gray-700 rounded-lg p-4 space-y-3">
@@ -221,9 +265,9 @@ export const ExportPanel: React.FC = () => {
         {/* Export Button */}
         <button
           onClick={handleExport}
-          disabled={!outputPath || isExporting || jobProgress?.state !== 'complete'}
+          disabled={!outputPath || isExporting}
           className={`w-full flex items-center justify-center gap-2 py-3 rounded-lg text-sm font-medium transition-colors ${
-            !outputPath || jobProgress?.state !== 'complete'
+            !outputPath
               ? 'bg-gray-700 text-gray-500 cursor-not-allowed'
               : 'bg-cyan-600 hover:bg-cyan-500 text-white'
           }`}

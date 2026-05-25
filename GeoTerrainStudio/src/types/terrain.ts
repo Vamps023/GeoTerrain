@@ -10,7 +10,14 @@ export interface ElectronAPI {
     startGeneration: (sessionId: string, plan: GenerationPlan) => Promise<string>;
     cancelGeneration: (jobId: string) => Promise<void>;
     getProgress: (jobId: string) => Promise<JobProgress>;
-    exportPackage: (sessionId: string, outputPath: string, preset: string) => Promise<string>;
+    exportPackage: (
+    sessionId: string,
+    outputPath: string,
+    preset: string,
+    bounds: GeoBounds,
+    heightmapFormat: HeightmapFormat,
+    albedoFormat: AlbedoFormat
+  ) => Promise<string>;
   };
   dialog: {
     selectFolder: () => Promise<string | null>;
@@ -97,6 +104,9 @@ export interface ProcessingOptions {
 }
 
 export type ExportPreset = 'unigine' | 'unreal' | 'unity' | 'godot' | 'generic' | 'babylon';
+
+export type HeightmapFormat = 'dem' | 'geotiff' | 'r16' | 'png';
+export type AlbedoFormat = 'png' | 'geotiff';
 
 export interface ExportPresetConfig {
   id: ExportPreset;
@@ -190,6 +200,8 @@ export interface AppState {
   // Export
   outputPath: string | null;
   selectedPreset: ExportPreset;
+  heightmapFormat: HeightmapFormat;
+  albedoFormat: AlbedoFormat;
   exportedManifest: TerrainManifest | null;
   exportedPackagePath: string | null;
 

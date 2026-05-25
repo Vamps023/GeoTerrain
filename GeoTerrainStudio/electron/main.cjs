@@ -1,6 +1,7 @@
 const { app, BrowserWindow, ipcMain, dialog, nativeTheme } = require('electron');
 const path = require('path');
 const fs = require('fs');
+const { executeExport } = require('./export-engine.cjs');
 
 // Native addon loader
 let nativeAddon = null;
@@ -145,37 +146,25 @@ ipcMain.handle('native:getProgress', async (_event, jobId) => {
   return nativeAddon.getProgress(jobId);
 });
 
-ipcMain.handle('native:exportPackage', async (_event, sessionId, outputPath, preset) => {
+ipcMain.handle('native:exportPackage', async (_event, sessionId, outputPath, preset, bounds, heightmapFormat, albedoFormat) => {
   if (!nativeAddon) {
-    console.warn('[Main] Native addon not loaded, using mock implementation');
-    // Create mock files for testing
+    console.warn('[Main] Native addon not loaded, using Node.js export engine');
     try {
-      await fs.promises.mkdir(outputPath, { recursive: true });
-
-      // Create a mock manifest.json
-      const manifest = {
-        version: '1.0.0',
+      const result = await executeExport({
         sessionId,
+        outputPath,
         preset,
-        createdAt: new Date().toISOString(),
-        files: ['heightmap.tif', 'albedo.png'],
-      };
-      await fs.promises.writeFile(
-        path.join(outputPath, 'manifest.json'),
-        JSON.stringify(manifest, null, 2)
-      );
-
-      // Create placeholder files
-      await fs.promises.writeFile(path.join(outputPath, 'heightmap.tif'), 'MOCK_HEIGHTMAP_DATA');
-      await fs.promises.writeFile(path.join(outputPath, 'albedo.png'), 'MOCK_ALBEDO_DATA');
-
-      console.log('[Main] Mock export created files in:', outputPath);
+        bounds,
+        heightmapFormat,
+        albedoFormat,
+      });
+      return result.manifestPath;
     } catch (err) {
-      console.error('[Main] Failed to create mock export files:', err);
+      console.error('[Main] Export failed:', err);
+      throw err;
     }
-    return outputPath; // Return the output path as the result
   }
-  return nativeAddon.exportPackage(sessionId, outputPath, preset);
+  return nativeAddon.exportPackage(sessionId, outputPath, preset, bounds, heightmapFormat, albedoFormat);
 });
 
 ipcMain.handle('dialog:selectFolder', async () => {

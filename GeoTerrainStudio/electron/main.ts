@@ -1,6 +1,7 @@
 import { app, BrowserWindow, ipcMain, dialog, nativeTheme } from 'electron';
 import * as path from 'path';
 import * as fs from 'fs';
+import { executeExport } from './export-engine';
 
 // Native addon loader
 let nativeAddon: any = null;
@@ -145,12 +146,25 @@ ipcMain.handle('native:getProgress', async (_event, jobId: string) => {
   return nativeAddon.getProgress(jobId);
 });
 
-ipcMain.handle('native:exportPackage', async (_event, sessionId: string, outputPath: string, preset: string) => {
+ipcMain.handle('native:exportPackage', async (_event, sessionId: string, outputPath: string, preset: string, bounds: GeoBounds, heightmapFormat: string, albedoFormat: string) => {
   if (!nativeAddon) {
-    console.warn('[Main] Native addon not loaded, using mock implementation');
-    return outputPath; // Return the output path as the result
+    console.warn('[Main] Native addon not loaded, using Node.js export engine');
+    try {
+      const result = await executeExport({
+        sessionId,
+        outputPath,
+        preset,
+        bounds,
+        heightmapFormat: heightmapFormat as any,
+        albedoFormat: albedoFormat as any,
+      });
+      return result.manifestPath;
+    } catch (err) {
+      console.error('[Main] Export failed:', err);
+      throw err;
+    }
   }
-  return nativeAddon.exportPackage(sessionId, outputPath, preset);
+  return nativeAddon.exportPackage(sessionId, outputPath, preset, bounds, heightmapFormat, albedoFormat);
 });
 
 ipcMain.handle('dialog:selectFolder', async () => {

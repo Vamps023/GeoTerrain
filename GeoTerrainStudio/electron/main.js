@@ -39,6 +39,8 @@ Object.defineProperty(exports, "__esModule", { value: true });
 var electron_1 = require("electron");
 var path = require("path");
 var fs = require("fs");
+var export_engine_cjs_1 = require("./export-engine.cjs");
+var executeExport = export_engine_cjs_1.executeExport;
 // Native addon loader
 var nativeAddon = null;
 try {
@@ -178,13 +180,33 @@ electron_1.ipcMain.handle('native:getProgress', function (_event, jobId) { retur
         return [2 /*return*/, nativeAddon.getProgress(jobId)];
     });
 }); });
-electron_1.ipcMain.handle('native:exportPackage', function (_event, sessionId, outputPath, preset) { return __awaiter(void 0, void 0, void 0, function () {
+electron_1.ipcMain.handle('native:exportPackage', function (_event, sessionId, outputPath, preset, bounds, heightmapFormat, albedoFormat) { return __awaiter(void 0, void 0, void 0, function () {
+    var err_1;
     return __generator(this, function (_a) {
-        if (!nativeAddon) {
-            console.warn('[Main] Native addon not loaded, using mock implementation');
-            return [2 /*return*/, outputPath]; // Return the output path as the result
+        switch (_a.label) {
+            case 0:
+                if (!!nativeAddon) return [3 /*break*/, 5];
+                console.warn('[Main] Native addon not loaded, using Node.js export engine');
+                _a.label = 1;
+            case 1:
+                _a.trys.push([1, 3, , 4]);
+                return [4 /*yield*/, executeExport({
+                        sessionId: sessionId,
+                        outputPath: outputPath,
+                        preset: preset,
+                        bounds: bounds,
+                        heightmapFormat: heightmapFormat,
+                        albedoFormat: albedoFormat,
+                    })];
+            case 2: return [2 /*return*/, (_a.sent()).manifestPath];
+            case 3:
+                err_1 = _a.sent();
+                console.error('[Main] Export failed:', err_1);
+                throw err_1;
+            case 4: return [3 /*break*/, 6];
+            case 5: return [2 /*return*/, nativeAddon.exportPackage(sessionId, outputPath, preset, bounds, heightmapFormat, albedoFormat)];
+            case 6: return [2 /*return*/];
         }
-        return [2 /*return*/, nativeAddon.exportPackage(sessionId, outputPath, preset)];
     });
 }); });
 electron_1.ipcMain.handle('dialog:selectFolder', function () { return __awaiter(void 0, void 0, void 0, function () {

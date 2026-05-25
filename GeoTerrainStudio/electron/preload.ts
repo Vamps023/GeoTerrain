@@ -8,7 +8,14 @@ export interface ElectronAPI {
     startGeneration: (sessionId: string, plan: GenerationPlan) => Promise<string>;
     cancelGeneration: (jobId: string) => Promise<void>;
     getProgress: (jobId: string) => Promise<JobProgress>;
-    exportPackage: (sessionId: string, outputPath: string, preset: string) => Promise<string>;
+    exportPackage: (
+      sessionId: string,
+      outputPath: string,
+      preset: string,
+      bounds: GeoBounds,
+      heightmapFormat: string,
+      albedoFormat: string
+    ) => Promise<string>;
   };
   dialog: {
     selectFolder: () => Promise<string | null>;
@@ -71,7 +78,8 @@ const api: ElectronAPI = {
     startGeneration: (sessionId, plan) => ipcRenderer.invoke('native:startGeneration', sessionId, plan),
     cancelGeneration: (jobId) => ipcRenderer.invoke('native:cancelGeneration', jobId),
     getProgress: (jobId) => ipcRenderer.invoke('native:getProgress', jobId),
-    exportPackage: (sessionId, outputPath, preset) => ipcRenderer.invoke('native:exportPackage', sessionId, outputPath, preset),
+    exportPackage: (sessionId, outputPath, preset, bounds, heightmapFormat, albedoFormat) =>
+      ipcRenderer.invoke('native:exportPackage', sessionId, outputPath, preset, bounds, heightmapFormat, albedoFormat),
   },
   dialog: {
     selectFolder: () => ipcRenderer.invoke('dialog:selectFolder'),

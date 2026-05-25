@@ -8,7 +8,7 @@ var api = {
         startGeneration: function (sessionId, plan) { return electron_1.ipcRenderer.invoke('native:startGeneration', sessionId, plan); },
         cancelGeneration: function (jobId) { return electron_1.ipcRenderer.invoke('native:cancelGeneration', jobId); },
         getProgress: function (jobId) { return electron_1.ipcRenderer.invoke('native:getProgress', jobId); },
-        exportPackage: function (sessionId, outputPath, preset) { return electron_1.ipcRenderer.invoke('native:exportPackage', sessionId, outputPath, preset); },
+        exportPackage: function (sessionId, outputPath, preset, bounds, heightmapFormat, albedoFormat) { return electron_1.ipcRenderer.invoke('native:exportPackage', sessionId, outputPath, preset, bounds, heightmapFormat, albedoFormat); },
     },
     dialog: {
         selectFolder: function () { return electron_1.ipcRenderer.invoke('dialog:selectFolder'); },

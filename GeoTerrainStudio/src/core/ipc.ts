@@ -3,7 +3,7 @@
  * Provides fallback implementations for development without the native addon.
  */
 
-import type { ElectronAPI, GeoBounds, TerrainProfile, GenerationPlan, JobProgress } from '../types/terrain';
+import type { ElectronAPI, GeoBounds, TerrainProfile, GenerationPlan, JobProgress, HeightmapFormat, AlbedoFormat } from '../types/terrain';
 
 declare global {
   interface Window {
@@ -42,12 +42,19 @@ export const Native = {
     return window.electronAPI!.native.getProgress(jobId);
   },
 
-  async exportPackage(sessionId: string, outputPath: string, preset: string): Promise<string> {
+  async exportPackage(
+    sessionId: string,
+    outputPath: string,
+    preset: string,
+    bounds: GeoBounds,
+    heightmapFormat: HeightmapFormat,
+    albedoFormat: AlbedoFormat
+  ): Promise<string> {
     if (!isElectron()) {
-      console.log('[Mock] Export package:', { sessionId, outputPath, preset });
+      console.log('[Mock] Export package:', { sessionId, outputPath, preset, bounds, heightmapFormat, albedoFormat });
       return outputPath;
     }
-    return window.electronAPI!.native.exportPackage(sessionId, outputPath, preset);
+    return window.electronAPI!.native.exportPackage(sessionId, outputPath, preset, bounds, heightmapFormat, albedoFormat);
   },
 };
 

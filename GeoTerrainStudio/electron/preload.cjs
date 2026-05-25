@@ -7,7 +7,8 @@ const api = {
     startGeneration: (sessionId, plan) => ipcRenderer.invoke('native:startGeneration', sessionId, plan),
     cancelGeneration: (jobId) => ipcRenderer.invoke('native:cancelGeneration', jobId),
     getProgress: (jobId) => ipcRenderer.invoke('native:getProgress', jobId),
-    exportPackage: (sessionId, outputPath, preset) => ipcRenderer.invoke('native:exportPackage', sessionId, outputPath, preset),
+    exportPackage: (sessionId, outputPath, preset, bounds, heightmapFormat, albedoFormat) =>
+      ipcRenderer.invoke('native:exportPackage', sessionId, outputPath, preset, bounds, heightmapFormat, albedoFormat),
   },
   dialog: {
     selectFolder: () => ipcRenderer.invoke('dialog:selectFolder'),
