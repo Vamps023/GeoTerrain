@@ -208,28 +208,36 @@ async function mergeImageryTiles(
   const canvasW = tilesX * TILE_SIZE;
   const canvasH = tilesY * TILE_SIZE;
 
-  // Create a blank RGBA canvas
-  let canvas = sharp({
-    create: {
-      width: canvasW,
-      height: canvasH,
-      channels: 4,
-      background: { r: 0, g: 0, b: 0, alpha: 255 },
-    },
-  }).raw();
+  // Build merged canvas manually as raw RGBA to avoid sharp composite issues
+  // with format detection on tile buffers
+  const canvas = Buffer.alloc(canvasW * canvasH * 4);
+  canvas.fill(0); // black background
 
-  const composites = tiles.map((tile) => ({
-    input: tile.buffer,
-    left: (tile.x - range.minX) * TILE_SIZE,
-    top: (tile.y - range.minY) * TILE_SIZE,
-  }));
+  for (const tile of tiles) {
+    // Decode each tile to raw RGBA
+    const { data, info } = await sharp(tile.buffer)
+      .raw()
+      .ensureAlpha()
+      .toBuffer({ resolveWithObject: true });
 
-  const merged = await sharp(await canvas.toBuffer())
-    .composite(composites)
-    .raw()
-    .toBuffer();
+    const tileW = info.width;
+    const tileH = info.height;
+    const offsetX = (tile.x - range.minX) * TILE_SIZE;
+    const offsetY = (tile.y - range.minY) * TILE_SIZE;
 
-  return merged;
+    for (let ty = 0; ty < tileH; ty++) {
+      for (let tx = 0; tx < tileW; tx++) {
+        const srcIdx = (ty * tileW + tx) * 4;
+        const dstIdx = ((offsetY + ty) * canvasW + (offsetX + tx)) * 4;
+        canvas[dstIdx + 0] = data[srcIdx + 0];
+        canvas[dstIdx + 1] = data[srcIdx + 1];
+        canvas[dstIdx + 2] = data[srcIdx + 2];
+        canvas[dstIdx + 3] = data[srcIdx + 3];
+      }
+    }
+  }
+
+  return canvas;
 }
 
 function cropDEM(
@@ -307,28 +315,14 @@ function resizeDEM(
   dstW: number,
   dstH: number
 ): Float32Array {
+  // Use nearest-neighbor to preserve elevation values and avoid smoothing artifacts
+  // Bilinear interpolation creates artificial gradients that appear as banding
   const result = new Float32Array(dstW * dstH);
   for (let y = 0; y < dstH; y++) {
     for (let x = 0; x < dstW; x++) {
-      const srcX = (x / (dstW - 1)) * (srcW - 1);
-      const srcY = (y / (dstH - 1)) * (srcH - 1);
-      const x0 = Math.floor(srcX);
-      const y0 = Math.floor(srcY);
-      const x1 = Math.min(x0 + 1, srcW - 1);
-      const y1 = Math.min(y0 + 1, srcH - 1);
-      const fx = srcX - x0;
-      const fy = srcY - y0;
-
-      const v00 = elevations[y0 * srcW + x0];
-      const v10 = elevations[y0 * srcW + x1];
-      const v01 = elevations[y1 * srcW + x0];
-      const v11 = elevations[y1 * srcW + x1];
-
-      result[y * dstW + x] =
-        v00 * (1 - fx) * (1 - fy) +
-        v10 * fx * (1 - fy) +
-        v01 * (1 - fx) * fy +
-        v11 * fx * fy;
+      const srcX = Math.min(Math.round((x / dstW) * srcW), srcW - 1);
+      const srcY = Math.min(Math.round((y / dstH) * srcH), srcH - 1);
+      result[y * dstW + x] = elevations[srcY * srcW + srcX];
     }
   }
   return result;
@@ -341,8 +335,10 @@ async function resizeImagery(
   dstW: number,
   dstH: number
 ): Promise<Buffer> {
+  // Use nearest-neighbor to preserve sharp edges in satellite imagery
+  // Lanczos3 causes blurring which is undesirable for terrain albedo
   return sharp(buffer, { raw: { width: srcW, height: srcH, channels: 4 } })
-    .resize(dstW, dstH, { kernel: sharp.kernel.lanczos3 })
+    .resize(dstW, dstH, { kernel: sharp.kernel.nearest })
     .raw()
     .toBuffer();
 }

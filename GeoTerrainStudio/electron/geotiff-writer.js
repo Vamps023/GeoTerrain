@@ -15,6 +15,7 @@ exports.writeGeoTIFF = writeGeoTIFF;
 const TIFF_MAGIC = 42;
 const BYTE_ORDER_LE = 0x4949; // "II"
 // TIFF Types
+const TYPE_ASCII = 2;
 const TYPE_SHORT = 3;
 const TYPE_LONG = 4;
 const TYPE_DOUBLE = 12;
@@ -34,8 +35,10 @@ const TAG_SAMPLE_FORMAT = 339;
 const TAG_MODEL_PIXEL_SCALE = 33550;
 const TAG_MODEL_TIEPOINT = 33922;
 const TAG_GEO_KEY_DIRECTORY = 34735;
-function createIfdEntry(tag, type, values) {
-    return { tag, type, count: values.length, values };
+const TAG_GEO_DOUBLE_PARAMS = 34736;
+const TAG_GEO_ASCII_PARAMS = 34737;
+function createIfdEntry(tag, type, values, asciiData, countOverride) {
+    return { tag, type, count: countOverride ?? values.length, values, asciiData };
 }
 function valueSizeBytes(type) {
     switch (type) {
@@ -84,15 +87,34 @@ function writeGeoTIFF(pixelData, options) {
     entries.push(createIfdEntry(TAG_MODEL_TIEPOINT, TYPE_DOUBLE, [
         0, 0, 0, bounds.west, bounds.north, 0,
     ]));
-    // GeoKeyDirectoryTag — minimal EPSG:4326
-    // Each entry: [KeyID, TIFFTagLocation, Count, Value]
+    // GeoKeyDirectoryTag — complete EPSG:4326 (WGS 84)
+    // Format: [Version(1), Revision(1), Minor(0), NumberOfKeys(N)] header
+    // Followed by N entries of [KeyID, TIFFTagLocation, Count, Value]
+    // TIFFTagLocation: 0 = inline value, 34736 = GeoDoubleParams, 34737 = GeoAsciiParams
+    const numGeoKeys = 7;
     const geoKeys = [
-        1024, 0, 1, 2, // GTModelTypeGeoKey = Geographic
-        1025, 0, 1, 1, // GTRasterTypeGeoKey = PixelIsArea
-        2048, 0, 1, 4326, // GeographicTypeGeoKey = WGS84
-        0, 0, 0, 0, // padding
+        1, 1, 0, numGeoKeys, // Header: Version=1, Revision=1, Minor=0, NumberOfKeys=7
+        1024, 0, 1, 2, // GTModelTypeGeoKey = Geographic (2)
+        1025, 0, 1, 1, // GTRasterTypeGeoKey = PixelIsArea (1)
+        2048, 0, 1, 4326, // GeographicTypeGeoKey = WGS84 (4326)
+        2049, 34737, 7, 0, // GeogCitationGeoKey -> "WGS 84\0" at offset 0 in ASCII params
+        2054, 0, 1, 9102, // GeogAngularUnitsGeoKey = Degree (9102)
+        2057, 34736, 1, 0, // GeogSemiMajorAxisGeoKey -> index 0 in double params
+        2059, 34736, 1, 1, // GeogInvFlatteningGeoKey -> index 1 in double params
     ];
     entries.push(createIfdEntry(TAG_GEO_KEY_DIRECTORY, TYPE_SHORT, geoKeys));
+    // GeoDoubleParamsTag — WGS84 ellipsoid parameters
+    // Index 0: Semi-major axis = 6378137.0 meters
+    // Index 1: Inverse flattening = 298.257223563
+    entries.push(createIfdEntry(TAG_GEO_DOUBLE_PARAMS, TYPE_DOUBLE, [6378137.0, 298.257223563]));
+    // GeoAsciiParamsTag — citation string (must be null-terminated and padded to even length)
+    const asciiParamsRaw = Buffer.from("WGS 84\0", "ascii");
+    // Pad to even length as required by TIFF spec
+    const asciiParams = asciiParamsRaw.length % 2 === 0
+        ? asciiParamsRaw
+        : Buffer.concat([asciiParamsRaw, Buffer.from([0])]);
+    // For ASCII type, count = number of bytes including null terminator
+    entries.push(createIfdEntry(TAG_GEO_ASCII_PARAMS, TYPE_ASCII, [asciiParams.length], asciiParams, asciiParams.length));
     // Sort entries by tag ID (TIFF requirement)
     entries.sort((a, b) => a.tag - b.tag);
     // ── Calculate layout ──────────────────────────────────────
@@ -117,6 +139,12 @@ function writeGeoTIFF(pixelData, options) {
                 case TYPE_LONG:
                     buf.writeUInt32LE(entry.values[0], 0);
                     break;
+                case TYPE_ASCII:
+                    // ASCII inline (4 bytes or less)
+                    if (entry.asciiData) {
+                        entry.asciiData.copy(buf, 0, 0, Math.min(entry.asciiData.length, 4));
+                    }
+                    break;
             }
             inlineValues.set(i, buf.readUInt32LE(0));
         }
@@ -139,6 +167,11 @@ function writeGeoTIFF(pixelData, options) {
                 case TYPE_DOUBLE:
                     for (let j = 0; j < entry.count; j++) {
                         blobBuf.writeDoubleLE(entry.values[j], j * 8);
+                    }
+                    break;
+                case TYPE_ASCII:
+                    if (entry.asciiData) {
+                        entry.asciiData.copy(blobBuf, 0, 0, entry.asciiData.length);
                     }
                     break;
             }
