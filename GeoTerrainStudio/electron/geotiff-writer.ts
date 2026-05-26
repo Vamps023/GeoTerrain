@@ -16,6 +16,7 @@ interface GeoBounds {
 }
 
 export type GeoTIFFCompression = 'none' | 'lzw' | 'deflate';
+export type GeoTIFFRasterType = 'area' | 'point';
 
 interface GeoTIFFOptions {
   width: number;
@@ -26,6 +27,9 @@ interface GeoTIFFOptions {
   photometricInterpretation: 1 | 2; // 1=black-is-zero, 2=RGB
   bounds: GeoBounds;
   compression?: GeoTIFFCompression;
+  // PixelIsPoint = elevation sample AT pixel corners (use for heightmaps to avoid tile seams)
+  // PixelIsArea = pixel covers an area (use for imagery)
+  rasterType?: GeoTIFFRasterType;
 }
 
 // ─── TIFF Constants ───────────────────────────────────────────
@@ -110,12 +114,16 @@ export function writeGeoTIFF(
     photometricInterpretation,
     bounds,
     compression = 'none',
+    rasterType = 'area',
   } = options;
 
   const bytesPerSample = bitsPerSample / 8;
   const stripByteCount = width * height * samplesPerPixel * bytesPerSample;
-  const pixelWidth = (bounds.east - bounds.west) / width;
-  const pixelHeight = (bounds.south - bounds.north) / height; // negative for north-up
+  // For PixelIsPoint, sample positions are at pixel corners, so divisor is (size - 1)
+  // For PixelIsArea, sample positions are at pixel centers, so divisor is size
+  const isPoint = rasterType === 'point';
+  const pixelWidth = (bounds.east - bounds.west) / (isPoint ? (width - 1) : width);
+  const pixelHeight = (bounds.south - bounds.north) / (isPoint ? (height - 1) : height); // negative for north-up
 
   // ── Build IFD entries ─────────────────────────────────────
   const entries: IfdEntry[] = [];
@@ -152,16 +160,18 @@ export function writeGeoTIFF(
   // Format: [Version(1), Revision(1), Minor(0), NumberOfKeys(N)] header
   // Followed by N entries of [KeyID, TIFFTagLocation, Count, Value]
   // TIFFTagLocation: 0 = inline value, 34736 = GeoDoubleParams, 34737 = GeoAsciiParams
+  // GTRasterTypeGeoKey: 1=PixelIsArea (imagery), 2=PixelIsPoint (heightmaps - prevents tile seams)
+  const rasterTypeCode = isPoint ? 2 : 1;
   const numGeoKeys = 7;
   const geoKeys = [
-    1, 1, 0, numGeoKeys,  // Header: Version=1, Revision=1, Minor=0, NumberOfKeys=7
-    1024, 0, 1, 2,        // GTModelTypeGeoKey = Geographic (2)
-    1025, 0, 1, 1,        // GTRasterTypeGeoKey = PixelIsArea (1)
-    2048, 0, 1, 4326,     // GeographicTypeGeoKey = WGS84 (4326)
-    2049, 34737, 7, 0,    // GeogCitationGeoKey -> "WGS 84\0" at offset 0 in ASCII params
-    2054, 0, 1, 9102,     // GeogAngularUnitsGeoKey = Degree (9102)
-    2057, 34736, 1, 0,    // GeogSemiMajorAxisGeoKey -> index 0 in double params
-    2059, 34736, 1, 1,    // GeogInvFlatteningGeoKey -> index 1 in double params
+    1, 1, 0, numGeoKeys,         // Header: Version=1, Revision=1, Minor=0, NumberOfKeys=7
+    1024, 0, 1, 2,                // GTModelTypeGeoKey = Geographic (2)
+    1025, 0, 1, rasterTypeCode,   // GTRasterTypeGeoKey = PixelIsArea(1) or PixelIsPoint(2)
+    2048, 0, 1, 4326,             // GeographicTypeGeoKey = WGS84 (4326)
+    2049, 34737, 7, 0,            // GeogCitationGeoKey -> "WGS 84\0" at offset 0 in ASCII params
+    2054, 0, 1, 9102,             // GeogAngularUnitsGeoKey = Degree (9102)
+    2057, 34736, 1, 0,            // GeogSemiMajorAxisGeoKey -> index 0 in double params
+    2059, 34736, 1, 1,            // GeogInvFlatteningGeoKey -> index 1 in double params
   ];
   entries.push(createIfdEntry(TAG_GEO_KEY_DIRECTORY, TYPE_SHORT, geoKeys));
 

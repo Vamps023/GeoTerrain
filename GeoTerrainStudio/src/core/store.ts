@@ -54,6 +54,13 @@ export const useTerrainStore = create<AppState & {
   setActiveTab: (tab: AppState['activeTab']) => void;
   setExportedData: (manifest: TerrainManifest | null, packagePath: string | null) => void;
   resetGeneration: () => void;
+  // Export progress (shared with App overlay)
+  exportProgress: { stage: string; current: number; total: number; message: string; percent: number } | null;
+  exportResult: string | null;
+  exportStartTime: number | null;
+  setExportProgress: (p: { stage: string; current: number; total: number; message: string; percent: number } | null) => void;
+  setExportResult: (r: string | null) => void;
+  setExportStartTime: (t: number | null) => void;
 }>((set) => ({
   // Initial state
   selectedBounds: null,
@@ -76,6 +83,9 @@ export const useTerrainStore = create<AppState & {
   tileGrid: null,
   selectedTiles: new Set<string>(),
   activeTab: 'map',
+  exportProgress: null,
+  exportResult: null,
+  exportStartTime: null,
 
   // Actions
   setSelectedBounds: (bounds) => set({ selectedBounds: bounds }),
@@ -116,6 +126,9 @@ export const useTerrainStore = create<AppState & {
   setSelectedTiles: (tiles) => set({ selectedTiles: tiles }),
   setActiveTab: (tab) => set({ activeTab: tab }),
   setExportedData: (manifest, packagePath) => set({ exportedManifest: manifest, exportedPackagePath: packagePath }),
+  setExportProgress: (p) => set({ exportProgress: p }),
+  setExportResult: (r) => set({ exportResult: r }),
+  setExportStartTime: (t) => set({ exportStartTime: t }),
   resetGeneration: () => set({
     generationPlan: null,
     activeJobId: null,

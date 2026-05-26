@@ -74,59 +74,6 @@ export const LayerStack: React.FC = () => {
         })}
       </div>
 
-      {/* Processing Options */}
-      <div className="px-4 py-3 border-t border-gray-700 space-y-3">
-        <h3 className="text-xs font-semibold text-gray-400 uppercase tracking-wider">Processing</h3>
-        
-        <label className="flex items-center gap-2 text-sm cursor-pointer">
-          <input
-            type="checkbox"
-            checked={activeProfile.processing.normalizeHeights}
-            onChange={(e) =>
-              setActiveProfile({
-                ...activeProfile,
-                processing: { ...activeProfile.processing, normalizeHeights: e.target.checked },
-              })
-            }
-            className="rounded border-gray-600 bg-gray-700 text-cyan-500 focus:ring-cyan-500"
-          />
-          Normalize heights
-        </label>
-
-        <label className="flex items-center gap-2 text-sm cursor-pointer">
-          <input
-            type="checkbox"
-            checked={activeProfile.processing.seamStitching}
-            onChange={(e) =>
-              setActiveProfile({
-                ...activeProfile,
-                processing: { ...activeProfile.processing, seamStitching: e.target.checked },
-              })
-            }
-            className="rounded border-gray-600 bg-gray-700 text-cyan-500 focus:ring-cyan-500"
-          />
-          Seam stitching
-        </label>
-
-        <div className="space-y-1">
-          <label className="text-xs text-gray-400">Height Scale</label>
-          <input
-            type="range"
-            min="0.1"
-            max="5"
-            step="0.1"
-            value={activeProfile.processing.heightScale}
-            onChange={(e) =>
-              setActiveProfile({
-                ...activeProfile,
-                processing: { ...activeProfile.processing, heightScale: parseFloat(e.target.value) },
-              })
-            }
-            className="w-full accent-cyan-500"
-          />
-          <div className="text-xs text-gray-500 text-right">{activeProfile.processing.heightScale.toFixed(1)}x</div>
-        </div>
-      </div>
     </div>
   );
 };

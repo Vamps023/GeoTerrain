@@ -623,16 +623,35 @@ function resizeDEM(
   dstW: number,
   dstH: number
 ): Float32Array {
+  // Use PixelIsPoint sampling: dst pixel positions map to fractional source positions
+  // This ensures adjacent tile edges share exact values (last pixel = src[W-1])
+  // Bilinear interpolation prevents aliasing
   const result = new Float32Array(dstW * dstH);
 
+  const sxScale = (srcW - 1) / (dstW - 1 || 1);
+  const syScale = (srcH - 1) / (dstH - 1 || 1);
+
   for (let y = 0; y < dstH; y++) {
-    const srcY = Math.min(Math.round((y / dstH) * srcH), srcH - 1);
-    const dstRowStart = y * dstW;
-    const srcRowStart = srcY * srcW;
+    const sy = y * syScale;
+    const sy0 = Math.floor(sy);
+    const sy1 = Math.min(sy0 + 1, srcH - 1);
+    const fy = sy - sy0;
 
     for (let x = 0; x < dstW; x++) {
-      const srcX = Math.min(Math.round((x / dstW) * srcW), srcW - 1);
-      result[dstRowStart + x] = elevations[srcRowStart + srcX];
+      const sx = x * sxScale;
+      const sx0 = Math.floor(sx);
+      const sx1 = Math.min(sx0 + 1, srcW - 1);
+      const fx = sx - sx0;
+
+      // Bilinear interpolation
+      const v00 = elevations[sy0 * srcW + sx0];
+      const v01 = elevations[sy0 * srcW + sx1];
+      const v10 = elevations[sy1 * srcW + sx0];
+      const v11 = elevations[sy1 * srcW + sx1];
+
+      const top = v00 * (1 - fx) + v01 * fx;
+      const bot = v10 * (1 - fx) + v11 * fx;
+      result[y * dstW + x] = top * (1 - fy) + bot * fy;
     }
   }
 
@@ -753,6 +772,7 @@ async function writeHeightmapGeoTIFFInt16(
     photometricInterpretation: 1, // grayscale
     bounds,
     compression,
+    rasterType: 'point', // Heightmaps use PixelIsPoint to prevent tile seams (UNIGINE)
   });
 
   await fs.promises.writeFile(outputPath, buf);
@@ -783,6 +803,7 @@ async function writeHeightmapGeoTIFFFloat32(
     photometricInterpretation: 1, // grayscale
     bounds,
     compression,
+    rasterType: 'point', // Heightmaps use PixelIsPoint to prevent tile seams (UNIGINE)
   });
 
   await fs.promises.writeFile(outputPath, buf);

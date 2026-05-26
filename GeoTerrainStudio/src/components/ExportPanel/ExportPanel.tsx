@@ -60,12 +60,12 @@ const PRESETS: PresetConfig[] = [
   {
     id: 'generic',
     name: 'Generic / Custom',
-    desc: 'GeoTIFF bundle for any engine',
+    desc: 'Float32 GeoTIFF bundle for any engine',
     icon: '*',
-    heightmapFormat: 'geotiff',  // Int16 GeoTIFF
+    heightmapFormat: 'float32',  // Float32 GeoTIFF (full precision, prevents terracing)
     albedoFormat: 'geotiff',     // RGB GeoTIFF
     recommendedRes: { heightmap: 4096, albedo: 4096 },
-    notes: 'Standard GeoTIFF (GDAL compatible)',
+    notes: 'Float32 GeoTIFF (full precision, GDAL compatible)',
   },
   {
     id: 'babylon',
@@ -107,10 +107,12 @@ export const ExportPanel: React.FC = () => {
   const imagerySource = useTerrainStore((s) => s.imagerySource);
   const setImagerySource = useTerrainStore((s) => s.setImagerySource);
   const selectedTiles = useTerrainStore((s) => s.selectedTiles);
+  const setExportProgress = useTerrainStore((s) => s.setExportProgress);
+  const exportResult = useTerrainStore((s) => s.exportResult);
+  const setExportResult = useTerrainStore((s) => s.setExportResult);
+  const setExportStartTime = useTerrainStore((s) => s.setExportStartTime);
 
   const [isExporting, setIsExporting] = useState(false);
-  const [exportProgress, setExportProgress] = useState<{ current: number; total: number } | null>(null);
-  const [exportResult, setExportResult] = useState<string | null>(null);
 
   // API Keys state
   const [apiKeys, setApiKeys] = useState<ApiKeys>({});
@@ -163,6 +165,14 @@ export const ExportPanel: React.FC = () => {
     try {
       setIsExporting(true);
       setExportResult(null);
+      setExportStartTime(Date.now());
+      setExportProgress({
+        stage: 'init',
+        current: 0,
+        total: 100,
+        message: 'Preparing export...',
+        percent: 0,
+      });
 
       // Multi-tile export (works for all presets including Babylon.js)
       const grid = useTerrainStore.getState().tileGrid;
@@ -176,7 +186,6 @@ export const ExportPanel: React.FC = () => {
       }
 
       const total = tilesToExport.length;
-      setExportProgress({ current: 0, total });
 
       // Export each tile
       for (let i = 0; i < tilesToExport.length; i++) {
@@ -185,7 +194,13 @@ export const ExportPanel: React.FC = () => {
         // Use platform-agnostic path construction
         const tileOutputPath = `${outputPath}${window.navigator.platform.startsWith('Win') ? '\\' : '/'}tile_${tile.row}_${tile.col}`;
 
-        setExportProgress({ current: i + 1, total });
+        setExportProgress({
+          stage: 'tile_export',
+          current: i + 1,
+          total,
+          message: `Exporting tile ${i + 1} of ${total}...`,
+          percent: Math.round(((i + 1) / total) * 100),
+        });
 
         await Native.exportPackage(
           sessionId,
@@ -228,6 +243,7 @@ export const ExportPanel: React.FC = () => {
     } finally {
       setIsExporting(false);
       setExportProgress(null);
+      setExportStartTime(null);
     }
   };
 
@@ -534,14 +550,14 @@ export const ExportPanel: React.FC = () => {
           className={`w-full flex items-center justify-center gap-2 py-3 rounded-lg text-sm font-medium transition-colors ${
             !outputPath || selectedCount === 0
               ? 'bg-gray-700 text-gray-500 cursor-not-allowed'
-              : 'bg-cyan-600 hover:bg-cyan-500 text-white'
+              : isExporting
+                ? 'bg-gray-600 text-gray-300 cursor-wait'
+                : 'bg-cyan-600 hover:bg-cyan-500 text-white'
           }`}
         >
           <FileArchive className="w-4 h-4" />
           {isExporting
-            ? exportProgress
-              ? `Exporting ${exportProgress.current}/${exportProgress.total} tiles...`
-              : 'Exporting...'
+            ? 'Exporting...'
             : `Export ${selectedCount} Tile${selectedCount !== 1 ? 's' : ''}`}
         </button>
 
