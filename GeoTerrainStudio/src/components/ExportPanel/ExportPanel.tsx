@@ -62,10 +62,10 @@ const PRESETS: PresetConfig[] = [
     name: 'Babylon.js',
     desc: 'Import all data for 3D viewport viewing',
     icon: 'BJS',
-    heightmapFormat: 'float32',  // Float32 GeoTIFF — viewer reads Float32Array directly
+    heightmapFormat: 'png',      // PNG heightmap — browser can decode, Babylon native loader supports
     albedoFormat: 'png',         // PNG for web compatibility
-    recommendedRes: { heightmap: 512, albedo: 1024 },
-    notes: 'Float32 GeoTIFF heightmap + PNG albedo, optimized for 3D viewer',
+    recommendedRes: { heightmap: 1024, albedo: 1024 },
+    notes: 'PNG heightmap + PNG albedo for Babylon native heightmap loader',
   },
 ];
 
