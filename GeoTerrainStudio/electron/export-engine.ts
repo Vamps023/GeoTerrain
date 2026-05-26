@@ -19,6 +19,7 @@ import * as fs from 'fs';
 import * as path from 'path';
 import sharp from 'sharp';
 import { writeGeoTIFF, GeoTIFFCompression } from './geotiff-writer';
+import { fromArrayBuffer } from 'geotiff';
 
 // ─── Constants ─────────────────────────────────────────────────
 
@@ -38,7 +39,42 @@ interface GeoBounds {
 
 type HeightmapFormat = 'dem' | 'geotiff' | 'r16' | 'png' | 'float32';
 type AlbedoFormat = 'png' | 'geotiff';
-type DEMSource = 'aws-terrarium' | 'mapzen';
+type DEMSource =
+  | 'aws-terrarium'
+  | 'mapzen'
+  | 'mapbox-terrain-rgb'
+  // OpenTopography API sources (require free API key, return GeoTIFF directly)
+  | 'opentopo-srtmgl1'    // SRTM GL1, ~30m global
+  | 'opentopo-srtmgl3'    // SRTM GL3, ~90m global
+  | 'opentopo-aw3d30'     // ALOS AW3D30, ~30m global
+  | 'opentopo-cop30'      // Copernicus GLO-30, ~30m best quality
+  | 'opentopo-nasadem'    // NASADEM, ~30m reprocessed
+  | 'opentopo-usgs10m';   // USGS 3DEP, ~10m USA only
+
+const OPENTOPO_SOURCES: DEMSource[] = [
+  'opentopo-srtmgl1',
+  'opentopo-srtmgl3',
+  'opentopo-aw3d30',
+  'opentopo-cop30',
+  'opentopo-nasadem',
+  'opentopo-usgs10m',
+];
+
+function isOpenTopoSource(source: DEMSource): boolean {
+  return OPENTOPO_SOURCES.includes(source);
+}
+
+function getOpenTopoDemType(source: DEMSource): string {
+  switch (source) {
+    case 'opentopo-srtmgl1': return 'SRTMGL1';
+    case 'opentopo-srtmgl3': return 'SRTMGL3';
+    case 'opentopo-aw3d30': return 'AW3D30';
+    case 'opentopo-cop30': return 'COP30';
+    case 'opentopo-nasadem': return 'NASADEM';
+    case 'opentopo-usgs10m': return 'USGS10m';
+    default: return 'SRTMGL1';
+  }
+}
 type ImagerySource = 'arcgis' | 'mapbox' | 'maptiler';
 
 interface ExportOptions {
@@ -56,6 +92,10 @@ interface ExportOptions {
   tileRow?: number;
   tileCol?: number;
   compression?: GeoTIFFCompression;
+  // API keys (passed from settings, fallback to env vars)
+  opentopographyApiKey?: string;
+  mapboxAccessToken?: string;
+  maptilerApiKey?: string;
 }
 
 interface TileRange {
@@ -92,7 +132,10 @@ export function validateExport(options: ExportOptions): ExportValidation {
     heightmapSize = 1024,
     albedoSize = 1024,
     imageryZoom = 0,
+    demSource = 'aws-terrarium',
   } = options;
+
+  const demIsOpenTopo = isOpenTopoSource(demSource);
 
   // Validate bounds
   if (bounds.west >= bounds.east) {
@@ -120,14 +163,15 @@ export function validateExport(options: ExportOptions): ExportValidation {
   const imgTilesX = imgRange.maxX - imgRange.minX + 1;
   const imgTilesY = imgRange.maxY - imgRange.minY + 1;
 
-  const demTileCount = demTilesX * demTilesY;
+  // OpenTopography is a single GeoTIFF request (not tiled)
+  const demTileCount = demIsOpenTopo ? 1 : demTilesX * demTilesY;
   const imgTileCount = imgTilesX * imgTilesY;
   const totalTiles = demTileCount + imgTileCount;
 
   // Estimate memory usage
-  // DEM: Float32 per pixel (4 bytes)
-  // Imagery: RGBA per pixel (4 bytes)
-  const demPixels = demTilesX * TILE_SIZE * demTilesY * TILE_SIZE;
+  const demPixels = demIsOpenTopo
+    ? heightmapSize * heightmapSize
+    : demTilesX * TILE_SIZE * demTilesY * TILE_SIZE;
   const imgPixels = imgTilesX * TILE_SIZE * imgTilesY * TILE_SIZE;
   const estimatedMemoryBytes = (demPixels * 4) + (imgPixels * 4);
 
@@ -314,13 +358,93 @@ async function parallelDownload<T>(
   return results;
 }
 
+// ─── OpenTopography API ───────────────────────────────────────
+
+/**
+ * Fetch a DEM from OpenTopography Global DEM API.
+ * Returns a single GeoTIFF covering the entire bbox (no tiling).
+ *
+ * Requires OPENTOPOGRAPHY_API_KEY env var. Get a free key at:
+ * https://portal.opentopography.org/myopentopo
+ */
+async function fetchOpenTopoDEM(
+  bounds: GeoBounds,
+  source: DEMSource,
+  apiKeyArg?: string
+): Promise<{ elevations: Float32Array; width: number; height: number }> {
+  const apiKey = apiKeyArg || process.env.OPENTOPOGRAPHY_API_KEY;
+  if (!apiKey) {
+    throw new Error(
+      'OpenTopography API key is required. ' +
+      'Add it in the Export panel → API Keys section, or get a free key at https://portal.opentopography.org/myopentopo'
+    );
+  }
+
+  const demType = getOpenTopoDemType(source);
+  const url =
+    `https://portal.opentopography.org/API/globaldem?` +
+    `demtype=${demType}` +
+    `&south=${bounds.south}` +
+    `&north=${bounds.north}` +
+    `&west=${bounds.west}` +
+    `&east=${bounds.east}` +
+    `&outputFormat=GTiff` +
+    `&API_Key=${apiKey}`;
+
+  console.log(`[OpenTopo] Requesting ${demType} for bbox: ${bounds.west},${bounds.south},${bounds.east},${bounds.north}`);
+
+  const buffer = await downloadBuffer(url);
+
+  // Validate response is actually a GeoTIFF (not an error message)
+  if (buffer.length < 100) {
+    throw new Error(`OpenTopography returned suspiciously small response (${buffer.length} bytes): ${buffer.toString('utf-8').substring(0, 200)}`);
+  }
+
+  // Check TIFF magic bytes
+  const isTiff =
+    (buffer[0] === 0x49 && buffer[1] === 0x49 && buffer[2] === 0x2a && buffer[3] === 0x00) || // little-endian
+    (buffer[0] === 0x4d && buffer[1] === 0x4d && buffer[2] === 0x00 && buffer[3] === 0x2a);   // big-endian
+
+  if (!isTiff) {
+    throw new Error(`OpenTopography did not return a TIFF. Response: ${buffer.toString('utf-8').substring(0, 500)}`);
+  }
+
+  // Parse GeoTIFF
+  const arrayBuffer = buffer.buffer.slice(buffer.byteOffset, buffer.byteOffset + buffer.byteLength) as ArrayBuffer;
+  const tiff = await fromArrayBuffer(arrayBuffer);
+  const image = await tiff.getImage();
+  const width = image.getWidth();
+  const height = image.getHeight();
+  const rasters = await image.readRasters();
+  const raw = rasters[0] as Int16Array | Float32Array | Uint16Array;
+
+  // Convert to Float32Array for consistent downstream processing
+  const elevations = new Float32Array(width * height);
+  const noDataValue = image.getGDALNoData() ?? -32768;
+
+  for (let i = 0; i < raw.length; i++) {
+    const v = raw[i];
+    elevations[i] = v === noDataValue ? 0 : v;
+  }
+
+  console.log(`[OpenTopo] Received ${demType}: ${width}x${height} pixels, ${(buffer.length / 1024).toFixed(1)} KB`);
+
+  return { elevations, width, height };
+}
+
 // ─── DEM Decode ───────────────────────────────────────────────
 
 function decodeTerrariumElevation(r: number, g: number, b: number): number {
   return r * 256 + g + b / 256 - 32768;
 }
 
-async function decodeTerrariumTile(buffer: Buffer): Promise<Float32Array> {
+// Mapbox Terrain-RGB encoding: elevation = -10000 + ((R * 256 * 256 + G * 256 + B) * 0.1)
+// Higher precision than Terrarium (0.1m vs 1m)
+function decodeMapboxTerrainRGB(r: number, g: number, b: number): number {
+  return -10000 + ((r * 256 * 256 + g * 256 + b) * 0.1);
+}
+
+async function decodeDEMTile(buffer: Buffer, source: DEMSource): Promise<Float32Array> {
   const { data, info } = await sharp(buffer)
     .raw()
     .ensureAlpha()
@@ -330,11 +454,13 @@ async function decodeTerrariumTile(buffer: Buffer): Promise<Float32Array> {
   const h = info.height;
   const elevations = new Float32Array(w * h);
 
+  const decoder = source === 'mapbox-terrain-rgb' ? decodeMapboxTerrainRGB : decodeTerrariumElevation;
+
   for (let i = 0; i < w * h; i++) {
     const r = data[i * 4 + 0];
     const g = data[i * 4 + 1];
     const b = data[i * 4 + 2];
-    elevations[i] = decodeTerrariumElevation(r, g, b);
+    elevations[i] = decoder(r, g, b);
   }
 
   return elevations;
@@ -807,6 +933,14 @@ export async function executeExport(
   // ── Build URLs ───────────────────────────────────────────────
   function getDEMUrl(x: number, y: number, z: number): string {
     switch (demSource) {
+      case 'mapbox-terrain-rgb': {
+        const token = options.mapboxAccessToken || process.env.MAPBOX_ACCESS_TOKEN;
+        if (!token) {
+          throw new Error('Mapbox access token required for Mapbox Terrain-RGB. Add it in the Export panel → API Keys section, or get a free token at https://account.mapbox.com/');
+        }
+        // @2x = 512px tiles, higher precision
+        return `https://api.mapbox.com/v4/mapbox.terrain-rgb/${z}/${x}/${y}@2x.pngraw?access_token=${token}`;
+      }
       case 'mapzen':
         return `https://s3.amazonaws.com/elevation-tiles-prod/terrarium/${z}/${x}/${y}.png`;
       case 'aws-terrarium':
@@ -818,59 +952,82 @@ export async function executeExport(
   function getImageryUrl(x: number, y: number, z: number): string {
     switch (imagerySource) {
       case 'mapbox': {
-        const token = process.env.MAPBOX_ACCESS_TOKEN;
+        const token = options.mapboxAccessToken || process.env.MAPBOX_ACCESS_TOKEN;
         if (!token) {
-          throw new Error('MAPBOX_ACCESS_TOKEN environment variable is required for Mapbox imagery source');
+          throw new Error('Mapbox access token required. Add it in the Export panel → API Keys section.');
         }
         return `https://api.mapbox.com/v4/mapbox.satellite/${z}/${x}/${y}@2x.png?access_token=${token}`;
       }
-      case 'maptiler':
-        return `https://api.maptiler.com/tiles/satellite/${z}/${x}/${y}.jpg?key=get_your_own_key`;
+      case 'maptiler': {
+        const key = options.maptilerApiKey || process.env.MAPTILER_API_KEY;
+        if (!key) {
+          throw new Error('MapTiler API key required. Add it in the Export panel → API Keys section.');
+        }
+        return `https://api.maptiler.com/tiles/satellite/${z}/${x}/${y}.jpg?key=${key}`;
+      }
       case 'arcgis':
       default:
         return `https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/${z}/${y}/${x}`;
     }
   }
 
-  // ── Download DEM tiles (parallel) ──────────────────────────
+  // ── Download DEM ──────────────────────────────────────────────
+  let demSourceData: { elevations: Float32Array; width: number; height: number };
   const demRange = getTileRange(bounds, demZoom);
-  const demTasks: DownloadTask<Float32Array>[] = [];
 
-  for (let y = demRange.minY; y <= demRange.maxY; y++) {
-    for (let x = demRange.minX; x <= demRange.maxX; x++) {
-      demTasks.push({
-        url: getDEMUrl(x, y, demZoom),
-        x,
-        y,
-        processor: async (buffer) => {
-          try {
-            return await decodeTerrariumTile(buffer);
-          } catch (err) {
-            console.warn(`[Export] Failed DEM tile ${x},${y}:`, (err as Error).message);
-            return new Float32Array(TILE_SIZE * TILE_SIZE);
-          }
-        },
-      });
+  if (isOpenTopoSource(demSource)) {
+    // OpenTopography returns a single GeoTIFF for the bbox
+    if (onProgress) {
+      onProgress({ stage: 'download_dem', current: 0, total: 1, message: `Requesting ${getOpenTopoDemType(demSource)} from OpenTopography...` });
     }
-  }
+    demSourceData = await fetchOpenTopoDEM(bounds, demSource, options.opentopographyApiKey);
+    if (onProgress) {
+      onProgress({ stage: 'download_dem', current: 1, total: 1, message: `Downloaded ${getOpenTopoDemType(demSource)} (${demSourceData.width}x${demSourceData.height})` });
+    }
+  } else {
+    // Tile-based DEM (Terrarium, Mapbox)
+    const demTasks: DownloadTask<Float32Array>[] = [];
 
-  if (onProgress) {
-    onProgress({ stage: 'download_dem', current: 0, total: demTasks.length, message: `Downloading ${demTasks.length} DEM tiles...` });
-  }
-
-  const demResults = await parallelDownload(
-    demTasks,
-    MAX_CONCURRENT_DOWNLOADS,
-    (completed, total) => {
-      if (onProgress) {
-        onProgress({ stage: 'download_dem', current: completed, total, message: `Downloaded ${completed}/${total} DEM tiles` });
+    for (let y = demRange.minY; y <= demRange.maxY; y++) {
+      for (let x = demRange.minX; x <= demRange.maxX; x++) {
+        demTasks.push({
+          url: getDEMUrl(x, y, demZoom),
+          x,
+          y,
+          processor: async (buffer) => {
+            try {
+              return await decodeDEMTile(buffer, demSource);
+            } catch (err) {
+              console.warn(`[Export] Failed DEM tile ${x},${y}:`, (err as Error).message);
+              return new Float32Array(TILE_SIZE * TILE_SIZE);
+            }
+          },
+        });
       }
     }
-  );
 
-  const demTiles = demResults
-    .filter((r) => r.success)
-    .map((r) => ({ x: r.x, y: r.y, elevations: r.data }));
+    if (onProgress) {
+      onProgress({ stage: 'download_dem', current: 0, total: demTasks.length, message: `Downloading ${demTasks.length} DEM tiles...` });
+    }
+
+    const demResults = await parallelDownload(
+      demTasks,
+      MAX_CONCURRENT_DOWNLOADS,
+      (completed, total) => {
+        if (onProgress) {
+          onProgress({ stage: 'download_dem', current: completed, total, message: `Downloaded ${completed}/${total} DEM tiles` });
+        }
+      }
+    );
+
+    const demTiles = demResults
+      .filter((r) => r.success)
+      .map((r) => ({ x: r.x, y: r.y, elevations: r.data }));
+
+    const merged = mergeDEMTiles(demTiles, demRange);
+    const cropped = cropDEM(merged.elevations, merged.width, merged.height, bounds, demRange, demZoom);
+    demSourceData = cropped;
+  }
 
   // ── Download imagery tiles (parallel) ────────────────────────
   const imgRange = getTileRange(bounds, imgZoom);
@@ -922,16 +1079,13 @@ export async function executeExport(
     onProgress({ stage: 'process_dem', current: 0, total: 100, message: 'Processing DEM...' });
   }
 
-  const { elevations: mergedDEM, width: demFullW, height: demFullH } = mergeDEMTiles(demTiles, demRange);
-  const { elevations: croppedDEM, width: demCropW, height: demCropH } = cropDEM(
-    mergedDEM,
-    demFullW,
-    demFullH,
-    bounds,
-    demRange,
-    demZoom
+  const resizedDEM = resizeDEM(
+    demSourceData.elevations,
+    demSourceData.width,
+    demSourceData.height,
+    heightmapSize,
+    heightmapSize
   );
-  const resizedDEM = resizeDEM(croppedDEM, demCropW, demCropH, heightmapSize, heightmapSize);
 
   // Compute elevation metadata
   const elevationMeta = computeElevationMetadata(resizedDEM);

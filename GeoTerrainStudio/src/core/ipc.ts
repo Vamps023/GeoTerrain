@@ -3,7 +3,7 @@
  * Provides fallback implementations for development without the native addon.
  */
 
-import type { ElectronAPI, GeoBounds, TerrainProfile, GenerationPlan, JobProgress, HeightmapFormat, AlbedoFormat, ProjectData, DEMSource, ImagerySource } from '../types/terrain';
+import type { ElectronAPI, GeoBounds, TerrainProfile, GenerationPlan, JobProgress, HeightmapFormat, AlbedoFormat, ProjectData, DEMSource, ImagerySource, ApiKeys } from '../types/terrain';
 
 declare global {
   interface Window {
@@ -54,6 +54,7 @@ export const Native = {
     imageryZoom = 0,
     demSource: DEMSource = 'aws-terrarium',
     imagerySource: ImagerySource = 'arcgis',
+    apiKeys?: ApiKeys,
   ): Promise<string> {
     if (!isElectron()) {
       console.log('[Mock] Export package:', { sessionId, outputPath, preset, bounds, heightmapFormat, albedoFormat });
@@ -61,7 +62,7 @@ export const Native = {
     }
     return window.electronAPI!.native.exportPackage(
       sessionId, outputPath, preset, bounds, heightmapFormat, albedoFormat,
-      heightmapResolution, albedoResolution, imageryZoom, demSource, imagerySource
+      heightmapResolution, albedoResolution, imageryZoom, demSource, imagerySource, apiKeys
     );
   },
 };
@@ -94,6 +95,33 @@ export const Dialog = {
       return null;
     }
     return window.electronAPI!.dialog.loadProject();
+  },
+};
+
+export const Settings = {
+  async getApiKeys(): Promise<ApiKeys> {
+    if (!isElectron()) {
+      // Read from localStorage in web mode
+      try {
+        const stored = localStorage.getItem('geoterrain-api-keys');
+        return stored ? JSON.parse(stored) : {};
+      } catch {
+        return {};
+      }
+    }
+    return window.electronAPI!.settings.getApiKeys();
+  },
+
+  async setApiKeys(apiKeys: ApiKeys): Promise<boolean> {
+    if (!isElectron()) {
+      try {
+        localStorage.setItem('geoterrain-api-keys', JSON.stringify(apiKeys));
+        return true;
+      } catch {
+        return false;
+      }
+    }
+    return window.electronAPI!.settings.setApiKeys(apiKeys);
   },
 };
 

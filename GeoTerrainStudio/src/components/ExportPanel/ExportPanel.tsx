@@ -1,18 +1,87 @@
-import React, { useState } from 'react';
-import { Download, FolderOpen, FileArchive, Check } from 'lucide-react';
+import React, { useState, useEffect } from 'react';
+import { Download, FolderOpen, FileArchive, Check, Key, Eye, EyeOff } from 'lucide-react';
 import { useTerrainStore } from '../../core/store';
-import { Native, Dialog } from '../../core/ipc';
-import type { ExportPreset, HeightmapFormat, AlbedoFormat, DEMSource, ImagerySource, TerrainManifest } from '../../types/terrain';
+import { Native, Dialog, Settings } from '../../core/ipc';
+import type { ExportPreset, HeightmapFormat, AlbedoFormat, DEMSource, ImagerySource, TerrainManifest, ApiKeys } from '../../types/terrain';
 import { FsAPI } from '../../core/ipc';
 
-const PRESETS: Array<{ id: ExportPreset; name: string; desc: string; icon: string }> = [
-  { id: 'unigine', name: 'UNIGINE', desc: 'LandscapeLayerMap (.lmap) + materials', icon: 'U' },
-  { id: 'unreal', name: 'Unreal Engine', desc: '16-bit RAW + PNG albedo + splat', icon: 'UE' },
-  { id: 'unity', name: 'Unity', desc: 'RAW heightmap + splat textures', icon: 'U3D' },
-  { id: 'godot', name: 'Godot', desc: 'EXR heightmap + JPG albedo', icon: 'G' },
-  { id: 'generic', name: 'Generic / Custom', desc: 'GeoTIFF bundle for any engine', icon: '*' },
-  { id: 'babylon', name: 'Babylon.js', desc: 'Import all data for 3D viewport viewing', icon: 'BJS' },
+interface PresetConfig {
+  id: ExportPreset;
+  name: string;
+  desc: string;
+  icon: string;
+  heightmapFormat: HeightmapFormat;
+  albedoFormat: AlbedoFormat;
+  recommendedRes: { heightmap: number; albedo: number };
+  notes?: string;
+}
+
+const PRESETS: PresetConfig[] = [
+  {
+    id: 'unigine',
+    name: 'UNIGINE',
+    desc: 'LandscapeLayerMap (.lmap) + materials',
+    icon: 'U',
+    heightmapFormat: 'float32', // Float32 GeoTIFF for full precision
+    albedoFormat: 'geotiff',      // GeoTIFF RGB
+    recommendedRes: { heightmap: 4096, albedo: 4096 },
+    notes: 'GeoTIFF with full metadata',
+  },
+  {
+    id: 'unreal',
+    name: 'Unreal Engine',
+    desc: '16-bit RAW + PNG albedo + splat',
+    icon: 'UE',
+    heightmapFormat: 'r16',      // R16 raw binary
+    albedoFormat: 'png',         // PNG RGB
+    recommendedRes: { heightmap: 2017, albedo: 2048 }, // UE5 recommended
+    notes: 'R16 for heightmap, PNG for albedo',
+  },
+  {
+    id: 'unity',
+    name: 'Unity',
+    desc: 'RAW heightmap + splat textures',
+    icon: 'U3D',
+    heightmapFormat: 'r16',      // Unity Terrain uses R16 RAW
+    albedoFormat: 'png',         // PNG for control/albedo
+    recommendedRes: { heightmap: 2049, albedo: 2048 }, // Unity likes odd+1 sizes
+    notes: 'R16 RAW (2049x2049), PNG albedo',
+  },
+  {
+    id: 'godot',
+    name: 'Godot',
+    desc: 'EXR heightmap + JPG albedo',
+    icon: 'G',
+    heightmapFormat: 'float32',  // EXR via GeoTIFF Float32
+    albedoFormat: 'png',         // Godot prefers PNG/JPG
+    recommendedRes: { heightmap: 2048, albedo: 2048 },
+    notes: 'Float32 for precision',
+  },
+  {
+    id: 'generic',
+    name: 'Generic / Custom',
+    desc: 'GeoTIFF bundle for any engine',
+    icon: '*',
+    heightmapFormat: 'geotiff',  // Int16 GeoTIFF
+    albedoFormat: 'geotiff',     // RGB GeoTIFF
+    recommendedRes: { heightmap: 4096, albedo: 4096 },
+    notes: 'Standard GeoTIFF (GDAL compatible)',
+  },
+  {
+    id: 'babylon',
+    name: 'Babylon.js',
+    desc: 'Import all data for 3D viewport viewing',
+    icon: 'BJS',
+    heightmapFormat: 'geotiff',  // Readable by geotiff.js
+    albedoFormat: 'png',         // PNG for web compatibility
+    recommendedRes: { heightmap: 1024, albedo: 1024 },
+    notes: 'Web-ready formats, optimized for browser',
+  },
 ];
+
+// Helper to get preset config
+const getPresetConfig = (id: ExportPreset): PresetConfig =>
+  PRESETS.find((p) => p.id === id) ?? PRESETS[4]; // default to generic
 
 export const ExportPanel: React.FC = () => {
   const selectedPreset = useTerrainStore((s) => s.selectedPreset);
@@ -43,9 +112,38 @@ export const ExportPanel: React.FC = () => {
   const [exportProgress, setExportProgress] = useState<{ current: number; total: number } | null>(null);
   const [exportResult, setExportResult] = useState<string | null>(null);
 
+  // API Keys state
+  const [apiKeys, setApiKeys] = useState<ApiKeys>({});
+  const [showApiKeys, setShowApiKeys] = useState(false);
+  const [apiKeysExpanded, setApiKeysExpanded] = useState(false);
+  const [apiKeysSaved, setApiKeysSaved] = useState(false);
+
+  // Load API keys on mount
+  useEffect(() => {
+    Settings.getApiKeys().then(setApiKeys).catch(console.error);
+  }, []);
+
+  const handleSaveApiKeys = async () => {
+    const success = await Settings.setApiKeys(apiKeys);
+    if (success) {
+      setApiKeysSaved(true);
+      setTimeout(() => setApiKeysSaved(false), 2000);
+    }
+  };
+
   const handleSelectFolder = async () => {
     const path = await Dialog.selectFolder();
     if (path) setOutputPath(path);
+  };
+
+  // Auto-set formats when preset changes
+  const handleSelectPreset = (presetId: ExportPreset) => {
+    const config = getPresetConfig(presetId);
+    setSelectedPreset(presetId);
+    setHeightmapFormat(config.heightmapFormat);
+    setAlbedoFormat(config.albedoFormat);
+    setHeightmapResolution(config.recommendedRes.heightmap);
+    setAlbedoResolution(config.recommendedRes.albedo);
   };
 
   const handleExport = async () => {
@@ -101,6 +199,7 @@ export const ExportPanel: React.FC = () => {
           imageryZoom,
           demSource,
           imagerySource,
+          apiKeys,
         );
       }
 
@@ -154,7 +253,7 @@ export const ExportPanel: React.FC = () => {
             {PRESETS.map((p) => (
               <button
                 key={p.id}
-                onClick={() => setSelectedPreset(p.id)}
+                onClick={() => handleSelectPreset(p.id)}
                 className={`flex items-center gap-3 p-3 rounded-lg border transition-all text-left ${
                   selectedPreset === p.id
                     ? 'border-cyan-500 bg-cyan-500/10'
@@ -175,6 +274,13 @@ export const ExportPanel: React.FC = () => {
               </button>
             ))}
           </div>
+          {/* Show current preset recommendation */}
+          {selectedPreset && (
+            <div className="mt-3 p-2 bg-cyan-500/10 border border-cyan-500/30 rounded text-xs text-cyan-400">
+              <span className="font-semibold">{getPresetConfig(selectedPreset).name}:</span>{' '}
+              {getPresetConfig(selectedPreset).notes}
+            </div>
+          )}
         </div>
 
         {/* Output Folder */}
@@ -264,6 +370,86 @@ export const ExportPanel: React.FC = () => {
           </div>
         </div>
 
+        {/* API Keys */}
+        <div>
+          <button
+            onClick={() => setApiKeysExpanded(!apiKeysExpanded)}
+            className="w-full flex items-center justify-between text-xs font-semibold text-gray-400 uppercase tracking-wider mb-3 hover:text-white"
+          >
+            <span className="flex items-center gap-2">
+              <Key className="w-3 h-3" />
+              API Keys
+              {(apiKeys.opentopography || apiKeys.mapbox || apiKeys.maptiler) && (
+                <span className="text-cyan-400 normal-case">(configured)</span>
+              )}
+            </span>
+            <span>{apiKeysExpanded ? '−' : '+'}</span>
+          </button>
+          {apiKeysExpanded && (
+            <div className="space-y-3 bg-gray-800/50 p-3 rounded border border-gray-700">
+              <div className="space-y-1">
+                <label className="text-xs text-gray-400 flex items-center justify-between">
+                  OpenTopography
+                  <a href="https://portal.opentopography.org/myopentopo" target="_blank" rel="noopener" className="text-cyan-400 hover:underline text-[10px] normal-case">Get free key</a>
+                </label>
+                <div className="relative">
+                  <input
+                    type={showApiKeys ? 'text' : 'password'}
+                    value={apiKeys.opentopography || ''}
+                    onChange={(e) => setApiKeys({ ...apiKeys, opentopography: e.target.value })}
+                    placeholder="Paste OpenTopography API key"
+                    className="w-full bg-gray-700 border border-gray-600 rounded text-xs py-1.5 px-2 pr-8 text-white"
+                  />
+                </div>
+              </div>
+              <div className="space-y-1">
+                <label className="text-xs text-gray-400 flex items-center justify-between">
+                  Mapbox Access Token
+                  <a href="https://account.mapbox.com/access-tokens/" target="_blank" rel="noopener" className="text-cyan-400 hover:underline text-[10px] normal-case">Get free token</a>
+                </label>
+                <input
+                  type={showApiKeys ? 'text' : 'password'}
+                  value={apiKeys.mapbox || ''}
+                  onChange={(e) => setApiKeys({ ...apiKeys, mapbox: e.target.value })}
+                  placeholder="pk.eyJ..."
+                  className="w-full bg-gray-700 border border-gray-600 rounded text-xs py-1.5 px-2 text-white"
+                />
+              </div>
+              <div className="space-y-1">
+                <label className="text-xs text-gray-400 flex items-center justify-between">
+                  MapTiler API Key
+                  <a href="https://cloud.maptiler.com/account/keys/" target="_blank" rel="noopener" className="text-cyan-400 hover:underline text-[10px] normal-case">Get free key</a>
+                </label>
+                <input
+                  type={showApiKeys ? 'text' : 'password'}
+                  value={apiKeys.maptiler || ''}
+                  onChange={(e) => setApiKeys({ ...apiKeys, maptiler: e.target.value })}
+                  placeholder="Paste MapTiler API key"
+                  className="w-full bg-gray-700 border border-gray-600 rounded text-xs py-1.5 px-2 text-white"
+                />
+              </div>
+              <div className="flex items-center gap-2 pt-1">
+                <button
+                  onClick={() => setShowApiKeys(!showApiKeys)}
+                  className="flex items-center gap-1 text-xs text-gray-400 hover:text-white"
+                >
+                  {showApiKeys ? <EyeOff className="w-3 h-3" /> : <Eye className="w-3 h-3" />}
+                  {showApiKeys ? 'Hide' : 'Show'}
+                </button>
+                <button
+                  onClick={handleSaveApiKeys}
+                  className="ml-auto flex items-center gap-1 px-3 py-1 bg-cyan-600 hover:bg-cyan-500 text-white text-xs rounded"
+                >
+                  {apiKeysSaved ? <><Check className="w-3 h-3" /> Saved</> : 'Save Keys'}
+                </button>
+              </div>
+              <p className="text-[10px] text-gray-500 leading-relaxed">
+                Keys are stored locally on your device. They are never uploaded.
+              </p>
+            </div>
+          )}
+        </div>
+
         {/* Data Sources */}
         <div>
           <h3 className="text-xs font-semibold text-gray-400 uppercase tracking-wider mb-3">
@@ -277,8 +463,19 @@ export const ExportPanel: React.FC = () => {
                 onChange={(e) => setDEMSource(e.target.value as DEMSource)}
                 className="w-full bg-gray-700 border border-gray-600 rounded text-sm py-1.5 px-2 text-white"
               >
-                <option value="aws-terrarium">AWS Terrarium (~30m)</option>
-                <option value="mapzen">Mapzen Terrarium (~30m)</option>
+                <optgroup label="Tiled (no API key)">
+                  <option value="aws-terrarium">AWS Terrarium (~30m, free)</option>
+                  <option value="mapzen">Mapzen Terrarium (~30m, free)</option>
+                  <option value="mapbox-terrain-rgb">Mapbox Terrain-RGB (HD 0.1m, Mapbox token)</option>
+                </optgroup>
+                <optgroup label="OpenTopography (free API key)">
+                  <option value="opentopo-cop30">Copernicus GLO-30 (~30m, best quality)</option>
+                  <option value="opentopo-nasadem">NASADEM (~30m, reprocessed)</option>
+                  <option value="opentopo-srtmgl1">SRTM GL1 (~30m, global)</option>
+                  <option value="opentopo-srtmgl3">SRTM GL3 (~90m, global)</option>
+                  <option value="opentopo-aw3d30">ALOS AW3D30 (~30m, global)</option>
+                  <option value="opentopo-usgs10m">USGS 3DEP (~10m, USA only)</option>
+                </optgroup>
               </select>
             </div>
             <div className="space-y-1">

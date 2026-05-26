@@ -3,6 +3,12 @@
  * Mirrors the C++ domain model and the Terrain Package manifest.
  */
 
+export interface ApiKeys {
+  opentopography?: string;
+  mapbox?: string;
+  maptiler?: string;
+}
+
 export interface ElectronAPI {
   native: {
     getVersion: () => Promise<string>;
@@ -22,7 +28,12 @@ export interface ElectronAPI {
       imageryZoom?: number,
       demSource?: string,
       imagerySource?: string,
+      apiKeys?: ApiKeys,
     ) => Promise<string>;
+  };
+  settings: {
+    getApiKeys: () => Promise<ApiKeys>;
+    setApiKeys: (apiKeys: ApiKeys) => Promise<boolean>;
   };
   dialog: {
     selectFolder: () => Promise<string | null>;
@@ -174,7 +185,16 @@ export interface TerrainProfile {
   processing: ProcessingOptions;
 }
 
-export type DEMSource = 'aws-terrarium' | 'mapzen' | 'copernicus-30m';
+export type DEMSource =
+  | 'aws-terrarium'
+  | 'mapzen'
+  | 'mapbox-terrain-rgb'
+  | 'opentopo-srtmgl1'
+  | 'opentopo-srtmgl3'
+  | 'opentopo-aw3d30'
+  | 'opentopo-cop30'
+  | 'opentopo-nasadem'
+  | 'opentopo-usgs10m';
 export type ImagerySource = 'arcgis' | 'mapbox' | 'maptiler';
 
 export interface GenerationPlan {

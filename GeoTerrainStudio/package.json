@@ -14,7 +14,7 @@
   },
   "scripts": {
     "dev": "vite --open",
-    "dev:electron": "concurrently \"vite\" \"wait-on http://localhost:5173 && cross-env NODE_ENV=development electron electron/main.ts\"",
+    "dev:electron": "concurrently \"vite\" \"wait-on http://localhost:5173 && npm run build:electron && cross-env NODE_ENV=development electron dist-electron/main.js\"",
     "build": "npm run build:vite && npm run build:electron && electron-builder",
     "build:win": "npm run build:vite && npm run build:electron && electron-builder --win",
     "build:mac": "npm run build:vite && npm run build:electron && electron-builder --mac",

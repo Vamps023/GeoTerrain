@@ -20,7 +20,12 @@ export interface ElectronAPI {
       imageryZoom?: number,
       demSource?: string,
       imagerySource?: string,
+      apiKeys?: { opentopography?: string; mapbox?: string; maptiler?: string },
     ) => Promise<string>;
+  };
+  settings: {
+    getApiKeys: () => Promise<{ opentopography?: string; mapbox?: string; maptiler?: string }>;
+    setApiKeys: (apiKeys: { opentopography?: string; mapbox?: string; maptiler?: string }) => Promise<boolean>;
   };
   dialog: {
     selectFolder: () => Promise<string | null>;
@@ -88,8 +93,12 @@ const api: ElectronAPI = {
     startGeneration: (sessionId, plan) => ipcRenderer.invoke('native:startGeneration', sessionId, plan),
     cancelGeneration: (jobId) => ipcRenderer.invoke('native:cancelGeneration', jobId),
     getProgress: (jobId) => ipcRenderer.invoke('native:getProgress', jobId),
-    exportPackage: (sessionId, outputPath, preset, bounds, heightmapFormat, albedoFormat, heightmapResolution, albedoResolution, imageryZoom, demSource, imagerySource) =>
-      ipcRenderer.invoke('native:exportPackage', sessionId, outputPath, preset, bounds, heightmapFormat, albedoFormat, heightmapResolution, albedoResolution, imageryZoom, demSource, imagerySource),
+    exportPackage: (sessionId, outputPath, preset, bounds, heightmapFormat, albedoFormat, heightmapResolution, albedoResolution, imageryZoom, demSource, imagerySource, apiKeys) =>
+      ipcRenderer.invoke('native:exportPackage', sessionId, outputPath, preset, bounds, heightmapFormat, albedoFormat, heightmapResolution, albedoResolution, imageryZoom, demSource, imagerySource, apiKeys),
+  },
+  settings: {
+    getApiKeys: () => ipcRenderer.invoke('settings:getApiKeys'),
+    setApiKeys: (apiKeys) => ipcRenderer.invoke('settings:setApiKeys', apiKeys),
   },
   dialog: {
     selectFolder: () => ipcRenderer.invoke('dialog:selectFolder'),

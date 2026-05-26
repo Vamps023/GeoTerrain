@@ -167,6 +167,7 @@ ipcMain.handle('native:exportPackage', async (_event: any,
   imageryZoom = 0,
   demSource = 'aws-terrarium',
   imagerySource = 'arcgis',
+  apiKeys?: { opentopography?: string; mapbox?: string; maptiler?: string },
 ) => {
   if (!nativeAddon) {
     console.warn('[Main] Native addon not loaded, using Node.js export engine');
@@ -183,6 +184,9 @@ ipcMain.handle('native:exportPackage', async (_event: any,
         imageryZoom,
         demSource: demSource as any,
         imagerySource: imagerySource as any,
+        opentopographyApiKey: apiKeys?.opentopography,
+        mapboxAccessToken: apiKeys?.mapbox,
+        maptilerApiKey: apiKeys?.maptiler,
       });
       return result.manifestPath;
     } catch (err) {
@@ -191,6 +195,38 @@ ipcMain.handle('native:exportPackage', async (_event: any,
     }
   }
   return nativeAddon.exportPackage(sessionId, outputPath, preset, bounds, heightmapFormat, albedoFormat, heightmapResolution, albedoResolution, imageryZoom, demSource, imagerySource);
+});
+
+// ─── Settings (API Keys) ────────────────────────────────────
+const settingsPath = path.join(app.getPath('userData'), 'settings.json');
+
+ipcMain.handle('settings:getApiKeys', async () => {
+  try {
+    if (fs.existsSync(settingsPath)) {
+      const data = await fs.promises.readFile(settingsPath, 'utf-8');
+      const settings = JSON.parse(data);
+      return settings.apiKeys || {};
+    }
+  } catch (err) {
+    console.error('[Main] Failed to read settings:', err);
+  }
+  return {};
+});
+
+ipcMain.handle('settings:setApiKeys', async (_event: any, apiKeys: { opentopography?: string; mapbox?: string; maptiler?: string }) => {
+  try {
+    let settings: any = {};
+    if (fs.existsSync(settingsPath)) {
+      const data = await fs.promises.readFile(settingsPath, 'utf-8');
+      settings = JSON.parse(data);
+    }
+    settings.apiKeys = { ...(settings.apiKeys || {}), ...apiKeys };
+    await fs.promises.writeFile(settingsPath, JSON.stringify(settings, null, 2), 'utf-8');
+    return true;
+  } catch (err) {
+    console.error('[Main] Failed to save settings:', err);
+    return false;
+  }
 });
 
 ipcMain.handle('dialog:selectFolder', async () => {
