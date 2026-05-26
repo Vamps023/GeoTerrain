@@ -13,6 +13,7 @@ import {
   Texture,
   Color3,
   Color4,
+  HighlightLayer,
 } from '@babylonjs/core';
 import type { TerrainManifest, TerrainTile } from '../../types/terrain';
 import { FsAPI } from '../../core/ipc';
@@ -37,9 +38,15 @@ export const TerrainViewer3D: React.FC<TerrainViewer3DProps> = ({ manifest, pack
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const engineRef = useRef<Engine | null>(null);
   const sceneRef = useRef<Scene | null>(null);
+  const highlightLayerRef = useRef<HighlightLayer | null>(null);
+  const selectedMeshRef = useRef<Mesh | null>(null);
   const [isLoading, setIsLoading] = useState(false);
   const [status, setStatus] = useState('Ready — Click to enable fly controls');
   const [controlsHint, setControlsHint] = useState(true);
+  const [selectedTile, setSelectedTile] = useState<TerrainTile | null>(null);
+  const [flipX, setFlipX] = useState(false);
+  const [flipY, setFlipY] = useState(false);
+  const [tileRotation, setTileRotation] = useState(0);
 
   // Initialize engine + FPS camera
   useEffect(() => {
@@ -90,6 +97,43 @@ export const TerrainViewer3D: React.FC<TerrainViewer3DProps> = ({ manifest, pack
     sun.position = new Vector3(500, 1000, 500);
     sun.intensity = 1.0;
 
+    // Highlight layer for tile selection
+    const hl = new HighlightLayer('hl1', scene);
+    hl.blurHorizontalSize = 0.8;
+    hl.blurVerticalSize = 0.8;
+    highlightLayerRef.current = hl;
+
+    // Click handler for tile selection
+    scene.onPointerDown = (_evt, pickResult) => {
+      if (pickResult.hit && pickResult.pickedMesh) {
+        const mesh = pickResult.pickedMesh as Mesh;
+        const tileData = mesh.metadata as TerrainTile | undefined;
+        if (tileData) {
+          setSelectedTile(tileData);
+          selectedMeshRef.current = mesh;
+          setFlipX(false);
+          setFlipY(false);
+          setTileRotation(0);
+          hl.removeAllMeshes();
+          hl.addMesh(mesh, new Color3(1, 0.8, 0.2));
+        } else {
+          setSelectedTile(null);
+          selectedMeshRef.current = null;
+          setFlipX(false);
+          setFlipY(false);
+          setTileRotation(0);
+          hl.removeAllMeshes();
+        }
+      } else {
+        setSelectedTile(null);
+        selectedMeshRef.current = null;
+        setFlipX(false);
+        setFlipY(false);
+        setTileRotation(0);
+        hl.removeAllMeshes();
+      }
+    };
+
     // Render loop
     engine.runRenderLoop(() => scene.render());
     const onResize = () => engine.resize();
@@ -112,6 +156,22 @@ export const TerrainViewer3D: React.FC<TerrainViewer3DProps> = ({ manifest, pack
     if (!manifest || !packagePath || !sceneRef.current) return;
     loadAllTiles(manifest, packagePath, sceneRef.current);
   }, [manifest, packagePath]);
+
+  // Apply flip transformations to selected mesh
+  // Note: Default scaling.z is -1 for Babylon terrain orientation
+  useEffect(() => {
+    if (selectedMeshRef.current) {
+      selectedMeshRef.current.scaling.x = flipX ? -1 : 1;
+      selectedMeshRef.current.scaling.z = flipY ? 1 : -1;
+    }
+  }, [flipX, flipY]);
+
+  // Apply rotation to selected mesh
+  useEffect(() => {
+    if (selectedMeshRef.current) {
+      selectedMeshRef.current.rotation.y = tileRotation * (Math.PI / 180);
+    }
+  }, [tileRotation]);
 
   // ── Demo terrain ───────────────────────────────────────────────────
   const buildDemoTerrain = useCallback((scene: Scene) => {
@@ -211,6 +271,8 @@ export const TerrainViewer3D: React.FC<TerrainViewer3DProps> = ({ manifest, pack
     mesh.position.x = tile.worldOffset.x + tileWidthM / 2;
     mesh.position.z = tile.worldOffset.z + tileHeightM / 2;
     mesh.position.y = 0;
+    // Flip Y by default for Babylon terrain orientation
+    mesh.scaling.z = -1;
     // Terrain preview uses relative height, while absolute elevation remains in the manifest.
 
     // Apply albedo texture
@@ -232,6 +294,9 @@ export const TerrainViewer3D: React.FC<TerrainViewer3DProps> = ({ manifest, pack
     }
     mat.specularColor = new Color3(0.04, 0.04, 0.04);
     mesh.material = mat;
+
+    // Store tile data in mesh metadata for click detection
+    mesh.metadata = tile;
 
     return mesh;
   };
@@ -355,6 +420,42 @@ export const TerrainViewer3D: React.FC<TerrainViewer3DProps> = ({ manifest, pack
               <div><span className="text-white font-mono">Shift</span> sprint · <span className="text-white font-mono">Mouse</span> look</div>
             </div>
           )}
+        </div>
+      )}
+
+      {/* Selected tile info panel */}
+      {selectedTile && !isLoading && (
+        <div className="absolute top-3 right-3 bg-black/80 text-gray-300 text-[11px] px-3 py-2 rounded z-10 max-w-xs space-y-1">
+          <div className="text-[#c4a96b] font-semibold mb-1">Tile Information</div>
+          <div className="grid grid-cols-2 gap-x-3 gap-y-0.5">
+            <span className="text-gray-500">Row:</span>
+            <span className="text-white font-mono">{selectedTile.row}</span>
+            <span className="text-gray-500">Col:</span>
+            <span className="text-white font-mono">{selectedTile.col}</span>
+            <span className="text-gray-500">Elevation:</span>
+            <span className="text-white font-mono">{selectedTile.elevation.min.toFixed(1)}m - {selectedTile.elevation.max.toFixed(1)}m</span>
+            <span className="text-gray-500">Offset X:</span>
+            <span className="text-white font-mono">{selectedTile.worldOffset.x.toFixed(1)}m</span>
+            <span className="text-gray-500">Offset Z:</span>
+            <span className="text-white font-mono">{selectedTile.worldOffset.z.toFixed(1)}m</span>
+          </div>
+          <div className="mt-2 pt-2 border-t border-gray-700">
+            <div className="text-gray-500 mb-1">Flip</div>
+            <div className="flex gap-2">
+              <button
+                onClick={() => setFlipX(!flipX)}
+                className={`flex-1 px-2 py-1 rounded text-[10px] ${flipX ? 'bg-[#4a7c3f] text-white' : 'bg-gray-700 text-gray-300 hover:bg-gray-600'}`}
+              >
+                Flip X
+              </button>
+              <button
+                onClick={() => setFlipY(!flipY)}
+                className={`flex-1 px-2 py-1 rounded text-[10px] ${flipY ? 'bg-[#4a7c3f] text-white' : 'bg-gray-700 text-gray-300 hover:bg-gray-600'}`}
+              >
+                Flip Y
+              </button>
+            </div>
+          </div>
         </div>
       )}
     </div>

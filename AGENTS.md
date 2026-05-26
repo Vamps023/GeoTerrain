@@ -1,61 +1,217 @@
 # GeoTerrain Agent Guide
 
-This file is for AI coding agents working in this repository. Read it before
-changing code. It describes the current checkout, the major flows, the build
-commands, and the traps that have already cost time.
+This file is for AI coding agents working in this repository. Read it before changing code. It describes the project architecture, build process, conventions, known issues, and traps that have already cost time.
 
-## Repository Snapshot
+---
 
-GeoTerrain is currently centered on `GeoTerrainStudio/`, an Electron desktop
-app for selecting real-world map areas, downloading terrain data, exporting
-engine packages, and previewing terrain in Babylon.js.
+## 1. Project Overview
 
-There are also Blender import add-ons under `EnginesAddOn/` and
-`GeoTerrainStudio/EnginesAddOn/`. There is no `GeoTerrainBridge/` directory in
-this checkout, even if older notes mention one.
+GeoTerrain is a desktop geospatial terrain extraction tool. The main product is **GeoTerrain Studio**, an Electron application that lets users select a real-world map area, download DEM (elevation) and satellite imagery, and export engine-ready terrain packages. Exported packages can be previewed in a built-in Babylon.js 3D viewer or imported into Blender via a Python add-on.
 
-Top-level layout:
+There is also a Blender import add-on under `EnginesAddOn/GeoTerrainBlender/` and a packaged copy under `GeoTerrainStudio/EnginesAddOn/Blender/`.
+
+### Repository Layout
 
 ```text
 GeoTerrain/
   AGENTS.md                         # this guide
+  README.md                         # human-facing project overview
   .gitignore
+  images/                           # README assets
   EnginesAddOn/
-    GeoTerrainBlender/              # Blender add-on source
-    GeoTerrainBlender.zip           # generated/exported add-on archive
-  GeoTerrainStudio/
-    electron/                       # Electron main/preload/export engine
-    src/                            # React renderer app
-    public/                         # icons/logo/static assets
-    EnginesAddOn/Blender/           # packaged Blender add-on copy
-    package.json
-    package-lock.json
-    pnpm-lock.yaml
-    CODE_REVIEW.md                  # older review; some items may now be fixed
-    README.md
+    GeoTerrainBlender/              # Blender add-on source (Python)
+    GeoTerrainBlender.zip           # generated add-on archive
+  GeoTerrainStudio/                 # main Electron + React application
+    electron/                       # main process, preload, export engine
+      main.ts                       # BrowserWindow and IPC handlers
+      preload.ts                    # contextBridge API definitions
+      export-engine.ts              # Node DEM/imagery downloader + exporter
+      geotiff-writer.ts             # minimal GeoTIFF writer
+      native/                       # N-API C++ addon stubs
+        binding.gyp
+        src/
+          addon.cpp
+          session_bridge.cpp
+          datasource_bridge.cpp
+          pipeline_bridge.cpp
+    src/                            # React renderer (Vite bundle)
+      App.tsx                       # root component, tab layout, export overlay
+      main.tsx                      # React entry point
+      index.css                     # Tailwind directives + base styles
+      components/
+        MapViewport/MapViewport.tsx       # MapLibre map, bbox selection, tile grid, shapefile overlay
+        ExportPanel/ExportPanel.tsx       # engine presets, format settings, export trigger
+        Viewer3D/TerrainViewer3D.tsx      # Babylon.js terrain preview
+        LayerStack/LayerStack.tsx         # layer/job side panel
+        JobQueue/JobQueue.tsx             # generation job list
+        Toast/Toast.tsx                   # notification toasts
+      core/
+        store.ts                      # Zustand application state
+        ipc.ts                        # typed wrapper around window.electronAPI
+        engines/                      # engine preset configs (if any)
+      types/
+        terrain.ts                    # shared domain and IPC types
+    public/                         # icons, logo, static assets
+    package.json                    # version 2.0.0, Electron 42, React 18
+    tsconfig.json                   # renderer + electron included, strict
+    vite.config.ts                  # aliases @, @components, @core, @types
+    tailwind.config.cjs             # custom geo colors, Inter / JetBrains Mono fonts
+    postcss.config.cjs
+    CODE_REVIEW.md                  # bug backlog and known risks
+    README.md                       # human developer onboarding
 ```
 
-Generated or dependency folders such as `node_modules/`, `dist/`,
-`dist-electron/`, `release/`, and native build outputs should not be edited by
-hand unless the user explicitly asks for generated artifact work.
+---
 
-## Product Flow
+## 2. Technology Stack
 
-The intended user flow is:
+| Layer | Technology | Version / Notes |
+|---|---|---|
+| Desktop Shell | Electron | `^42.2.0` (main: `dist-electron/main.js`) |
+| UI Framework | React | `^18.3.1` |
+| Language | TypeScript | `^5.4.5`, strict mode |
+| Bundler | Vite | `^7.3.3` |
+| Styling | Tailwind CSS | `^3.4.3` with custom `geo-*` colors |
+| Icons | lucide-react | `^0.378.0` |
+| State | Zustand | `^4.5.2` |
+| 2D Map | MapLibre GL JS | `^5.24.0` |
+| 3D Preview | Babylon.js Core | `^7.8.1` |
+| Image Processing | sharp | `^0.34.5` (Node main process **only**) |
+| GeoTIFF I/O | geotiff + custom writer | `geotiff-writer.ts` for 8/16/32-bit output |
+| Native Addon | node-addon-api / node-gyp | C++20 stubs, not production ready |
+| Blender Bridge | Python | Blender 4.0+ add-on |
 
-1. Use the Map tab to select a bounding box.
-2. Choose a tile size and selected tiles.
-3. Use the Export panel to pick an engine preset and output folder.
-4. `electron/export-engine.ts` downloads DEM and imagery, crops/resizes them,
-   writes heightmap/albedo files, and writes `manifest.json`.
-5. For Babylon exports, the renderer combines per-tile manifests into a root
-   manifest and opens the 3D View.
-6. `src/components/Viewer3D/TerrainViewer3D.tsx` loads the manifest and renders
-   terrain with Babylon.js.
-7. Blender imports exported packages through the Python add-on.
+---
 
-The core package contract is a folder with `manifest.json` plus referenced
-assets. Multi-tile Babylon exports look like:
+## 3. Build and Development Commands
+
+Run all commands from `GeoTerrainStudio/`.
+
+```bash
+# Install dependencies (both npm and pnpm lockfiles exist; avoid churn)
+npm install
+
+# Development — Vite dev server only (browser, mocked IPC)
+npm run dev
+
+# Development — Electron with hot-reload
+npm run dev:electron
+
+# Fast validation build (TypeScript compile only, no installer)
+npm run build:vite
+npm run build:electron
+
+# Production installer builds
+npm run build        # all platforms (via electron-builder)
+npm run build:win    # NSIS
+npm run build:mac    # DMG
+npm run build:linux  # AppImage
+
+# Optional: rebuild native addon stub
+npm run rebuild:native
+
+# Lint
+npm run lint
+```
+
+Build outputs:
+- `dist/` — Vite renderer bundle
+- `dist-electron/` — compiled Electron main/preload JS
+- `release/` — electron-builder installers
+
+### Important Build Notes
+- `electron/tsconfig.json` compiles to CommonJS (`module: "CommonJS"`) into `../dist-electron`.
+- `tsconfig.json` uses `module: "ESNext"`, `noEmit: true`, `jsx: "react-jsx"`.
+- Both `package-lock.json` and `pnpm-lock.yaml` exist. Avoid unnecessary lockfile changes.
+- `sharp` and `@img` are unpacked from ASAR (`asarUnpack`) so native binaries remain accessible.
+
+---
+
+## 4. Code Organization and Architecture
+
+### 4.1 Product Flow
+
+1. **Map** tab — user draws a bounding box (Shift-drag). Tile grid is computed from `tileSizeKm`.
+2. User clicks tiles to toggle selection; defaults select all.
+3. **Export** tab — choose engine preset, output folder, heightmap/albedo format, data sources.
+4. `electron/export-engine.ts` downloads tiles, merges/crops/resizes, writes per-tile files.
+5. For Babylon exports, renderer reads the root `manifest.json`, creates Blob URLs, and renders with `MeshBuilder.CreateGroundFromHeightMap`.
+6. Blender add-on imports the same package folder via `operators.py`.
+
+### 4.2 IPC Architecture
+
+The renderer **must never call `window.electronAPI` directly**. All communication goes through `src/core/ipc.ts`, which provides:
+
+- `Native` — generation planning, export, progress
+- `Dialog` — folder/package selection, project save/load
+- `Settings` — API key persistence
+- `FsAPI` — manifest read/write, binary file reading, project serialization
+- `onProgressUpdate` — subscription for job progress
+
+These wrappers also provide mock fallbacks when running in a plain browser (`npm run dev` without Electron).
+
+The preload script (`electron/preload.ts`) defines the exact API shape exposed via `contextBridge.exposeInMainWorld('electronAPI', api)`. IPC channels are prefixed:
+- `native:*`
+- `dialog:*`
+- `fs:*`
+- `settings:*`
+
+### 4.3 State Model
+
+`src/core/store.ts` is a single Zustand store. Key fields:
+
+| Field | Purpose |
+|---|---|
+| `selectedBounds` | Current map selection (`GeoBounds`) |
+| `tileGrid` / `selectedTiles` | Computed grid and `"row,col"` selection set |
+| `selectedPreset` | Target export preset (`ExportPreset`) |
+| `heightmapFormat` / `albedoFormat` | Active output formats |
+| `demSource` / `imagerySource` | Data sources for export |
+| `exportedManifest` / `exportedPackagePath` | Data used by 3D viewer |
+| `activeTab` | `map`, `layers`, `jobs`, `export`, `view3d` |
+| `exportProgress` / `exportResult` / `exportStartTime` | Export overlay state |
+| `notifications` | Toast queue |
+
+### 4.4 Export Engine
+
+`electron/export-engine.ts` is the **only** production export path. The native addon is intentionally **not** used for exports (`main.ts` always calls `executeExport`).
+
+Supported heightmap formats:
+- `png` — normalized 16-bit PNG (Babylon / browser viewing)
+- `r16` — normalized raw 16-bit little-endian
+- `geotiff` — signed 16-bit GeoTIFF (current implementation)
+- `float32` — label says float32 GeoTIFF, but currently also written as int16 (known issue, see CODE_REVIEW.md)
+- `dem` — currently identical to GeoTIFF-style output
+
+Supported albedo formats:
+- `png`
+- `geotiff`
+
+Supported export presets:
+- `unigine`
+- `unreal`
+- `blender`
+- `generic`
+- `babylon`
+
+Supported DEM sources (short IDs, used by `export-engine.ts`):
+- `aws-terrarium`, `mapzen`, `mapbox-terrain-rgb`
+- `opentopo-srtmgl1`, `opentopo-srtmgl3`, `opentopo-aw3d30`, `opentopo-cop30`, `opentopo-nasadem`, `opentopo-usgs10m`
+
+Supported imagery sources:
+- `arcgis`, `mapbox`, `maptiler`
+
+**Critical:** When adding a new source ID or format, update **all** of:
+- `src/types/terrain.ts`
+- `src/core/store.ts`
+- `src/components/ExportPanel/ExportPanel.tsx`
+- `electron/export-engine.ts`
+- `electron/preload.ts`
+- `src/core/ipc.ts`
+
+### 4.5 Terrain Package Format
+
+A multi-tile export looks like:
 
 ```text
 OutputFolder/
@@ -70,232 +226,100 @@ OutputFolder/
     tile_1_2_albedo.png
 ```
 
-## GeoTerrain Studio Architecture
+The root manifest aggregates all tiles. The Blender add-on and Babylon viewer both consume this structure.
 
-Renderer app:
+---
 
-```text
-GeoTerrainStudio/src/
-  App.tsx
-  main.tsx
-  index.css
-  components/
-    MapViewport/MapViewport.tsx     # MapLibre map, bbox selection, tile grid
-    ExportPanel/ExportPanel.tsx     # presets, format settings, export trigger
-    Viewer3D/TerrainViewer3D.tsx    # Babylon terrain preview
-    LayerStack/LayerStack.tsx       # layer/job side panel
-    JobQueue/JobQueue.tsx
-    Toast/Toast.tsx
-  core/
-    store.ts                        # Zustand app state
-    ipc.ts                          # typed wrapper around window.electronAPI
-  types/
-    terrain.ts                      # shared domain and IPC types
-```
+## 5. Code Style and Conventions
 
-Electron and export code:
+### TypeScript
+- **Strict mode enabled.** `noUnusedLocals`, `noUnusedParameters`, `noFallthroughCasesInSwitch` are all on.
+- Path aliases (resolved by both Vite and TypeScript):
+  - `@/` → `src/`
+  - `@components/` → `src/components/`
+  - `@core/` → `src/core/`
+  - `@types/` → `src/types/`
+- Electron main code uses `require()` for Electron APIs to avoid ESM/CJS interop issues.
+- Renderer code must be ESM and must not import Node-only packages.
 
-```text
-GeoTerrainStudio/electron/
-  main.ts                           # BrowserWindow and IPC handlers
-  preload.ts                        # contextBridge API exposed to renderer
-  export-engine.ts                  # Node export pipeline
-  geotiff-writer.ts                 # minimal GeoTIFF writer
-  native/
-    binding.gyp
-    src/
-      addon.cpp
-      session_bridge.cpp            # native addon stubs
-      datasource_bridge.cpp
-      pipeline_bridge.cpp
-```
+### React / UI
+- Functional components with hooks.
+- Tailwind utility classes; custom theme colors in `tailwind.config.cjs`.
+- Use `clsx` and `tailwind-merge` for conditional class composition where needed.
 
-Important rule: renderer components should call `Native`, `Dialog`, `Settings`,
-or `FsAPI` from `src/core/ipc.ts`; they should not call `window.electronAPI`
-directly.
+### Naming
+- IPC channel names: `domain:action` (e.g., `native:exportPackage`).
+- File names: PascalCase for components, camelCase for utilities.
+- Zustand actions: `setXxx` pattern.
 
-## Export Engine
+### No Renderer-side Node Dependencies
+Do **not** import `sharp`, `fs`, `path`, or any Node module into files under `src/`. These will fail at runtime in Vite/Chromium with `process is not defined`. Use them **only** from `electron/` (main process).
 
-`electron/export-engine.ts` is the real export implementation today.
+---
 
-Primary responsibilities:
+## 6. Testing Strategy
 
-- validate bounds, tile counts, and memory estimates
-- download DEM data from AWS Terrarium, Mapzen, Mapbox Terrain-RGB, or
-  OpenTopography sources
-- download imagery from ArcGIS, Mapbox, or MapTiler
-- merge, crop, resize, and write output rasters
-- write per-tile `manifest.json`
+**There is currently no automated test suite in the project source.** The only test files found are inside `node_modules/`. If you add tests, place them adjacent to the source files using a `.test.ts` or `.spec.ts` suffix, and update `package.json` scripts accordingly.
 
-Supported height formats:
+Manual validation workflow after TypeScript changes:
+1. `npm run build:vite`
+2. `npm run build:electron`
+3. Launch `npm run dev:electron` and exercise the full export + 3D preview flow.
+4. Verify `manifest.json` and referenced tile files exist in the output folder.
 
-- `png`: normalized 16-bit heightmap PNG for Babylon/browser viewing
-- `r16`: normalized raw 16-bit little-endian heightmap
-- `geotiff`: signed 16-bit GeoTIFF
-- `float32`: Float32 GeoTIFF
-- `dem`: currently routed as a GeoTIFF-style height output
+---
 
-OpenTopography sources require a valid API key. A `401` from
-`portal.opentopography.org` means the key was rejected by OpenTopography for
-that request; it is not a Babylon viewer bug.
+## 7. Security Considerations
 
-## Babylon 3D Viewer
+- `contextIsolation: true` in `BrowserWindow` webPreferences.
+- `nodeIntegration: false`.
+- `sandbox: false` (required for native addon loading and `sharp` access from main).
+- All privileged operations go through typed IPC in `preload.ts`.
+- Renderer must use `src/core/ipc.ts` wrappers; never access `window.electronAPI` directly.
+- API keys (OpenTopography, Mapbox, MapTiler) are stored in `settings.json` inside the user's `app.getPath('userData')` directory, not in source.
 
-File: `GeoTerrainStudio/src/components/Viewer3D/TerrainViewer3D.tsx`.
+---
 
-Current behavior:
+## 8. Known Issues and Cleanup Targets
 
-- reads the root manifest from Zustand state
-- reads local image files through `FsAPI.readFileBinary`
-- creates Blob URLs for PNG heightmaps/albedo textures
-- uses `MeshBuilder.CreateGroundFromHeightMap`
-- previews relative elevation range, not absolute elevation above sea level
-- normalizes loaded tile rows/columns so partial tile selections appear near
-  the camera
-- recovers row/column from paths like `tile_2_3/...` for older manifests where
-  all tiles were written as `row: 0, col: 0`
+These are documented in `CODE_REVIEW.md` and verified to still exist:
 
-Do not import `sharp` in renderer files. `sharp` is a Node module and will fail
-in Vite/Chromium renderer code with `process is not defined`. Use `sharp` only
-from Electron main/export code.
+1. **Source ID mismatch (High)** — `export-engine.ts` uses short IDs (`arcgis`, `mapbox`, `maptiler`), but earlier versions of UI/store used longer IDs. Ensure any new UI code uses the short IDs expected by the engine.
+2. **Heightmap GeoTIFF is int16, not float32 (High)** — The UI labels `float32` and `dem` as float32 GeoTIFF, but `export-engine.ts` currently quantizes to `Int16Array`. See `CODE_REVIEW.md` for fix paths.
+3. **Triplicated transpiled files** — `CODE_REVIEW.md` warns about `.ts` + `.js` + `.cjs` drift in `electron/`. Always edit the `.ts` source and regenerate.
+4. **Native addon is stubbed** — `session_bridge.cpp` contains TODOs and mock implementations. Do not re-enable native export in `main.ts`; keep using `executeExport`.
+5. **OpenTopography 401** — If an export fails with `401` from `portal.opentopography.org`, the API key was rejected for that endpoint or account scope. This is not a viewer bug; switch to `aws-terrarium` for keyless export.
+6. **Encoding artifacts** — Some older comments/docs contain mojibake from prior encoding issues. Prefer ASCII in new edits.
 
-## Blender Add-on
+---
 
-Main source:
+## 9. Common Debugging Checks
 
-```text
-EnginesAddOn/GeoTerrainBlender/
-  __init__.py
-  operators.py
-  panels.py
-  README.md
-```
-
-There is also a packaged copy under:
-
-```text
-GeoTerrainStudio/EnginesAddOn/Blender/
-```
-
-The add-on imports GeoTerrain packages into Blender as terrain planes with
-displacement and albedo material. It supports root manifests and per-tile
-folders. It uses row/col fallback placement when `worldOffset` is missing or
-zero.
-
-If changing Blender import behavior, check whether both add-on source locations
-need the same update.
-
-## Native Addon Status
-
-The N-API addon under `GeoTerrainStudio/electron/native/` is not a real export
-pipeline yet. Its `exportPackage` implementation is a stub in
-`session_bridge.cpp`.
-
-For this reason, `electron/main.ts` should keep exports on the Node
-`executeExport` path until the native exporter is fully implemented. Do not
-re-enable native export just because `geoterrain_native.node` exists.
-
-## State Model
-
-`src/core/store.ts` is the central Zustand store.
-
-Important state fields:
-
-- `selectedBounds`: current map selection
-- `tileGrid`: computed row/column grid from selected bounds and tile size
-- `selectedTiles`: set of selected `"row,col"` tile keys
-- `selectedPreset`: target export preset
-- `heightmapFormat`, `albedoFormat`: active output formats
-- `demSource`, `imagerySource`: export data sources
-- `exportedManifest`, `exportedPackagePath`: data used by the 3D viewer
-- `activeTab`: `map`, `layers`, `jobs`, `export`, or `view3d`
-
-When adding new source IDs or formats, update all of:
-
-- `src/types/terrain.ts`
-- `src/core/store.ts`
-- `src/components/ExportPanel/ExportPanel.tsx`
-- `electron/export-engine.ts`
-- `electron/preload.ts`
-- `src/core/ipc.ts`
-
-## Build Commands
-
-Run these from `GeoTerrainStudio/`.
-
-```bash
-npm run build:vite
-npm run build:electron
-```
-
-These two commands are the fastest validation pass and have been used in this
-workspace.
-
-Other available scripts:
-
-```bash
-npm run dev
-npm run dev:electron
-npm run lint
-npm run build
-npm run build:win
-npm run build:mac
-npm run build:linux
-npm run rebuild:native
-```
-
-Both `package-lock.json` and `pnpm-lock.yaml` exist. Avoid lockfile churn unless
-the user asks for dependency changes.
-
-## Common Debugging Checks
-
-If Babylon 3D View is blank:
-
+### Blank Babylon 3D View
 1. Confirm export preset is `babylon`.
-2. Confirm heightmap and albedo formats are PNG.
+2. Confirm heightmap and albedo formats are `png`.
 3. Confirm root `manifest.json` exists in the output folder.
-4. Confirm root manifest has all selected tiles, not only one tile.
+4. Confirm root manifest lists **all** selected tiles, not just one.
 5. Confirm tile file paths in the manifest exist on disk.
-6. Confirm tile rows/columns are unique or recoverable from `tile_<row>_<col>`
-   folder paths.
-7. Confirm the app was restarted after TypeScript changes so the latest Vite
-   bundle is loaded.
+6. Confirm tile rows/columns are unique or recoverable from `tile_<row>_<col>` folder paths.
+7. Restart the app after TypeScript changes so the latest Vite bundle loads.
 
-If export fails with OpenTopography `401`:
-
-1. The request reached OpenTopography.
-2. The key was rejected for that endpoint or account scope.
-3. Use `aws-terrarium` for a keyless export path.
-4. Do not debug Babylon until export succeeds.
-
-If export appears to succeed but files are missing:
-
+### Export Appears to Succeed but Files Are Missing
 1. Ensure `electron/main.ts` is using `executeExport`, not native stub export.
 2. Inspect the selected output folder for `tile_<row>_<col>/manifest.json`.
-3. Check console output from Electron main process.
+3. Check console output from the Electron main process.
 
-## Known Issues And Cleanup Targets
+---
 
-- `CODE_REVIEW.md` is older and contains items that may be partially fixed.
-  Verify each item before acting on it.
-- The native addon is mostly stubbed.
-- `package-lock.json` may change when using `npm`; `pnpm-lock.yaml` also
-  exists.
-- There are generated zip archives for Blender add-ons. Do not edit zip files
-  directly.
-- Some comments and older docs contain mojibake characters from prior encoding
-  issues. Prefer ASCII in new edits.
-- Avoid editing generated `dist` or `dist-electron` files unless packaging
-  artifacts are explicitly requested.
+## 10. Agent Working Rules
 
-## Agent Working Rules
-
-- Prefer narrow changes that follow the existing React/Electron patterns.
-- Keep terrain package compatibility in mind: exporter, viewer, and Blender
-  add-on all consume the same manifest contract.
+- Prefer narrow changes that follow existing React/Electron patterns.
+- Keep terrain package compatibility in mind: exporter, viewer, and Blender add-on all consume the same manifest contract.
 - Do not add browser-side Node dependencies.
 - Do not treat native addon stubs as production functionality.
-- Use `rg` for search and run the two build commands after TypeScript changes.
-- When modifying export metadata, test with a real output folder and inspect
-  `manifest.json` plus referenced files.
-
+- Use `rg` (ripgrep) or `grep` for search.
+- After TypeScript changes, run `npm run build:vite && npm run build:electron`.
+- When modifying export metadata, test with a real output folder and inspect `manifest.json` plus referenced files.
+- If you modify Blender import behavior, check whether **both** add-on source locations need the same update:
+  - `EnginesAddOn/GeoTerrainBlender/`
+  - `GeoTerrainStudio/EnginesAddOn/Blender/`

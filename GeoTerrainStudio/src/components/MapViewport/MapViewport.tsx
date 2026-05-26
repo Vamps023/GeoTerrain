@@ -443,7 +443,7 @@ export const MapViewport: React.FC<MapViewportProps> = ({ className }) => {
           row: tile.row,
           col: tile.col,
           selected: isSelected ? 1 : 0,
-          label: `${tile.row + 1},${tile.col + 1}`,
+          label: `${tile.row},${tile.col}`,
         },
       };
     });
