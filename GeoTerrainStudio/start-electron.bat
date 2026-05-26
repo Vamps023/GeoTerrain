@@ -1,0 +1,4 @@
+@echo off
+set ELECTRON_RUN_AS_NODE=
+set ELECTRON_NO_ATTACH_CONSOLE=
+electron .

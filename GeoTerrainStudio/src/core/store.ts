@@ -1,5 +1,5 @@
 import { create } from 'zustand';
-import type { AppState, GeoBounds, TerrainProfile, GenerationPlan, JobProgress, ExportPreset, TerrainManifest, HeightmapFormat, AlbedoFormat, DEMSource, ImagerySource } from '../types/terrain';
+import type { AppState, GeoBounds, TerrainProfile, GenerationPlan, JobProgress, ExportPreset, TerrainManifest, HeightmapFormat, AlbedoFormat, DEMSource, ImagerySource, TileGrid } from '../types/terrain';
 
 const defaultProfile: TerrainProfile = {
   id: 'balanced',
@@ -45,6 +45,12 @@ export const useTerrainStore = create<AppState & {
   setImageryZoom: (zoom: number) => void;
   setHeightmapResolution: (res: number) => void;
   setAlbedoResolution: (res: number) => void;
+  setTileSizeKm: (size: number) => void;
+  setTileGrid: (grid: TileGrid | null) => void;
+  toggleTileSelection: (row: number, col: number) => void;
+  selectAllTiles: () => void;
+  deselectAllTiles: () => void;
+  setSelectedTiles: (tiles: Set<string>) => void;
   setActiveTab: (tab: AppState['activeTab']) => void;
   setExportedData: (manifest: TerrainManifest | null, packagePath: string | null) => void;
   resetGeneration: () => void;
@@ -66,6 +72,9 @@ export const useTerrainStore = create<AppState & {
   imageryZoom: 0,
   heightmapResolution: 1024,
   albedoResolution: 1024,
+  tileSizeKm: 4,
+  tileGrid: null,
+  selectedTiles: new Set<string>(),
   activeTab: 'map',
 
   // Actions
@@ -83,6 +92,28 @@ export const useTerrainStore = create<AppState & {
   setImageryZoom: (zoom) => set({ imageryZoom: zoom }),
   setHeightmapResolution: (res) => set({ heightmapResolution: res }),
   setAlbedoResolution: (res) => set({ albedoResolution: res }),
+  setTileSizeKm: (size) => set({ tileSizeKm: size }),
+  setTileGrid: (grid) => set({ tileGrid: grid }),
+  toggleTileSelection: (row, col) => set((state) => {
+    const key = `${row},${col}`;
+    const newSet = new Set(state.selectedTiles);
+    if (newSet.has(key)) {
+      newSet.delete(key);
+    } else {
+      newSet.add(key);
+    }
+    return { selectedTiles: newSet };
+  }),
+  selectAllTiles: () => set((state) => {
+    if (!state.tileGrid) return {};
+    const all = new Set<string>();
+    for (const tile of state.tileGrid.tiles) {
+      all.add(`${tile.row},${tile.col}`);
+    }
+    return { selectedTiles: all };
+  }),
+  deselectAllTiles: () => set({ selectedTiles: new Set<string>() }),
+  setSelectedTiles: (tiles) => set({ selectedTiles: tiles }),
   setActiveTab: (tab) => set({ activeTab: tab }),
   setExportedData: (manifest, packagePath) => set({ exportedManifest: manifest, exportedPackagePath: packagePath }),
   resetGeneration: () => set({

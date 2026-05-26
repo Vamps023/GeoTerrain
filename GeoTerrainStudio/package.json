@@ -14,7 +14,7 @@
   },
   "scripts": {
     "dev": "vite --open",
-    "dev:electron": "concurrently \"vite\" \"wait-on http://localhost:5173 && electron .\"",
+    "dev:electron": "concurrently \"vite\" \"wait-on http://localhost:5173 && start-electron.bat\"",
     "build": "tsc && vite build && electron-builder",
     "build:win": "tsc && vite build && electron-builder --win",
     "build:mac": "tsc && vite build && electron-builder --mac",
@@ -88,11 +88,11 @@
     ],
     "win": {
       "target": "nsis",
-      "icon": "public/icon.ico"
+      "icon": "public/logo/logo.png"
     },
     "mac": {
       "target": "dmg",
-      "icon": "public/icon.icns"
+      "icon": "public/logo/logo.png"
     },
     "linux": {
       "target": "AppImage",

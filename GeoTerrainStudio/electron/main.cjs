@@ -4,7 +4,11 @@
  * Uses direct require() for Electron APIs to avoid TypeScript ES module
  * interop issues with Electron 34's CommonJS loader.
  */
+// CRITICAL: ELECTRON_RUN_AS_NODE breaks require('electron').
+// This must be handled by the launcher (cross-env), but guard here too.
 const electron = require('electron');
+// If electron module loaded incorrectly (path string instead of module),
+// we can't recover from here — the launcher must unset ELECTRON_RUN_AS_NODE.
 const path = require('path');
 const fs = require('fs');
 const { executeExport } = require('./export-engine');
@@ -32,6 +36,7 @@ function createWindow() {
         minWidth: 1200,
         minHeight: 800,
         title: 'GeoTerrain Studio',
+        icon: path.join(__dirname, '../public/logo/logo.png'),
         darkTheme: true,
         backgroundColor: '#1a1a1a',
         webPreferences: {
@@ -188,4 +193,50 @@ ipcMain.handle('fs:writeManifest', async (_event, packagePath, manifest) => {
     await fs.promises.mkdir(packagePath, { recursive: true });
     await fs.promises.writeFile(manifestPath, JSON.stringify(manifest, null, 2));
     return true;
+});
+
+// ─── Project Save/Load ────────────────────────────────────────
+
+ipcMain.handle('dialog:saveProject', async () => {
+    const result = await dialog.showSaveDialog(mainWindow, {
+        title: 'Save Project',
+        defaultPath: 'project.gtp',
+        filters: [
+            { name: 'GeoTerrain Project', extensions: ['gtp'] },
+            { name: 'All Files', extensions: ['*'] },
+        ],
+    });
+    return result.canceled ? null : result.filePath;
+});
+
+ipcMain.handle('dialog:loadProject', async () => {
+    const result = await dialog.showOpenDialog(mainWindow, {
+        properties: ['openFile'],
+        title: 'Load Project',
+        filters: [
+            { name: 'GeoTerrain Project', extensions: ['gtp'] },
+            { name: 'All Files', extensions: ['*'] },
+        ],
+    });
+    return result.canceled ? null : result.filePaths[0];
+});
+
+ipcMain.handle('fs:saveProject', async (_event, filePath, data) => {
+    try {
+        await fs.promises.writeFile(filePath, JSON.stringify(data, null, 2), 'utf-8');
+        return true;
+    } catch (err) {
+        console.error('[Main] Failed to save project:', err);
+        return false;
+    }
+});
+
+ipcMain.handle('fs:loadProject', async (_event, filePath) => {
+    try {
+        const data = await fs.promises.readFile(filePath, 'utf-8');
+        return JSON.parse(data);
+    } catch (err) {
+        console.error('[Main] Failed to load project:', err);
+        return null;
+    }
 });

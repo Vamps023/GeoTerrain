@@ -3,7 +3,7 @@
  * Provides fallback implementations for development without the native addon.
  */
 
-import type { ElectronAPI, GeoBounds, TerrainProfile, GenerationPlan, JobProgress, HeightmapFormat, AlbedoFormat } from '../types/terrain';
+import type { ElectronAPI, GeoBounds, TerrainProfile, GenerationPlan, JobProgress, HeightmapFormat, AlbedoFormat, ProjectData } from '../types/terrain';
 
 declare global {
   interface Window {
@@ -79,6 +79,22 @@ export const Dialog = {
     if (!isElectron()) return null;
     return window.electronAPI!.dialog.selectPackage();
   },
+
+  async saveProject(): Promise<string | null> {
+    if (!isElectron()) {
+      console.log('[Mock] Save project dialog');
+      return 'mock-project.gtp';
+    }
+    return window.electronAPI!.dialog.saveProject();
+  },
+
+  async loadProject(): Promise<string | null> {
+    if (!isElectron()) {
+      console.log('[Mock] Load project dialog');
+      return null;
+    }
+    return window.electronAPI!.dialog.loadProject();
+  },
 };
 
 export const FsAPI = {
@@ -95,6 +111,22 @@ export const FsAPI = {
       return true;
     }
     return window.electronAPI!.fs.writeManifest(packagePath, manifest);
+  },
+
+  async saveProject(filePath: string, data: ProjectData): Promise<boolean> {
+    if (!isElectron()) {
+      console.log('[Mock] Save project:', filePath, data);
+      return true;
+    }
+    return window.electronAPI!.fs.saveProject(filePath, data);
+  },
+
+  async loadProject(filePath: string): Promise<ProjectData | null> {
+    if (!isElectron()) {
+      console.log('[Mock] Load project:', filePath);
+      return null;
+    }
+    return window.electronAPI!.fs.loadProject(filePath);
   },
 };
 

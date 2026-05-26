@@ -25,9 +25,7 @@ function App(): JSX.Element {
       {/* Title Bar */}
       <header className="h-12 bg-[#1a1a1a] border-b border-gray-800 flex items-center px-4 justify-between select-none">
         <div className="flex items-center gap-3">
-          <div className="w-7 h-7 bg-gradient-to-br from-cyan-500 to-blue-600 rounded flex items-center justify-center text-xs font-bold">
-            GT
-          </div>
+          <img src="/logo/logo.png" alt="GeoTerrain" className="w-8 h-8 rounded object-contain" />
           <h1 className="text-sm font-semibold tracking-wide">GeoTerrain Studio</h1>
           <span className="text-[10px] px-1.5 py-0.5 bg-cyan-500/20 text-cyan-400 rounded">v2.0.0-beta</span>
         </div>
@@ -82,12 +80,7 @@ function App(): JSX.Element {
             </div>
           )}
 
-          {/* When map is active, show a collapsible right panel with layer info */}
-          {activeTab === 'map' && (
-            <div className="w-72 bg-[#1e1e1e] border-l border-gray-800">
-              <LayerStack />
-            </div>
-          )}
+          {/* Right panel removed — layer controls now on map overlay */}
         </main>
       </div>
 

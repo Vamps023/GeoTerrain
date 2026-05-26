@@ -13,10 +13,14 @@ const api = {
     dialog: {
         selectFolder: () => electron_1.ipcRenderer.invoke('dialog:selectFolder'),
         selectPackage: () => electron_1.ipcRenderer.invoke('dialog:selectPackage'),
+        saveProject: () => electron_1.ipcRenderer.invoke('dialog:saveProject'),
+        loadProject: () => electron_1.ipcRenderer.invoke('dialog:loadProject'),
     },
     fs: {
         readManifest: (packagePath) => electron_1.ipcRenderer.invoke('fs:readManifest', packagePath),
         writeManifest: (packagePath, manifest) => electron_1.ipcRenderer.invoke('fs:writeManifest', packagePath, manifest),
+        saveProject: (filePath, data) => electron_1.ipcRenderer.invoke('fs:saveProject', filePath, data),
+        loadProject: (filePath) => electron_1.ipcRenderer.invoke('fs:loadProject', filePath),
     },
     onProgressUpdate: (callback) => {
         const handler = (_event, progress) => callback(progress);

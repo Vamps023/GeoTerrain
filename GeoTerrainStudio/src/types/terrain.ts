@@ -27,10 +27,14 @@ export interface ElectronAPI {
   dialog: {
     selectFolder: () => Promise<string | null>;
     selectPackage: () => Promise<string | null>;
+    saveProject: () => Promise<string | null>;
+    loadProject: () => Promise<string | null>;
   };
   fs: {
     readManifest: (packagePath: string) => Promise<unknown>;
     writeManifest: (packagePath: string, manifest: object) => Promise<boolean>;
+    saveProject: (filePath: string, data: ProjectData) => Promise<boolean>;
+    loadProject: (filePath: string) => Promise<ProjectData | null>;
   };
   onProgressUpdate: (callback: (progress: JobProgress) => void) => () => void;
 }
@@ -213,13 +217,62 @@ export interface AppState {
   exportedManifest: TerrainManifest | null;
   exportedPackagePath: string | null;
 
-  // Quality settings (new)
+  // Quality settings
   demSource: DEMSource;
   imagerySource: ImagerySource;
   imageryZoom: number; // 0 = auto, or 10-19
   heightmapResolution: number;
   albedoResolution: number;
 
+  // Tile-based export (new)
+  tileSizeKm: number; // Size of each tile in km (1, 2, 4, 8)
+  tileGrid: TileGrid | null; // Computed tile grid from selected bounds
+  selectedTiles: Set<string>; // Set of "row,col" strings for selected tiles
+
   // UI
   activeTab: 'map' | 'layers' | 'jobs' | 'export' | 'view3d';
+}
+
+export interface TileGrid {
+  rows: number;
+  cols: number;
+  tileSizeKm: number;
+  tiles: TileDefinition[];
+}
+
+export interface TileDefinition {
+  row: number;
+  col: number;
+  bounds: GeoBounds;
+  center: { lng: number; lat: number };
+  selected: boolean;
+}
+
+// ─── Project Save/Load ────────────────────────────────────────
+
+export interface ProjectData {
+  version: string;
+  savedAt: string;
+  // Selection bounds
+  selectedBounds: GeoBounds | null;
+  // Tile grid config
+  tileSizeKm: number;
+  tileGrid: TileGrid | null;
+  selectedTiles: string[]; // Array of "row,col" strings (Set can't be JSON serialized)
+  // Shapefile data (GeoJSON FeatureCollection)
+  shapefileGeoJSON: {
+    type: 'FeatureCollection';
+    features: Array<{
+      type: 'Feature';
+      geometry: {
+        type: 'Polygon';
+        coordinates: number[][][][];
+      };
+      properties: Record<string, unknown>;
+    }>;
+  } | null;
+  shapefileBounds: { minX: number; maxX: number; minY: number; maxY: number } | null;
+  // Map view state
+  mapCenter: { lng: number; lat: number };
+  mapZoom: number;
 }

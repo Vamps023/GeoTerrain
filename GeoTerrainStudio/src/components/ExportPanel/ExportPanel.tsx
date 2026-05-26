@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { Download, FolderOpen, FileArchive, Settings, Check } from 'lucide-react';
+import { Download, FolderOpen, FileArchive, Check } from 'lucide-react';
 import { useTerrainStore } from '../../core/store';
 import { Native, Dialog } from '../../core/ipc';
 import type { ExportPreset, HeightmapFormat, AlbedoFormat } from '../../types/terrain';
@@ -36,7 +36,10 @@ export const ExportPanel: React.FC = () => {
   const setDEMSource = useTerrainStore((s) => s.setDEMSource);
   const imagerySource = useTerrainStore((s) => s.imagerySource);
   const setImagerySource = useTerrainStore((s) => s.setImagerySource);
+  const selectedTiles = useTerrainStore((s) => s.selectedTiles);
+
   const [isExporting, setIsExporting] = useState(false);
+  const [exportProgress, setExportProgress] = useState<{ current: number; total: number } | null>(null);
   const [exportResult, setExportResult] = useState<string | null>(null);
 
   const handleSelectFolder = async () => {
@@ -49,20 +52,28 @@ export const ExportPanel: React.FC = () => {
       alert('Please select an output folder first.');
       return;
     }
+    if (!selectedBounds) {
+      alert('Please select an area on the map first.');
+      return;
+    }
+    if (selectedTiles.size === 0) {
+      alert('Please select at least one tile to export.');
+      return;
+    }
+
     try {
       setIsExporting(true);
-      const sessionId = `session-${Date.now()}`;
+      setExportResult(null);
 
       // Special handling for Babylon.js export
       if (selectedPreset === 'babylon') {
-        // Create a mock manifest for Babylon.js 3D viewing
         const mockManifest = {
           version: '1.0.0',
           createdBy: 'GeoTerrain Studio',
           createdAt: new Date().toISOString(),
           terrainName: 'Babylon.js Terrain',
           description: 'Terrain for 3D viewport viewing',
-          bounds: selectedBounds || { west: 0, south: 0, east: 0.1, north: 0.1 },
+          bounds: selectedBounds,
           crs: 'EPSG:4326',
           tileGrid: {
             rows: 1,
@@ -75,7 +86,7 @@ export const ExportPanel: React.FC = () => {
             {
               row: 0,
               col: 0,
-              bounds: selectedBounds || { west: 0, south: 0, east: 0.1, north: 0.1 },
+              bounds: selectedBounds,
               worldOffset: { x: 0, y: 0, z: 0 },
               files: {
                 heightmap: 'heightmap.tif',
@@ -105,16 +116,37 @@ export const ExportPanel: React.FC = () => {
 
         setExportedData(mockManifest, outputPath);
         setExportResult(`Terrain prepared for 3D viewing. Output path: ${outputPath}`);
-        // Auto-switch to 3D view
         setActiveTab('view3d');
-      } else {
-        // For other presets, use the native export
-        const bounds = selectedBounds || { west: 0, south: 0, east: 0.1, north: 0.1 };
-        const result = await Native.exportPackage(
+        return;
+      }
+
+      // Multi-tile export
+      const grid = useTerrainStore.getState().tileGrid;
+      const tilesToExport = grid?.tiles.filter((t: { row: number; col: number }) =>
+        selectedTiles.has(`${t.row},${t.col}`)
+      ) ?? [];
+
+      if (tilesToExport.length === 0) {
+        alert('No tiles selected for export.');
+        return;
+      }
+
+      const total = tilesToExport.length;
+      setExportProgress({ current: 0, total });
+
+      // Export each tile
+      for (let i = 0; i < tilesToExport.length; i++) {
+        const tile = tilesToExport[i];
+        const sessionId = `session-${Date.now()}-${i}`;
+        const tileOutputPath = `${outputPath}/tile_${tile.row}_${tile.col}`;
+
+        setExportProgress({ current: i + 1, total });
+
+        await Native.exportPackage(
           sessionId,
-          outputPath,
+          tileOutputPath,
           selectedPreset,
-          bounds,
+          tile.bounds,
           heightmapFormat,
           albedoFormat,
           heightmapResolution,
@@ -123,18 +155,21 @@ export const ExportPanel: React.FC = () => {
           demSource,
           imagerySource,
         );
-        setExportResult(`Export complete. Files saved to: ${result}`);
       }
+
+      setExportProgress(null);
+      setExportResult(`Export complete. ${total} tile(s) saved to: ${outputPath}`);
     } catch (err) {
       console.error('Export failed:', err);
       setExportResult(`Export failed: ${err instanceof Error ? err.message : String(err)}`);
       alert('Export failed. See console for details.');
     } finally {
       setIsExporting(false);
+      setExportProgress(null);
     }
   };
 
-  const preset = PRESETS.find((p) => p.id === selectedPreset);
+  const selectedCount = selectedTiles.size;
 
   return (
     <div className="flex flex-col h-full bg-[#1e1e1e] text-white">
@@ -202,7 +237,20 @@ export const ExportPanel: React.FC = () => {
           </div>
         </div>
 
-        {/* Quality & Resolution */}
+        {/* Selected Tiles Summary */}
+        {selectedBounds && selectedCount > 0 && (
+          <div className="bg-cyan-500/10 border border-cyan-500/30 rounded-lg p-3">
+            <div className="flex justify-between text-xs">
+              <span className="text-cyan-400">Tiles to export:</span>
+              <span className="text-white font-medium">{selectedCount}</span>
+            </div>
+            <p className="text-[10px] text-gray-400 mt-1">
+              Use the map overlay to select tiles and change tile size.
+            </p>
+          </div>
+        )}
+
+        {/* Resolution & Quality */}
         <div>
           <h3 className="text-xs font-semibold text-gray-400 uppercase tracking-wider mb-3">
             Resolution & Quality
@@ -242,16 +290,13 @@ export const ExportPanel: React.FC = () => {
                 className="w-full bg-gray-700 border border-gray-600 rounded text-sm py-1.5 px-2 text-white"
               >
                 <option value={0}>Auto (recommended)</option>
-                <option value={10}>10 — Low (global overview)</option>
+                <option value={10}>10 — Low</option>
                 <option value={12}>12 — Medium</option>
                 <option value={14}>14 — Good</option>
                 <option value={16}>16 — High</option>
                 <option value={18}>18 — Very High</option>
                 <option value={19}>19 — Maximum</option>
               </select>
-              <p className="text-[10px] text-gray-500">
-                Higher zoom = sharper imagery but more tiles to download
-              </p>
             </div>
           </div>
         </div>
@@ -321,70 +366,28 @@ export const ExportPanel: React.FC = () => {
           </div>
         </div>
 
-        {/* Preset-specific Options */}
-        {preset?.id === 'unigine' && (
-          <div className="bg-gray-800/30 border border-gray-700 rounded-lg p-4 space-y-3">
-            <h4 className="text-sm font-medium flex items-center gap-2">
-              <Settings className="w-4 h-4 text-gray-400" />
-              UNIGINE Options
-            </h4>
-            <label className="flex items-center gap-2 text-sm cursor-pointer">
-              <input
-                type="checkbox"
-                defaultChecked
-                className="rounded border-gray-600 bg-gray-700 text-cyan-500"
-              />
-              Enable terrain streaming
-            </label>
-            <div className="space-y-1">
-              <label className="text-xs text-gray-400">LMAP Resolution</label>
-              <select className="w-full bg-gray-700 border border-gray-600 rounded text-sm py-1.5 px-2">
-                <option>1024x1024</option>
-                <option>2048x2048</option>
-                <option>4096x4096</option>
-              </select>
-            </div>
-          </div>
-        )}
-
-        {preset?.id === 'unreal' && (
-          <div className="bg-gray-800/30 border border-gray-700 rounded-lg p-4 space-y-3">
-            <h4 className="text-sm font-medium flex items-center gap-2">
-              <Settings className="w-4 h-4 text-gray-400" />
-              Unreal Engine Options
-            </h4>
-            <div className="space-y-1">
-              <label className="text-xs text-gray-400">Z Scale</label>
-              <input
-                type="number"
-                defaultValue={100}
-                className="w-full bg-gray-700 border border-gray-600 rounded text-sm py-1.5 px-2"
-              />
-            </div>
-          </div>
-        )}
-
         {/* Export Button */}
         <button
           onClick={handleExport}
-          disabled={!outputPath || isExporting}
+          disabled={!outputPath || isExporting || selectedCount === 0}
           className={`w-full flex items-center justify-center gap-2 py-3 rounded-lg text-sm font-medium transition-colors ${
-            !outputPath
+            !outputPath || selectedCount === 0
               ? 'bg-gray-700 text-gray-500 cursor-not-allowed'
               : 'bg-cyan-600 hover:bg-cyan-500 text-white'
           }`}
         >
           <FileArchive className="w-4 h-4" />
-          {isExporting ? 'Exporting...' : 'Export Terrain Package'}
+          {isExporting
+            ? exportProgress
+              ? `Exporting ${exportProgress.current}/${exportProgress.total} tiles...`
+              : 'Exporting...'
+            : `Export ${selectedCount} Tile${selectedCount !== 1 ? 's' : ''}`}
         </button>
 
         {exportResult && (
           <div className="bg-green-500/10 border border-green-500/30 rounded-lg p-3">
             <p className="text-xs text-green-400">
               ✅ {exportResult}
-            </p>
-            <p className="text-[10px] text-gray-400 mt-1">
-              Note: In web mode, files are not actually written to disk. Use the Electron app for actual file export.
             </p>
           </div>
         )}
