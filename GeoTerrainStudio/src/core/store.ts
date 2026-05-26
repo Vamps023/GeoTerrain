@@ -61,6 +61,9 @@ export const useTerrainStore = create<AppState & {
   setExportProgress: (p: { stage: string; current: number; total: number; message: string; percent: number } | null) => void;
   setExportResult: (r: string | null) => void;
   setExportStartTime: (t: number | null) => void;
+  // Notification actions
+  addNotification: (n: { type: 'success' | 'error' | 'info'; message: string }) => void;
+  removeNotification: (id: string) => void;
 }>((set) => ({
   // Initial state
   selectedBounds: null,
@@ -70,15 +73,15 @@ export const useTerrainStore = create<AppState & {
   jobProgress: null,
   outputPath: null,
   selectedPreset: 'unigine',
-  heightmapFormat: 'geotiff',
-  albedoFormat: 'png',
+  heightmapFormat: 'float32',   // matches UNIGINE preset default
+  albedoFormat: 'geotiff',      // matches UNIGINE preset default
+  heightmapResolution: 4096,    // matches UNIGINE preset default
+  albedoResolution: 4096,       // matches UNIGINE preset default
   exportedManifest: null,
   exportedPackagePath: null,
   demSource: 'aws-terrarium',
   imagerySource: 'arcgis',
   imageryZoom: 0,
-  heightmapResolution: 1024,
-  albedoResolution: 1024,
   tileSizeKm: 4,
   tileGrid: null,
   selectedTiles: new Set<string>(),
@@ -86,6 +89,7 @@ export const useTerrainStore = create<AppState & {
   exportProgress: null,
   exportResult: null,
   exportStartTime: null,
+  notifications: [],
 
   // Actions
   setSelectedBounds: (bounds) => set({ selectedBounds: bounds }),
@@ -129,6 +133,12 @@ export const useTerrainStore = create<AppState & {
   setExportProgress: (p) => set({ exportProgress: p }),
   setExportResult: (r) => set({ exportResult: r }),
   setExportStartTime: (t) => set({ exportStartTime: t }),
+  addNotification: (n) => set((state) => ({
+    notifications: [...state.notifications, { id: Math.random().toString(36).slice(2), ...n }],
+  })),
+  removeNotification: (id) => set((state) => ({
+    notifications: state.notifications.filter((n) => n.id !== id),
+  })),
   resetGeneration: () => set({
     generationPlan: null,
     activeJobId: null,

@@ -1,9 +1,0 @@
-{
-    "name": "GeoTerrain Bridge",
-    "version": "2.0.0",
-    "author": "Vamps",
-    "description": "Lightweight UNIGINE bridge for importing Terrain Packages into LandscapeLayerMap terrain.",
-    "entry": "InitPlugin",
-    "shutdown": "ShutdownPlugin",
-    "update": "UpdatePlugin"
-}

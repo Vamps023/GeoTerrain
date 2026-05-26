@@ -124,7 +124,7 @@ export interface ProcessingOptions {
   cliffThresholdDegrees: number;
 }
 
-export type ExportPreset = 'unigine' | 'unreal' | 'unity' | 'godot' | 'generic' | 'babylon';
+export type ExportPreset = 'unigine' | 'unreal' | 'blender' | 'generic' | 'babylon';
 
 export type HeightmapFormat = 'dem' | 'geotiff' | 'r16' | 'png' | 'float32';
 export type AlbedoFormat = 'png' | 'geotiff';
@@ -252,6 +252,9 @@ export interface AppState {
 
   // UI
   activeTab: 'map' | 'layers' | 'jobs' | 'export' | 'view3d';
+
+  // Notifications (toasts)
+  notifications: { id: string; type: 'success' | 'error' | 'info'; message: string }[];
 }
 
 export interface TileGrid {

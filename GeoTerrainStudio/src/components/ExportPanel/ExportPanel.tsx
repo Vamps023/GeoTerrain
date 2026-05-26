@@ -38,24 +38,14 @@ const PRESETS: PresetConfig[] = [
     notes: 'R16 for heightmap, PNG for albedo',
   },
   {
-    id: 'unity',
-    name: 'Unity',
-    desc: 'RAW heightmap + splat textures',
-    icon: 'U3D',
-    heightmapFormat: 'r16',      // Unity Terrain uses R16 RAW
-    albedoFormat: 'png',         // PNG for control/albedo
-    recommendedRes: { heightmap: 2049, albedo: 2048 }, // Unity likes odd+1 sizes
-    notes: 'R16 RAW (2049x2049), PNG albedo',
-  },
-  {
-    id: 'godot',
-    name: 'Godot',
-    desc: 'EXR heightmap + JPG albedo',
-    icon: 'G',
-    heightmapFormat: 'float32',  // EXR via GeoTIFF Float32
-    albedoFormat: 'png',         // Godot prefers PNG/JPG
+    id: 'blender',
+    name: 'Blender',
+    desc: 'Displacement modifier terrain + albedo',
+    icon: 'BL',
+    heightmapFormat: 'float32',  // Float32 GeoTIFF — Blender displacement reads as EXR-like
+    albedoFormat: 'png',         // PNG for Image Texture node
     recommendedRes: { heightmap: 2048, albedo: 2048 },
-    notes: 'Float32 for precision',
+    notes: 'Float32 heightmap + PNG albedo for Blender Displacement modifier',
   },
   {
     id: 'generic',
@@ -72,10 +62,10 @@ const PRESETS: PresetConfig[] = [
     name: 'Babylon.js',
     desc: 'Import all data for 3D viewport viewing',
     icon: 'BJS',
-    heightmapFormat: 'geotiff',  // Readable by geotiff.js
+    heightmapFormat: 'float32',  // Float32 GeoTIFF — viewer reads Float32Array directly
     albedoFormat: 'png',         // PNG for web compatibility
-    recommendedRes: { heightmap: 1024, albedo: 1024 },
-    notes: 'Web-ready formats, optimized for browser',
+    recommendedRes: { heightmap: 512, albedo: 1024 },
+    notes: 'Float32 GeoTIFF heightmap + PNG albedo, optimized for 3D viewer',
   },
 ];
 
@@ -111,6 +101,7 @@ export const ExportPanel: React.FC = () => {
   const exportResult = useTerrainStore((s) => s.exportResult);
   const setExportResult = useTerrainStore((s) => s.setExportResult);
   const setExportStartTime = useTerrainStore((s) => s.setExportStartTime);
+  const addNotification = useTerrainStore((s) => s.addNotification);
 
   const [isExporting, setIsExporting] = useState(false);
 
@@ -125,6 +116,16 @@ export const ExportPanel: React.FC = () => {
     Settings.getApiKeys().then(setApiKeys).catch(console.error);
   }, []);
 
+  // Apply preset defaults on first mount — ensures formats always match the active preset
+  useEffect(() => {
+    const config = getPresetConfig(selectedPreset);
+    setHeightmapFormat(config.heightmapFormat);
+    setAlbedoFormat(config.albedoFormat);
+    setHeightmapResolution(config.recommendedRes.heightmap);
+    setAlbedoResolution(config.recommendedRes.albedo);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []); // intentionally only on mount
+
   const handleSaveApiKeys = async () => {
     const success = await Settings.setApiKeys(apiKeys);
     if (success) {
@@ -138,7 +139,7 @@ export const ExportPanel: React.FC = () => {
     if (path) setOutputPath(path);
   };
 
-  // Auto-set formats when preset changes
+  // Apply preset — always sets all format/resolution fields regardless of current selection
   const handleSelectPreset = (presetId: ExportPreset) => {
     const config = getPresetConfig(presetId);
     setSelectedPreset(presetId);
@@ -150,15 +151,15 @@ export const ExportPanel: React.FC = () => {
 
   const handleExport = async () => {
     if (!outputPath) {
-      alert('Please select an output folder first.');
+      addNotification({ type: 'info', message: 'Please select an output folder first.' });
       return;
     }
     if (!selectedBounds) {
-      alert('Please select an area on the map first.');
+      addNotification({ type: 'info', message: 'Please select an area on the map first.' });
       return;
     }
     if (selectedTiles.size === 0) {
-      alert('Please select at least one tile to export.');
+      addNotification({ type: 'info', message: 'Please select at least one tile to export.' });
       return;
     }
 
@@ -181,7 +182,7 @@ export const ExportPanel: React.FC = () => {
       ) ?? [];
 
       if (tilesToExport.length === 0) {
-        alert('No tiles selected for export.');
+        addNotification({ type: 'info', message: 'No tiles selected for export.' });
         return;
       }
 
@@ -194,12 +195,13 @@ export const ExportPanel: React.FC = () => {
         // Use platform-agnostic path construction
         const tileOutputPath = `${outputPath}${window.navigator.platform.startsWith('Win') ? '\\' : '/'}tile_${tile.row}_${tile.col}`;
 
+        // Set progress BEFORE starting this tile (percent = tiles completed so far)
         setExportProgress({
-          stage: 'tile_export',
+          stage: 'download_dem',
           current: i + 1,
           total,
-          message: `Exporting tile ${i + 1} of ${total}...`,
-          percent: Math.round(((i + 1) / total) * 100),
+          message: `Downloading DEM for tile ${i + 1} of ${total}...`,
+          percent: Math.round((i / total) * 100),
         });
 
         await Native.exportPackage(
@@ -216,6 +218,15 @@ export const ExportPanel: React.FC = () => {
           imagerySource,
           apiKeys,
         );
+
+        // Update progress AFTER tile completes
+        setExportProgress({
+          stage: 'write',
+          current: i + 1,
+          total,
+          message: `Tile ${i + 1} of ${total} written.`,
+          percent: Math.round(((i + 1) / total) * 100),
+        });
       }
 
       // For Babylon.js preset, switch to 3D view after export
@@ -239,7 +250,7 @@ export const ExportPanel: React.FC = () => {
     } catch (err) {
       console.error('Export failed:', err);
       setExportResult(`Export failed: ${err instanceof Error ? err.message : String(err)}`);
-      alert('Export failed. See console for details.');
+      addNotification({ type: 'error', message: 'Export failed. See console for details.' });
     } finally {
       setIsExporting(false);
       setExportProgress(null);

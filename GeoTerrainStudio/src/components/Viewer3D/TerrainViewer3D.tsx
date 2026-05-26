@@ -2,18 +2,18 @@ import React, { useEffect, useRef, useCallback, useState } from 'react';
 import {
   Engine,
   Scene,
-  ArcRotateCamera,
+  UniversalCamera,
   Vector3,
   HemisphericLight,
   DirectionalLight,
   Mesh,
+  MeshBuilder,
   VertexData,
   StandardMaterial,
   Texture,
   Color3,
   Color4,
 } from '@babylonjs/core';
-import { fromArrayBuffer } from 'geotiff';
 import type { TerrainManifest, TerrainTile } from '../../types/terrain';
 import { FsAPI } from '../../core/ipc';
 
@@ -22,326 +22,310 @@ interface TerrainViewer3DProps {
   packagePath: string | null;
 }
 
+// Babylon.js best practice: 1 unit = 1 meter (real-world scale)
+// Tile world size will be read from manifest.tileGrid.chunkSizeM at runtime
+const DEFAULT_TILE_SIZE_M = 4000; // 4 km fallback
+const HEIGHT_EXAGGERATION = 1.5;  // mild vertical scale for visual clarity (1.0 = true-to-life)
+
 export const TerrainViewer3D: React.FC<TerrainViewer3DProps> = ({ manifest, packagePath }) => {
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const engineRef = useRef<Engine | null>(null);
   const sceneRef = useRef<Scene | null>(null);
   const [isLoading, setIsLoading] = useState(false);
-  const [status, setStatus] = useState('Ready');
+  const [status, setStatus] = useState('Ready — Click to enable fly controls');
+  const [controlsHint, setControlsHint] = useState(true);
 
-  // Initialize Babylon.js engine and scene
+  // Initialize engine + FPS camera
   useEffect(() => {
     if (!canvasRef.current || engineRef.current) return;
 
-    const engine = new Engine(canvasRef.current, true, {
-      preserveDrawingBuffer: true,
-      stencil: true,
-    });
+    const canvas = canvasRef.current;
+    const engine = new Engine(canvas, true, { preserveDrawingBuffer: true, stencil: true });
     engineRef.current = engine;
 
     const scene = new Scene(engine);
-    scene.clearColor = new Color4(0.05, 0.05, 0.08, 1);
+    scene.clearColor = new Color4(0.05, 0.07, 0.1, 1);
     sceneRef.current = scene;
 
-    // Camera
-    const camera = new ArcRotateCamera(
-      'camera',
-      -Math.PI / 2,
-      Math.PI / 3,
-      200,
-      Vector3.Zero(),
-      scene
-    );
-    camera.attachControl(canvasRef.current, true);
-    camera.lowerRadiusLimit = 10;
-    camera.upperRadiusLimit = 1000;
-    camera.wheelPrecision = 50;
+    // ── UniversalCamera (FPS / Unreal-style) ─────────────────────────
+    const camera = new UniversalCamera('flyCamera', new Vector3(0, 120, -300), scene);
+    camera.setTarget(new Vector3(0, 0, 0));
+    camera.fov = 1.1;
+    camera.minZ = 0.5;
+    camera.maxZ = 8000;
 
-    // Lights
-    const hemiLight = new HemisphericLight('hemi', new Vector3(0, 1, 0), scene);
-    hemiLight.intensity = 0.6;
-    hemiLight.groundColor = new Color3(0.1, 0.1, 0.15);
+    // WASD + QE keys
+    camera.keysUp    = [87]; // W
+    camera.keysDown  = [83]; // S
+    camera.keysLeft  = [65]; // A
+    camera.keysRight = [68]; // D
+    // Q = down, E = up
+    (camera as UniversalCamera & { keysUpward: number[]; keysDownward: number[] }).keysUpward   = [69];
+    (camera as UniversalCamera & { keysUpward: number[]; keysDownward: number[] }).keysDownward = [81];
+    camera.speed = 8;
+    camera.angularSensibility = 800; // mouse sensitivity
+    camera.attachControl(canvas, true);
 
-    const dirLight = new DirectionalLight('dir', new Vector3(-1, -2, -1), scene);
-    dirLight.position = new Vector3(100, 200, 100);
-    dirLight.intensity = 0.8;
-
-    // Render loop
-    engine.runRenderLoop(() => {
-      scene.render();
+    // Shift = sprint
+    scene.onKeyboardObservable.add((kbInfo) => {
+      if (kbInfo.event.shiftKey) {
+        camera.speed = 30;
+      } else {
+        camera.speed = 8;
+      }
     });
 
-    // Resize handler
-    const handleResize = () => engine.resize();
-    window.addEventListener('resize', handleResize);
+    // Lights
+    const hemi = new HemisphericLight('hemi', new Vector3(0, 1, 0), scene);
+    hemi.intensity = 0.7;
+    hemi.groundColor = new Color3(0.15, 0.15, 0.2);
 
-    // Demo terrain on first load
+    const sun = new DirectionalLight('sun', new Vector3(-1, -2, -0.5), scene);
+    sun.position = new Vector3(500, 1000, 500);
+    sun.intensity = 1.0;
+
+    // Render loop
+    engine.runRenderLoop(() => scene.render());
+    const onResize = () => engine.resize();
+    window.addEventListener('resize', onResize);
+
+    // Demo terrain until real data loaded
     buildDemoTerrain(scene);
-    setStatus('Demo terrain loaded');
 
     return () => {
-      window.removeEventListener('resize', handleResize);
+      window.removeEventListener('resize', onResize);
       engine.dispose();
       engineRef.current = null;
       sceneRef.current = null;
     };
+  // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  // Build terrain when manifest changes
+  // Reload when manifest changes
   useEffect(() => {
     if (!manifest || !packagePath || !sceneRef.current) return;
-    loadTerrainFromManifest(manifest, packagePath, sceneRef.current);
+    loadAllTiles(manifest, packagePath, sceneRef.current);
   }, [manifest, packagePath]);
 
+  // ── Demo terrain ───────────────────────────────────────────────────
   const buildDemoTerrain = useCallback((scene: Scene) => {
-    // Clear existing terrain meshes
-    const existing = scene.getMeshByName('terrain');
-    if (existing) existing.dispose();
-
-    const width = 128;
-    const height = 128;
-    const positions: number[] = [];
-    const indices: number[] = [];
-    const uvs: number[] = [];
-    const normals: number[] = [];
-
-    for (let z = 0; z < height; z++) {
-      for (let x = 0; x < width; x++) {
-        const nx = x / width;
-        const nz = z / height;
-        const elevation =
-          Math.sin(nx * Math.PI * 4) * Math.cos(nz * Math.PI * 4) * 15 +
-          Math.sin(nx * Math.PI * 8 + 1) * Math.cos(nz * Math.PI * 8 + 1) * 5 +
-          Math.sin(nx * Math.PI * 2) * 10;
-
-        positions.push(x - width / 2, elevation, z - height / 2);
+    scene.meshes.filter(m => m.name.startsWith('tile_')).forEach(m => m.dispose());
+    const W = 128, H = 128;
+    const SIZE = 1000; // demo terrain is 1km wide
+    const positions: number[] = [], indices: number[] = [], uvs: number[] = [], normals: number[] = [];
+    for (let z = 0; z < H; z++) {
+      for (let x = 0; x < W; x++) {
+        const nx = x / W, nz = z / H;
+        const elev = Math.sin(nx * Math.PI * 4) * Math.cos(nz * Math.PI * 4) * 30 + Math.sin(nx * Math.PI * 2) * 20;
+        positions.push((nx - 0.5) * SIZE, elev, (nz - 0.5) * SIZE);
         uvs.push(nx, 1 - nz);
       }
     }
-
-    for (let z = 0; z < height - 1; z++) {
-      for (let x = 0; x < width - 1; x++) {
-        const a = z * width + x;
-        const b = z * width + x + 1;
-        const c = (z + 1) * width + x;
-        const d = (z + 1) * width + x + 1;
-        indices.push(a, b, d);
-        indices.push(a, d, c);
-      }
+    for (let z = 0; z < H - 1; z++) for (let x = 0; x < W - 1; x++) {
+      const a = z * W + x, b = a + 1, c = (z + 1) * W + x, d = c + 1;
+      indices.push(a, b, d, a, d, c);
     }
-
     VertexData.ComputeNormals(positions, indices, normals);
-
-    const terrain = new Mesh('terrain', scene);
-    const vertexData = new VertexData();
-    vertexData.positions = positions;
-    vertexData.indices = indices;
-    vertexData.uvs = uvs;
-    vertexData.normals = normals;
-    vertexData.applyToMesh(terrain);
-
-    const material = new StandardMaterial('terrainMat', scene);
-    material.diffuseColor = new Color3(0.4, 0.5, 0.3);
-    material.specularColor = new Color3(0.1, 0.1, 0.1);
-    material.wireframe = false;
-    terrain.material = material;
-
-    // Camera target
-    const camera = scene.getCameraByName('camera') as ArcRotateCamera;
-    if (camera) {
-      camera.setTarget(Vector3.Zero());
-      camera.radius = 150;
-    }
+    const mesh = new Mesh('tile_demo', scene);
+    const vd = new VertexData();
+    vd.positions = positions; vd.indices = indices; vd.uvs = uvs; vd.normals = normals;
+    vd.applyToMesh(mesh);
+    const mat = new StandardMaterial('demoMat', scene);
+    mat.diffuseColor = new Color3(0.3, 0.45, 0.25);
+    mat.specularColor = new Color3(0.05, 0.05, 0.05);
+    mesh.material = mat;
   }, []);
 
-  const loadTerrainFromManifest = useCallback(
-    async (manifest: TerrainManifest, pkgPath: string, scene: Scene) => {
-      setIsLoading(true);
-      setStatus('Loading terrain...');
-
-      try {
-        // For now, use the first tile
-        const tile: TerrainTile | undefined = manifest.tiles[0];
-        if (!tile) {
-          setStatus('No tiles in manifest');
-          setIsLoading(false);
-          return;
-        }
-
-        const heightmapPath = tile.files.heightmap
-          ? `${pkgPath.replace(/\\/g, '/')}/${tile.files.heightmap}`
-          : null;
-        const albedoPath = tile.files.albedo
-          ? `${pkgPath.replace(/\\/g, '/')}/${tile.files.albedo}`
-          : null;
-
-        if (!heightmapPath) {
-          setStatus('No heightmap found, using demo terrain');
-          buildDemoTerrain(scene);
-          setIsLoading(false);
-          return;
-        }
-
-        // Read GeoTIFF via IPC (file:// URLs don't work in packaged Electron)
-        setStatus('Reading heightmap...');
-        let elevations: Float32Array | null = null;
-        let imgWidth = 128;
-        let imgHeight = 128;
-
-        try {
-          // Use IPC to read binary file
-          const buffer = await FsAPI.readFileBinary(heightmapPath);
-          const tiff = await fromArrayBuffer(buffer);
-          const image = await tiff.getImage();
-          const data = await image.readRasters();
-          elevations = data[0] as Float32Array;
-          imgWidth = image.getWidth();
-          imgHeight = image.getHeight();
-        } catch (err) {
-          console.error('Failed to read heightmap:', err);
-          setStatus('Failed to read heightmap, using demo terrain');
-          buildDemoTerrain(scene);
-          setIsLoading(false);
-          return;
-        }
-
-        // Build mesh
-        setStatus('Building mesh...');
-        await buildTerrainMesh(scene, imgWidth, imgHeight, elevations, albedoPath);
-        setStatus(`Terrain loaded: ${imgWidth}x${imgHeight}`);
-      } catch (err) {
-        console.error('Failed to load terrain:', err);
-        setStatus('File access blocked, using demo terrain');
-        buildDemoTerrain(scene);
-      } finally {
-        setIsLoading(false);
-      }
-    },
-    [buildDemoTerrain]
-  );
-
-  const buildTerrainMesh = async (
+  // ── Build one tile using Babylon's native CreateGroundFromHeightMap ──
+  // This is cleaner than manual VertexData and handles texture loading internally
+  const buildTileMesh = async (
     scene: Scene,
-    width: number,
-    height: number,
-    elevations: Float32Array | null,
-    albedoPath: string | null
+    tile: TerrainTile,
+    pkgPath: string,
+    tileIndex: number,
+    tileSizeM: number
   ) => {
-    const existing = scene.getMeshByName('terrain');
+    const basePath = pkgPath.replace(/\\/g, '/');
+    const heightmapPath = tile.files.heightmap ? `${basePath}/${tile.files.heightmap}` : null;
+    const albedoPath    = tile.files.albedo    ? `${basePath}/${tile.files.albedo}`    : null;
+
+    // Determine heightmap resolution from manifest
+    const subDivs = manifest?.tileGrid?.heightmapResolution
+      ? manifest.tileGrid.heightmapResolution - 1
+      : 511; // default 512x512 mesh → 511 subdivisions
+
+    const meshName = `tile_${tile.row}_${tile.col}`;
+    const existing = scene.getMeshByName(meshName);
     if (existing) existing.dispose();
 
-    const positions: number[] = [];
-    const indices: number[] = [];
-    const uvs: number[] = [];
-    const normals: number[] = [];
+    let mesh: Mesh;
 
-    // Min/max elevation for normalization
-    let minH = 0;
-    let maxH = 100;
-    if (elevations) {
-      minH = Infinity;
-      maxH = -Infinity;
-      for (let i = 0; i < elevations.length; i++) {
-        const v = elevations[i];
-        if (!isNaN(v) && v !== Infinity && v !== -Infinity) {
-          minH = Math.min(minH, v);
-          maxH = Math.max(maxH, v);
-        }
-      }
-      if (minH === Infinity) { minH = 0; maxH = 100; }
-    }
-
-    const scaleXZ = Math.max(width, height) / 2;
-    const heightScale = (maxH - minH) * 0.5;
-
-    for (let z = 0; z < height; z++) {
-      for (let x = 0; x < width; x++) {
-        const idx = z * width + x;
-        let h = 0;
-        if (elevations && idx < elevations.length) {
-          h = ((elevations[idx] - minH) / (maxH - minH || 1)) * heightScale;
-        }
-        positions.push(
-          (x / (width - 1)) * scaleXZ * 2 - scaleXZ,
-          h,
-          (z / (height - 1)) * scaleXZ * 2 - scaleXZ
-        );
-        uvs.push(x / (width - 1), 1 - z / (height - 1));
-      }
-    }
-
-    for (let z = 0; z < height - 1; z++) {
-      for (let x = 0; x < width - 1; x++) {
-        const a = z * width + x;
-        const b = z * width + x + 1;
-        const c = (z + 1) * width + x;
-        const d = (z + 1) * width + x + 1;
-        indices.push(a, b, d);
-        indices.push(a, d, c);
-      }
-    }
-
-    VertexData.ComputeNormals(positions, indices, normals);
-
-    const terrain = new Mesh('terrain', scene);
-    const vertexData = new VertexData();
-    vertexData.positions = positions;
-    vertexData.indices = indices;
-    vertexData.uvs = uvs;
-    vertexData.normals = normals;
-    vertexData.applyToMesh(terrain);
-
-    const material = new StandardMaterial('terrainMat', scene);
-
-    if (albedoPath) {
+    if (heightmapPath) {
       try {
-        // Read albedo via IPC and create blob URL
-        const albedoBuffer = await FsAPI.readFileBinary(albedoPath);
-        // Detect MIME type from file extension
-        const isTiff = albedoPath.toLowerCase().endsWith('.tif') || albedoPath.toLowerCase().endsWith('.tiff');
-        const mimeType = isTiff ? 'image/tiff' : 'image/png';
-        const blob = new Blob([albedoBuffer], { type: mimeType });
-        const blobUrl = URL.createObjectURL(blob);
-        const tex = new Texture(blobUrl, scene, false, false, Texture.NEAREST_SAMPLINGMODE, () => {
-          // Clean up blob URL after texture loads
-          URL.revokeObjectURL(blobUrl);
-        });
-        material.diffuseTexture = tex;
-      } catch (err) {
-        console.warn('Failed to load albedo, using default color:', err);
-        material.diffuseColor = new Color3(0.4, 0.5, 0.3);
+        // Read heightmap file and create blob URL
+        const buf = await FsAPI.readFileBinary(heightmapPath);
+        const isTiff = heightmapPath.toLowerCase().endsWith('.tif') || heightmapPath.toLowerCase().endsWith('.tiff');
+        const blob = new Blob([buf], { type: isTiff ? 'image/tiff' : 'image/png' });
+        const url = URL.createObjectURL(blob);
+
+        // Use Babylon's native heightmap loader
+        // Parameters: name, url, width, depth, subdivisions, minHeight, maxHeight, scene, onReady
+        const elevationMin = tile.elevation.min;
+        const elevationMax = tile.elevation.max;
+
+        mesh = MeshBuilder.CreateGroundFromHeightMap(
+          meshName,
+          url,
+          {
+            width: tileSizeM,
+            height: tileSizeM,
+            subdivisions: Math.min(subDivs, 1024), // Cap at 1024 to prevent performance issues
+            minHeight: elevationMin * HEIGHT_EXAGGERATION,
+            maxHeight: elevationMax * HEIGHT_EXAGGERATION,
+            onReady: () => {
+              // Clean up blob URL after mesh is ready
+              URL.revokeObjectURL(url);
+            },
+          },
+          scene
+        );
+      } catch (e) {
+        console.warn(`Tile ${tileIndex} heightmap failed, using flat ground:`, e);
+        // Fallback to flat ground
+        mesh = MeshBuilder.CreateGround(meshName, { width: tileSizeM, height: tileSizeM, subdivisions: 10 }, scene);
       }
     } else {
-      material.diffuseColor = new Color3(0.4, 0.5, 0.3);
+      // No heightmap — flat ground
+      mesh = MeshBuilder.CreateGround(meshName, { width: tileSizeM, height: tileSizeM, subdivisions: 10 }, scene);
     }
 
-    material.specularColor = new Color3(0.05, 0.05, 0.05);
-    terrain.material = material;
+    // Position the mesh at its world offset
+    // CreateGroundFromHeightMap centers the mesh at origin, so we position after creation
+    mesh.position.x = tile.worldOffset.x + tileSizeM / 2;
+    mesh.position.z = tile.worldOffset.z + tileSizeM / 2;
+    // Y position stays at 0 (heightmap handles vertical range via minHeight/maxHeight)
 
-    // Camera target at center, adjusted for height
-    const camera = scene.getCameraByName('camera') as ArcRotateCamera;
-    if (camera) {
-      camera.setTarget(new Vector3(0, heightScale * 0.3, 0));
-      camera.radius = scaleXZ * 3;
-      camera.beta = Math.PI / 3;
+    // Apply albedo texture
+    const mat = new StandardMaterial(`mat_${tileIndex}`, scene);
+    if (albedoPath) {
+      try {
+        const albedoBuf = await FsAPI.readFileBinary(albedoPath);
+        const isTiff = albedoPath.toLowerCase().endsWith('.tif') || albedoPath.toLowerCase().endsWith('.tiff');
+        const blob = new Blob([albedoBuf], { type: isTiff ? 'image/tiff' : 'image/png' });
+        const url = URL.createObjectURL(blob);
+        mat.diffuseTexture = new Texture(url, scene, false, false, Texture.BILINEAR_SAMPLINGMODE, () => {
+          URL.revokeObjectURL(url);
+        });
+      } catch {
+        mat.diffuseColor = new Color3(0.35, 0.45, 0.25);
+      }
+    } else {
+      mat.diffuseColor = new Color3(0.35, 0.45, 0.25);
     }
+    mat.specularColor = new Color3(0.04, 0.04, 0.04);
+    mesh.material = mat;
+
+    return mesh;
   };
 
+  // ── Load all tiles from manifest ───────────────────────────────────
+  const loadAllTiles = useCallback(
+    async (manifest: TerrainManifest, pkgPath: string, scene: Scene) => {
+      setIsLoading(true);
+      setControlsHint(false);
+
+      // Dispose old tile meshes
+      scene.meshes.filter(m => m.name.startsWith('tile_')).forEach(m => m.dispose());
+
+      const tiles = manifest.tiles;
+      if (!tiles || tiles.length === 0) {
+        setStatus('No tiles in manifest');
+        setIsLoading(false);
+        return;
+      }
+
+      // Read real tile size from manifest (in meters), fallback to default
+      const tileSizeM = manifest.tileGrid?.chunkSizeM ?? DEFAULT_TILE_SIZE_M;
+      const rows = manifest.tileGrid?.rows ?? 1;
+      const cols = manifest.tileGrid?.cols ?? 1;
+      const totalW = cols * tileSizeM;
+      const totalD = rows * tileSizeM;
+
+      // Global elevation range (for camera positioning only)
+      let globalMinH = Infinity, globalMaxH = -Infinity;
+      for (const t of tiles) {
+        globalMinH = Math.min(globalMinH, t.elevation.min);
+        globalMaxH = Math.max(globalMaxH, t.elevation.max);
+      }
+      if (!isFinite(globalMinH)) { globalMinH = 0; globalMaxH = 100; }
+
+      setStatus(`Loading ${tiles.length} tile(s)...`);
+
+      let loaded = 0;
+      for (const tile of tiles) {
+        try {
+          // Offset so the whole grid is centered at origin
+          const centeredTile: TerrainTile = {
+            ...tile,
+            worldOffset: {
+              x: (tile.col * tileSizeM) - totalW / 2,
+              y: 0,
+              z: (tile.row * tileSizeM) - totalD / 2,
+            },
+          };
+          await buildTileMesh(scene, centeredTile, pkgPath, loaded, tileSizeM);
+          loaded++;
+          setStatus(`Loading tiles... ${loaded}/${tiles.length}`);
+        } catch (e) {
+          console.error('Tile load error:', e);
+        }
+      }
+
+      // Camera positioned proportionally to terrain extent
+      const camera = scene.getCameraByName('flyCamera') as UniversalCamera;
+      if (camera) {
+        const elevRange = (globalMaxH - globalMinH) * HEIGHT_EXAGGERATION;
+        const viewDist = Math.max(totalW, totalD) * 0.8;
+        camera.position = new Vector3(0, elevRange * 0.5 + viewDist * 0.3, -viewDist);
+        camera.setTarget(new Vector3(0, 0, 0));
+        camera.speed = Math.max(20, totalW / 100);
+        camera.maxZ = totalW * 5;
+      }
+
+      setStatus(`✓ ${loaded} tile(s) loaded — WASD fly, Q/E up/down, mouse look, Shift sprint`);
+      setIsLoading(false);
+    },
+    []
+  );
+
   return (
-    <div className="relative w-full h-full bg-[#0a0a0f]">
+    <div className="relative w-full h-full bg-[#080c10]">
       <canvas
         ref={canvasRef}
         className="absolute inset-0 w-full h-full outline-none"
         style={{ touchAction: 'none' }}
       />
+
+      {/* Loading overlay */}
       {isLoading && (
-        <div className="absolute inset-0 flex items-center justify-center bg-black/60 z-10">
-          <div className="text-white text-sm animate-pulse">{status}</div>
+        <div className="absolute inset-0 flex flex-col items-center justify-center bg-black/70 z-10 gap-3">
+          <div className="w-10 h-10 border-2 border-[#4a7c3f] border-t-transparent rounded-full animate-spin" />
+          <div className="text-[#7ab86f] text-sm">{status}</div>
         </div>
       )}
-      {!isLoading && status && (
-        <div className="absolute bottom-3 left-3 bg-black/60 text-white text-[10px] px-2 py-1 rounded z-10">
-          {status}
+
+      {/* Status bar */}
+      {!isLoading && (
+        <div className="absolute bottom-3 left-3 right-3 flex items-center justify-between z-10">
+          <div className="bg-black/70 text-[#c4a96b] text-[10px] px-2 py-1 rounded">
+            {status}
+          </div>
+          {controlsHint && (
+            <div className="bg-black/70 text-gray-400 text-[10px] px-3 py-1.5 rounded space-y-0.5 text-right">
+              <div><span className="text-white font-mono">WASD</span> fly · <span className="text-white font-mono">Q/E</span> down/up</div>
+              <div><span className="text-white font-mono">Shift</span> sprint · <span className="text-white font-mono">Mouse</span> look</div>
+            </div>
+          )}
         </div>
       )}
     </div>

@@ -218,6 +218,7 @@ export const MapViewport: React.FC<MapViewportProps> = ({ className }) => {
   }, [selectedTiles]);
   const selectAllTiles = useTerrainStore((s) => s.selectAllTiles);
   const deselectAllTiles = useTerrainStore((s) => s.deselectAllTiles);
+  const addNotification = useTerrainStore((s) => s.addNotification);
 
   // Initialize map
   useEffect(() => {
@@ -623,7 +624,7 @@ export const MapViewport: React.FC<MapViewportProps> = ({ className }) => {
     const prjFile = files.find((f) => f.name.toLowerCase().endsWith('.prj'));
 
     if (!shpFile) {
-      alert('Please drop a .shp file (optionally with .shx, .dbf, .prj)');
+      addNotification({ type: 'info', message: 'Please drop a .shp file (optionally with .shx, .dbf, .prj)' });
       return;
     }
 
@@ -661,7 +662,7 @@ export const MapViewport: React.FC<MapViewportProps> = ({ className }) => {
         const prjText = e.target?.result as string;
         console.log('[SHP] Projection:', prjText?.substring(0, 100));
         if (prjText && !prjText.includes('WGS_1984') && !prjText.includes('GCS_WGS_1984') && !prjText.includes('GEOGCS')) {
-          alert('WARNING: This shapefile appears to use a projected coordinate system (not WGS84).\n\nCoordinates will not display correctly on the map.\n\nPlease reproject to WGS84 (EPSG:4326) before importing, or use QGIS/ArcGIS to export as GeoJSON in WGS84.');
+          addNotification({ type: 'error', message: 'Shapefile uses projected CRS (not WGS84). Please reproject to EPSG:4326 before importing.' });
         }
         readShpData();
       };
@@ -759,7 +760,7 @@ export const MapViewport: React.FC<MapViewportProps> = ({ className }) => {
     } else {
       console.warn('[SHP] Coordinates out of lat/lng range. Shapefile may be in a projected CRS.');
       console.warn('[SHP] Bounds:', { minX, maxX, minY, maxY });
-      alert('Shapefile coordinates are outside valid lat/lng range.\n\nThe file appears to use a projected coordinate system (e.g., UTM with values in meters).\n\nPlease reproject to WGS84 (EPSG:4326) before importing.\n\nYou can still use the "Focus" button to see the extent.');
+      addNotification({ type: 'error', message: 'Shapefile coordinates out of range (projected CRS?). Please reproject to WGS84 (EPSG:4326).' });
     }
   }, []);
 
@@ -801,8 +802,7 @@ export const MapViewport: React.FC<MapViewportProps> = ({ className }) => {
         // For projected coords, we can't use fitBounds directly
         // Just zoom out to show the world and flash a message
         map.flyTo({ center: [0, 20], zoom: 2, duration: 1000 });
-        alert('Shapefile uses projected coordinates. Please reproject to WGS84 for accurate display.\n\nRaw bounds: ' +
-          `X: ${shpBounds.minX.toFixed(0)}-${shpBounds.maxX.toFixed(0)}, Y: ${shpBounds.minY.toFixed(0)}-${shpBounds.maxY.toFixed(0)}`);
+        addNotification({ type: 'error', message: `Shapefile uses projected coordinates. Raw bounds: X:${shpBounds.minX.toFixed(0)}-${shpBounds.maxX.toFixed(0)} Y:${shpBounds.minY.toFixed(0)}-${shpBounds.maxY.toFixed(0)}` });
       }
     }
   }, [shpBounds]);
@@ -934,8 +934,8 @@ export const MapViewport: React.FC<MapViewportProps> = ({ className }) => {
                   mapZoom: map.getZoom(),
                 };
                 const ok = await FsAPI.saveProject(filePath, project);
-                if (ok) alert('Project saved!');
-                else alert('Failed to save project');
+                if (ok) addNotification({ type: 'success', message: 'Project saved!' });
+                else addNotification({ type: 'error', message: 'Failed to save project' });
               }}
               className="flex items-center justify-center gap-1 bg-green-600 hover:bg-green-500 text-white py-1.5 px-2 rounded text-[10px] transition-colors"
             >
@@ -948,7 +948,7 @@ export const MapViewport: React.FC<MapViewportProps> = ({ className }) => {
                 if (!filePath) return;
                 const project = await FsAPI.loadProject(filePath);
                 if (!project) {
-                  alert('Failed to load project');
+                  addNotification({ type: 'error', message: 'Failed to load project' });
                   return;
                 }
                 // Restore selected tiles FIRST (before setting bounds/grid)
@@ -1014,7 +1014,7 @@ export const MapViewport: React.FC<MapViewportProps> = ({ className }) => {
                   map.setCenter([project.mapCenter.lng, project.mapCenter.lat]);
                   map.setZoom(project.mapZoom);
                 }
-                alert('Project loaded!');
+                addNotification({ type: 'success', message: 'Project loaded!' });
               }}
               className="flex items-center justify-center gap-1 bg-gray-700 hover:bg-gray-600 text-white py-1.5 px-2 rounded text-[10px] transition-colors"
             >

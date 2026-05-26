@@ -3,9 +3,9 @@ import { Map, Layers, Download, Box, X } from 'lucide-react';
 import { useTerrainStore } from './core/store';
 import { MapViewport } from './components/MapViewport/MapViewport';
 import { LayerStack } from './components/LayerStack/LayerStack';
-import { JobQueue } from './components/JobQueue/JobQueue';
 import { ExportPanel } from './components/ExportPanel/ExportPanel';
 import { TerrainViewer3D } from './components/Viewer3D/TerrainViewer3D';
+import { ToastContainer } from './components/Toast/Toast';
 
 // Left nav: Map + 3D toggle only
 const LEFT_TABS = [
@@ -29,24 +29,24 @@ function ExportProgressOverlay() {
 
   return (
     <div className="absolute inset-0 flex items-center justify-center pointer-events-none z-20">
-      <div className="pointer-events-auto bg-gray-900/95 border border-cyan-500/40 rounded-2xl shadow-2xl w-[480px] p-6 space-y-4">
+      <div className="pointer-events-auto bg-[#0f1a10] border border-[#4a7c3f]/60 rounded-2xl shadow-2xl w-[480px] p-6 space-y-4">
 
         {/* Success state */}
         {!exportProgress && exportResult && (
           <>
             <div className="flex items-center justify-between">
               <div className="flex items-center gap-3">
-                <div className="w-10 h-10 rounded-full bg-green-500/20 flex items-center justify-center">
-                  <span className="text-green-400 text-lg">✓</span>
+                <div className="w-10 h-10 rounded-full bg-[#4a7c3f]/30 border border-[#4a7c3f]/60 flex items-center justify-center">
+                  <span className="text-[#7ab86f] text-lg">✓</span>
                 </div>
                 <div>
                   <div className="text-sm font-semibold text-white">Export Complete</div>
-                  <div className="text-xs text-gray-400 mt-0.5 max-w-xs truncate">{exportResult}</div>
+                  <div className="text-xs text-[#c4a96b]/80 mt-0.5 max-w-xs truncate">{exportResult}</div>
                 </div>
               </div>
               <button
                 onClick={() => setExportResult(null)}
-                className="text-gray-500 hover:text-white transition-colors"
+                className="text-gray-500 hover:text-[#c4a96b] transition-colors"
               >
                 <X className="w-4 h-4" />
               </button>
@@ -59,31 +59,31 @@ function ExportProgressOverlay() {
           <>
             {/* Header */}
             <div className="flex items-center gap-3">
-              <div className="w-10 h-10 rounded-full bg-cyan-500/20 flex items-center justify-center">
-                <Download className="w-5 h-5 text-cyan-400 animate-pulse" />
+              <div className="w-10 h-10 rounded-full bg-[#4a7c3f]/30 border border-[#4a7c3f]/60 flex items-center justify-center">
+                <Download className="w-5 h-5 text-[#7ab86f] animate-pulse" />
               </div>
               <div className="flex-1">
                 <div className="text-sm font-semibold text-white">Exporting Terrain Package</div>
-                <div className="text-xs text-cyan-400 mt-0.5">{exportProgress.message}</div>
+                <div className="text-xs text-[#c4a96b] mt-0.5">{exportProgress.message}</div>
               </div>
-              <span className="text-2xl font-bold text-cyan-400 tabular-nums">{exportProgress.percent}%</span>
+              <span className="text-2xl font-bold text-[#7ab86f] tabular-nums">{exportProgress.percent}%</span>
             </div>
 
             {/* Progress Bar */}
-            <div className="h-3 bg-gray-700 rounded-full overflow-hidden">
+            <div className="h-3 bg-gray-900 rounded-full overflow-hidden border border-[#4a7c3f]/20">
               <div
-                className="h-full bg-gradient-to-r from-cyan-500 to-blue-500 rounded-full transition-all duration-500"
-                style={{ width: `${exportProgress.percent}%` }}
+                className="h-full rounded-full transition-all duration-500"
+                style={{ width: `${exportProgress.percent}%`, background: 'linear-gradient(90deg, #4a7c3f, #7ab86f)' }}
               />
             </div>
 
             {/* Tile counter + time estimate */}
             <div className="flex items-center justify-between text-xs text-gray-400">
               <span className="font-medium">
-                Tile <span className="text-white">{exportProgress.current}</span> of <span className="text-white">{exportProgress.total}</span>
+                Tile <span className="text-[#c4a96b]">{exportProgress.current}</span> of <span className="text-[#c4a96b]">{exportProgress.total}</span>
               </span>
               {exportStartTime && exportProgress.percent > 0 && (
-                <span className="text-gray-400">
+                <span className="text-[#c4a96b]/70">
                   {(() => {
                     const elapsed = Date.now() - exportStartTime;
                     const totalEst = (elapsed / exportProgress.percent) * 100;
@@ -97,7 +97,7 @@ function ExportProgressOverlay() {
             </div>
 
             {/* Pipeline stages */}
-            <div className="bg-black/40 rounded-xl p-3 grid grid-cols-5 gap-2">
+            <div className="bg-black/50 rounded-xl p-3 grid grid-cols-5 gap-2 border border-[#4a7c3f]/15">
               {[
                 { stage: 'init', label: 'Init' },
                 { stage: 'download_dem', label: 'DEM' },
@@ -113,14 +113,14 @@ function ExportProgressOverlay() {
                 return (
                   <div key={stage} className="flex flex-col items-center gap-1">
                     <div className={`w-8 h-8 rounded-full flex items-center justify-center text-xs font-bold transition-all ${
-                      isDone ? 'bg-green-500/30 text-green-400 border border-green-500/50' :
-                      isActive ? 'bg-cyan-500/30 text-cyan-400 border border-cyan-500/50 ring-2 ring-cyan-500/30' :
-                      'bg-gray-800 text-gray-600 border border-gray-700'
+                      isDone ? 'bg-[#4a7c3f]/40 text-[#7ab86f] border border-[#4a7c3f]/60' :
+                      isActive ? 'bg-[#4a7c3f]/20 text-[#7ab86f] border border-[#4a7c3f]/80 ring-2 ring-[#4a7c3f]/30' :
+                      'bg-gray-900 text-gray-600 border border-gray-700'
                     }`}>
                       {isDone ? '✓' : idx + 1}
                     </div>
                     <span className={`text-[9px] text-center leading-tight ${
-                      isDone ? 'text-green-400' : isActive ? 'text-cyan-400' : 'text-gray-600'
+                      isDone ? 'text-[#7ab86f]' : isActive ? 'text-[#c4a96b]' : 'text-gray-600'
                     }`}>{label}</span>
                   </div>
                 );
@@ -161,6 +161,8 @@ function App(): React.JSX.Element {
 
   return (
     <div className="flex flex-col h-screen bg-[#121212] text-white overflow-hidden">
+      <ToastContainer />
+
       {/* Title Bar */}
       <header className="h-12 bg-[#1a1a1a] border-b border-gray-800 flex items-center px-4 justify-between select-none">
         <div className="flex items-center gap-3">
@@ -235,13 +237,7 @@ function App(): React.JSX.Element {
               </div>
               {/* Panel Content */}
               <div className="flex-1 overflow-y-auto">
-                {activeTab === 'layers' && (
-                  <>
-                    <LayerStack />
-                    <div className="border-t border-gray-700 mx-3" />
-                    <JobQueue />
-                  </>
-                )}
+                {activeTab === 'layers' && <LayerStack />}
                 {activeTab === 'export' && <ExportPanel />}
               </div>
             </aside>
