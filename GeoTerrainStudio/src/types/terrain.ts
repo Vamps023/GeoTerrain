@@ -11,13 +11,18 @@ export interface ElectronAPI {
     cancelGeneration: (jobId: string) => Promise<void>;
     getProgress: (jobId: string) => Promise<JobProgress>;
     exportPackage: (
-    sessionId: string,
-    outputPath: string,
-    preset: string,
-    bounds: GeoBounds,
-    heightmapFormat: HeightmapFormat,
-    albedoFormat: AlbedoFormat
-  ) => Promise<string>;
+      sessionId: string,
+      outputPath: string,
+      preset: string,
+      bounds: GeoBounds,
+      heightmapFormat: HeightmapFormat,
+      albedoFormat: AlbedoFormat,
+      heightmapResolution?: number,
+      albedoResolution?: number,
+      imageryZoom?: number,
+      demSource?: string,
+      imagerySource?: string,
+    ) => Promise<string>;
   };
   dialog: {
     selectFolder: () => Promise<string | null>;
@@ -164,6 +169,9 @@ export interface TerrainProfile {
   processing: ProcessingOptions;
 }
 
+export type DEMSource = 'aws-terrarium' | 'mapzen' | 'copernicus-30m';
+export type ImagerySource = 'arcgis-world-imagery' | 'mapbox-satellite' | 'maptiler-satellite';
+
 export interface GenerationPlan {
   zoom: number;
   tiles: Array<{
@@ -204,6 +212,13 @@ export interface AppState {
   albedoFormat: AlbedoFormat;
   exportedManifest: TerrainManifest | null;
   exportedPackagePath: string | null;
+
+  // Quality settings (new)
+  demSource: DEMSource;
+  imagerySource: ImagerySource;
+  imageryZoom: number; // 0 = auto, or 10-19
+  heightmapResolution: number;
+  albedoResolution: number;
 
   // UI
   activeTab: 'map' | 'layers' | 'jobs' | 'export' | 'view3d';

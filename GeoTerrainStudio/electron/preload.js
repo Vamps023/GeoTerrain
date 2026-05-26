@@ -1,27 +1,27 @@
 "use strict";
 Object.defineProperty(exports, "__esModule", { value: true });
-var electron_1 = require("electron");
-var api = {
+const electron_1 = require("electron");
+const api = {
     native: {
-        getVersion: function () { return electron_1.ipcRenderer.invoke('native:getVersion'); },
-        planGeneration: function (bounds, profile) { return electron_1.ipcRenderer.invoke('native:planGeneration', bounds, profile); },
-        startGeneration: function (sessionId, plan) { return electron_1.ipcRenderer.invoke('native:startGeneration', sessionId, plan); },
-        cancelGeneration: function (jobId) { return electron_1.ipcRenderer.invoke('native:cancelGeneration', jobId); },
-        getProgress: function (jobId) { return electron_1.ipcRenderer.invoke('native:getProgress', jobId); },
-        exportPackage: function (sessionId, outputPath, preset, bounds, heightmapFormat, albedoFormat) { return electron_1.ipcRenderer.invoke('native:exportPackage', sessionId, outputPath, preset, bounds, heightmapFormat, albedoFormat); },
+        getVersion: () => electron_1.ipcRenderer.invoke('native:getVersion'),
+        planGeneration: (bounds, profile) => electron_1.ipcRenderer.invoke('native:planGeneration', bounds, profile),
+        startGeneration: (sessionId, plan) => electron_1.ipcRenderer.invoke('native:startGeneration', sessionId, plan),
+        cancelGeneration: (jobId) => electron_1.ipcRenderer.invoke('native:cancelGeneration', jobId),
+        getProgress: (jobId) => electron_1.ipcRenderer.invoke('native:getProgress', jobId),
+        exportPackage: (sessionId, outputPath, preset, bounds, heightmapFormat, albedoFormat, heightmapResolution, albedoResolution, imageryZoom, demSource, imagerySource) => electron_1.ipcRenderer.invoke('native:exportPackage', sessionId, outputPath, preset, bounds, heightmapFormat, albedoFormat, heightmapResolution, albedoResolution, imageryZoom, demSource, imagerySource),
     },
     dialog: {
-        selectFolder: function () { return electron_1.ipcRenderer.invoke('dialog:selectFolder'); },
-        selectPackage: function () { return electron_1.ipcRenderer.invoke('dialog:selectPackage'); },
+        selectFolder: () => electron_1.ipcRenderer.invoke('dialog:selectFolder'),
+        selectPackage: () => electron_1.ipcRenderer.invoke('dialog:selectPackage'),
     },
     fs: {
-        readManifest: function (packagePath) { return electron_1.ipcRenderer.invoke('fs:readManifest', packagePath); },
-        writeManifest: function (packagePath, manifest) { return electron_1.ipcRenderer.invoke('fs:writeManifest', packagePath, manifest); },
+        readManifest: (packagePath) => electron_1.ipcRenderer.invoke('fs:readManifest', packagePath),
+        writeManifest: (packagePath, manifest) => electron_1.ipcRenderer.invoke('fs:writeManifest', packagePath, manifest),
     },
-    onProgressUpdate: function (callback) {
-        var handler = function (_event, progress) { return callback(progress); };
+    onProgressUpdate: (callback) => {
+        const handler = (_event, progress) => callback(progress);
         electron_1.ipcRenderer.on('native:progressUpdate', handler);
-        return function () { return electron_1.ipcRenderer.removeListener('native:progressUpdate', handler); };
+        return () => electron_1.ipcRenderer.removeListener('native:progressUpdate', handler);
     },
 };
 electron_1.contextBridge.exposeInMainWorld('electronAPI', api);

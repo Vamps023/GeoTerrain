@@ -1,5 +1,5 @@
 import { create } from 'zustand';
-import type { AppState, GeoBounds, TerrainProfile, GenerationPlan, JobProgress, ExportPreset, TerrainManifest, HeightmapFormat, AlbedoFormat } from '../types/terrain';
+import type { AppState, GeoBounds, TerrainProfile, GenerationPlan, JobProgress, ExportPreset, TerrainManifest, HeightmapFormat, AlbedoFormat, DEMSource, ImagerySource } from '../types/terrain';
 
 const defaultProfile: TerrainProfile = {
   id: 'balanced',
@@ -40,6 +40,11 @@ export const useTerrainStore = create<AppState & {
   setSelectedPreset: (preset: ExportPreset) => void;
   setHeightmapFormat: (format: HeightmapFormat) => void;
   setAlbedoFormat: (format: AlbedoFormat) => void;
+  setDEMSource: (source: DEMSource) => void;
+  setImagerySource: (source: ImagerySource) => void;
+  setImageryZoom: (zoom: number) => void;
+  setHeightmapResolution: (res: number) => void;
+  setAlbedoResolution: (res: number) => void;
   setActiveTab: (tab: AppState['activeTab']) => void;
   setExportedData: (manifest: TerrainManifest | null, packagePath: string | null) => void;
   resetGeneration: () => void;
@@ -56,6 +61,11 @@ export const useTerrainStore = create<AppState & {
   albedoFormat: 'png',
   exportedManifest: null,
   exportedPackagePath: null,
+  demSource: 'aws-terrarium',
+  imagerySource: 'arcgis-world-imagery',
+  imageryZoom: 0,
+  heightmapResolution: 1024,
+  albedoResolution: 1024,
   activeTab: 'map',
 
   // Actions
@@ -68,6 +78,11 @@ export const useTerrainStore = create<AppState & {
   setSelectedPreset: (preset) => set({ selectedPreset: preset }),
   setHeightmapFormat: (format) => set({ heightmapFormat: format }),
   setAlbedoFormat: (format) => set({ albedoFormat: format }),
+  setDEMSource: (source) => set({ demSource: source }),
+  setImagerySource: (source) => set({ imagerySource: source }),
+  setImageryZoom: (zoom) => set({ imageryZoom: zoom }),
+  setHeightmapResolution: (res) => set({ heightmapResolution: res }),
+  setAlbedoResolution: (res) => set({ albedoResolution: res }),
   setActiveTab: (tab) => set({ activeTab: tab }),
   setExportedData: (manifest, packagePath) => set({ exportedManifest: manifest, exportedPackagePath: packagePath }),
   resetGeneration: () => set({

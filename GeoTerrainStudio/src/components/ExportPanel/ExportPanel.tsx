@@ -25,6 +25,17 @@ export const ExportPanel: React.FC = () => {
   const selectedBounds = useTerrainStore((s) => s.selectedBounds);
   const setExportedData = useTerrainStore((s) => s.setExportedData);
   const setActiveTab = useTerrainStore((s) => s.setActiveTab);
+  // Quality settings
+  const heightmapResolution = useTerrainStore((s) => s.heightmapResolution);
+  const setHeightmapResolution = useTerrainStore((s) => s.setHeightmapResolution);
+  const albedoResolution = useTerrainStore((s) => s.albedoResolution);
+  const setAlbedoResolution = useTerrainStore((s) => s.setAlbedoResolution);
+  const imageryZoom = useTerrainStore((s) => s.imageryZoom);
+  const setImageryZoom = useTerrainStore((s) => s.setImageryZoom);
+  const demSource = useTerrainStore((s) => s.demSource);
+  const setDEMSource = useTerrainStore((s) => s.setDEMSource);
+  const imagerySource = useTerrainStore((s) => s.imagerySource);
+  const setImagerySource = useTerrainStore((s) => s.setImagerySource);
   const [isExporting, setIsExporting] = useState(false);
   const [exportResult, setExportResult] = useState<string | null>(null);
 
@@ -105,7 +116,12 @@ export const ExportPanel: React.FC = () => {
           selectedPreset,
           bounds,
           heightmapFormat,
-          albedoFormat
+          albedoFormat,
+          heightmapResolution,
+          albedoResolution,
+          imageryZoom,
+          demSource,
+          imagerySource,
         );
         setExportResult(`Export complete. Files saved to: ${result}`);
       }
@@ -183,6 +199,92 @@ export const ExportPanel: React.FC = () => {
               <FolderOpen className="w-4 h-4" />
               Browse
             </button>
+          </div>
+        </div>
+
+        {/* Quality & Resolution */}
+        <div>
+          <h3 className="text-xs font-semibold text-gray-400 uppercase tracking-wider mb-3">
+            Resolution & Quality
+          </h3>
+          <div className="space-y-3">
+            <div className="space-y-1">
+              <label className="text-xs text-gray-400">Heightmap Resolution</label>
+              <select
+                value={heightmapResolution}
+                onChange={(e) => setHeightmapResolution(Number(e.target.value))}
+                className="w-full bg-gray-700 border border-gray-600 rounded text-sm py-1.5 px-2 text-white"
+              >
+                <option value={512}>512 × 512 (~150m/pixel)</option>
+                <option value={1024}>1024 × 1024 (~75m/pixel)</option>
+                <option value={2048}>2048 × 2048 (~37m/pixel)</option>
+                <option value={4096}>4096 × 4096 (~18m/pixel)</option>
+              </select>
+            </div>
+            <div className="space-y-1">
+              <label className="text-xs text-gray-400">Albedo Resolution</label>
+              <select
+                value={albedoResolution}
+                onChange={(e) => setAlbedoResolution(Number(e.target.value))}
+                className="w-full bg-gray-700 border border-gray-600 rounded text-sm py-1.5 px-2 text-white"
+              >
+                <option value={1024}>1024 × 1024</option>
+                <option value={2048}>2048 × 2048</option>
+                <option value={4096}>4096 × 4096</option>
+                <option value={8192}>8192 × 8192 (Ultra)</option>
+              </select>
+            </div>
+            <div className="space-y-1">
+              <label className="text-xs text-gray-400">Imagery Zoom Level</label>
+              <select
+                value={imageryZoom}
+                onChange={(e) => setImageryZoom(Number(e.target.value))}
+                className="w-full bg-gray-700 border border-gray-600 rounded text-sm py-1.5 px-2 text-white"
+              >
+                <option value={0}>Auto (recommended)</option>
+                <option value={10}>10 — Low (global overview)</option>
+                <option value={12}>12 — Medium</option>
+                <option value={14}>14 — Good</option>
+                <option value={16}>16 — High</option>
+                <option value={18}>18 — Very High</option>
+                <option value={19}>19 — Maximum</option>
+              </select>
+              <p className="text-[10px] text-gray-500">
+                Higher zoom = sharper imagery but more tiles to download
+              </p>
+            </div>
+          </div>
+        </div>
+
+        {/* Data Sources */}
+        <div>
+          <h3 className="text-xs font-semibold text-gray-400 uppercase tracking-wider mb-3">
+            Data Sources
+          </h3>
+          <div className="space-y-3">
+            <div className="space-y-1">
+              <label className="text-xs text-gray-400">DEM Source</label>
+              <select
+                value={demSource}
+                onChange={(e) => setDEMSource(e.target.value as any)}
+                className="w-full bg-gray-700 border border-gray-600 rounded text-sm py-1.5 px-2 text-white"
+              >
+                <option value="aws-terrarium">AWS Terrarium (~30m)</option>
+                <option value="mapzen">Mapzen Terrarium (~30m)</option>
+              </select>
+            </div>
+            <div className="space-y-1">
+              <label className="text-xs text-gray-400">Imagery Source</label>
+              <select
+                value={imagerySource}
+                onChange={(e) => setImagerySource(e.target.value as any)}
+                className="w-full bg-gray-700 border border-gray-600 rounded text-sm py-1.5 px-2 text-white"
+              >
+                <option value="arcgis-world-imagery">ArcGIS World Imagery (free)</option>
+                <option value="mapbox-satellite">Mapbox Satellite (token req)</option>
+                <option value="maptiler-satellite">MapTiler Satellite (token req)</option>
+              </select>
+            </div>
           </div>
         </div>
 

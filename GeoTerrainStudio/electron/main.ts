@@ -1,7 +1,16 @@
-import { app, BrowserWindow, ipcMain, dialog, nativeTheme } from 'electron';
-import * as path from 'path';
-import * as fs from 'fs';
-import { executeExport } from './export-engine';
+/**
+ * GeoTerrain Studio — Electron Main Process
+ *
+ * Uses direct require() for Electron APIs to avoid TypeScript ES module
+ * interop issues with Electron 34's CommonJS loader.
+ */
+
+const electron = require('electron');
+const path = require('path');
+const fs = require('fs');
+const { executeExport } = require('./export-engine');
+
+const { app, BrowserWindow, ipcMain, dialog, nativeTheme } = electron;
 
 // Native addon loader
 let nativeAddon: any = null;
@@ -17,7 +26,7 @@ try {
   console.error('[Main] Failed to load native addon:', err);
 }
 
-let mainWindow: BrowserWindow | null = null;
+let mainWindow: any = null;
 
 function createWindow(): void {
   mainWindow = new BrowserWindow({
@@ -29,7 +38,7 @@ function createWindow(): void {
     darkTheme: true,
     backgroundColor: '#1a1a1a',
     webPreferences: {
-      preload: path.join(__dirname, '../preload/preload.js'),
+      preload: path.join(__dirname, 'preload.cjs'),
       contextIsolation: true,
       nodeIntegration: false,
       sandbox: false,
@@ -80,10 +89,9 @@ ipcMain.handle('native:getVersion', () => {
   return nativeAddon?.getVersion?.() ?? '0.0.0-dev';
 });
 
-ipcMain.handle('native:planGeneration', async (_event, bounds: GeoBounds, profile: TerrainProfile) => {
+ipcMain.handle('native:planGeneration', async (_event: any, bounds: GeoBounds, profile: TerrainProfile) => {
   if (!nativeAddon) {
     console.warn('[Main] Native addon not loaded, using mock implementation');
-    // Mock implementation for development
     const width = bounds.east - bounds.west;
     const height = bounds.north - bounds.south;
     const tiles: GenerationPlan['tiles'] = [];
@@ -115,15 +123,15 @@ ipcMain.handle('native:planGeneration', async (_event, bounds: GeoBounds, profil
   return nativeAddon.planGeneration(bounds, profile);
 });
 
-ipcMain.handle('native:startGeneration', async (_event, sessionId: string, plan: GenerationPlan) => {
+ipcMain.handle('native:startGeneration', async (_event: any, sessionId: string, plan: GenerationPlan) => {
   if (!nativeAddon) {
     console.warn('[Main] Native addon not loaded, using mock implementation');
-    return sessionId; // Return the session ID as the job ID
+    return sessionId;
   }
   return nativeAddon.startGeneration(sessionId, plan);
 });
 
-ipcMain.handle('native:cancelGeneration', async (_event, jobId: string) => {
+ipcMain.handle('native:cancelGeneration', async (_event: any, jobId: string) => {
   if (!nativeAddon) {
     console.warn('[Main] Native addon not loaded, using mock implementation');
     return;
@@ -131,7 +139,7 @@ ipcMain.handle('native:cancelGeneration', async (_event, jobId: string) => {
   return nativeAddon.cancelGeneration(jobId);
 });
 
-ipcMain.handle('native:getProgress', async (_event, jobId: string) => {
+ipcMain.handle('native:getProgress', async (_event: any, jobId: string) => {
   if (!nativeAddon) {
     console.warn('[Main] Native addon not loaded, using mock implementation');
     return {
@@ -146,7 +154,19 @@ ipcMain.handle('native:getProgress', async (_event, jobId: string) => {
   return nativeAddon.getProgress(jobId);
 });
 
-ipcMain.handle('native:exportPackage', async (_event, sessionId: string, outputPath: string, preset: string, bounds: GeoBounds, heightmapFormat: string, albedoFormat: string) => {
+ipcMain.handle('native:exportPackage', async (_event: any,
+  sessionId: string,
+  outputPath: string,
+  preset: string,
+  bounds: GeoBounds,
+  heightmapFormat: string,
+  albedoFormat: string,
+  heightmapResolution = 1024,
+  albedoResolution = 1024,
+  imageryZoom = 0,
+  demSource = 'aws-terrarium',
+  imagerySource = 'arcgis',
+) => {
   if (!nativeAddon) {
     console.warn('[Main] Native addon not loaded, using Node.js export engine');
     try {
@@ -157,6 +177,11 @@ ipcMain.handle('native:exportPackage', async (_event, sessionId: string, outputP
         bounds,
         heightmapFormat: heightmapFormat as any,
         albedoFormat: albedoFormat as any,
+        heightmapSize: heightmapResolution,
+        albedoSize: albedoResolution,
+        imageryZoom,
+        demSource: demSource as any,
+        imagerySource: imagerySource as any,
       });
       return result.manifestPath;
     } catch (err) {
@@ -168,7 +193,7 @@ ipcMain.handle('native:exportPackage', async (_event, sessionId: string, outputP
 });
 
 ipcMain.handle('dialog:selectFolder', async () => {
-  const result = await dialog.showOpenDialog(mainWindow!, {
+  const result = await dialog.showOpenDialog(mainWindow, {
     properties: ['openDirectory'],
     title: 'Select Output Folder',
   });
@@ -176,27 +201,28 @@ ipcMain.handle('dialog:selectFolder', async () => {
 });
 
 ipcMain.handle('dialog:selectPackage', async () => {
-  const result = await dialog.showOpenDialog(mainWindow!, {
+  const result = await dialog.showOpenDialog(mainWindow, {
     properties: ['openDirectory'],
     title: 'Select Terrain Package',
   });
   return result.canceled ? null : result.filePaths[0];
 });
 
-ipcMain.handle('fs:readManifest', async (_event, packagePath: string) => {
+ipcMain.handle('fs:readManifest', async (_event: any, packagePath: string) => {
   const manifestPath = path.join(packagePath, 'manifest.json');
   const data = await fs.promises.readFile(manifestPath, 'utf-8');
   return JSON.parse(data);
 });
 
-ipcMain.handle('fs:writeManifest', async (_event, packagePath: string, manifest: object) => {
+ipcMain.handle('fs:writeManifest', async (_event: any, packagePath: string, manifest: object) => {
   const manifestPath = path.join(packagePath, 'manifest.json');
   await fs.promises.mkdir(packagePath, { recursive: true });
   await fs.promises.writeFile(manifestPath, JSON.stringify(manifest, null, 2));
   return true;
 });
 
-// Type definitions for IPC (mirrored in preload)
+// ─── Type Definitions ─────────────────────────────────────────
+
 interface GeoBounds {
   west: number;
   south: number;

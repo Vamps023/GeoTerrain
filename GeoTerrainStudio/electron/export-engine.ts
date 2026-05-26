@@ -34,6 +34,9 @@ interface ExportOptions {
   albedoFormat: AlbedoFormat;
   heightmapSize?: number;
   albedoSize?: number;
+  demSource?: 'aws-terrarium' | 'mapzen';
+  imagerySource?: 'arcgis' | 'mapbox' | 'maptiler';
+  imageryZoom?: number; // 0 = auto, or explicit 10-19
 }
 
 interface TileRange {
@@ -84,13 +87,13 @@ function tileYToLat(y: number, zoom: number): number {
   return (180 / Math.PI) * Math.atan(0.5 * (Math.exp(n) - Math.exp(-n)));
 }
 
-function chooseZoom(bounds: GeoBounds, targetSize: number): number {
+function chooseZoom(bounds: GeoBounds, targetSize: number, maxZoom = 19): number {
   const widthDeg = bounds.east - bounds.west;
   const heightDeg = bounds.north - bounds.south;
   const minDimDeg = Math.min(widthDeg, heightDeg);
   if (minDimDeg <= 0) return 10;
   const z = Math.log2((targetSize * 360) / (minDimDeg * TILE_SIZE));
-  return Math.max(1, Math.min(14, Math.ceil(z)));
+  return Math.max(1, Math.min(maxZoom, Math.ceil(z)));
 }
 
 function getTileRange(bounds: GeoBounds, zoom: number): TileRange {
@@ -335,10 +338,14 @@ async function resizeImagery(
   dstW: number,
   dstH: number
 ): Promise<Buffer> {
-  // Use nearest-neighbor to preserve sharp edges in satellite imagery
-  // Lanczos3 causes blurring which is undesirable for terrain albedo
+  // Smart kernel selection:
+  // - Downsampling (src > dst): use lanczos3 for smooth, artifact-free reduction
+  // - Upsampling (src < dst): use nearest to avoid blurring already-low-res tiles
+  const isDownsampling = srcW > dstW || srcH > dstH;
+  const kernel = isDownsampling ? sharp.kernel.lanczos3 : sharp.kernel.nearest;
+
   return sharp(buffer, { raw: { width: srcW, height: srcH, channels: 4 } })
-    .resize(dstW, dstH, { kernel: sharp.kernel.nearest })
+    .resize(dstW, dstH, { kernel, fit: 'fill' })
     .raw()
     .toBuffer();
 }
@@ -521,15 +528,52 @@ export async function executeExport(options: ExportOptions): Promise<{
     albedoFormat,
     heightmapSize = 1024,
     albedoSize = 1024,
+    demSource = 'aws-terrarium',
+    imagerySource = 'arcgis',
+    imageryZoom = 0,
   } = options;
 
   await fs.promises.mkdir(outputPath, { recursive: true });
 
   // Choose zoom levels
-  const demZoom = chooseZoom(bounds, heightmapSize);
-  const imgZoom = chooseZoom(bounds, albedoSize);
+  // DEM: max zoom 15 (Terrarium doesn't go higher, ~30m at zoom 15)
+  const demZoom = chooseZoom(bounds, heightmapSize, 15);
+  // Imagery: use explicit zoom if set, otherwise auto up to 19
+  const imgZoom = imageryZoom > 0 ? imageryZoom : chooseZoom(bounds, albedoSize, 19);
 
-  console.log(`[Export] DEM zoom=${demZoom}, imagery zoom=${imgZoom}`);
+  console.log(`[Export] DEM source=${demSource} zoom=${demZoom}, Imagery source=${imagerySource} zoom=${imgZoom}`);
+
+  // ── Build DEM URL ──────────────────────────────────────────
+  function getDEMUrl(x: number, y: number, z: number): string {
+    switch (demSource) {
+      case 'mapzen':
+        return `https://s3.amazonaws.com/elevation-tiles-prod/terrarium/${z}/${x}/${y}.png`;
+      case 'aws-terrarium':
+      default:
+        return `https://s3.amazonaws.com/elevation-tiles-prod/terrarium/${z}/${x}/${y}.png`;
+    }
+  }
+
+  // ── Build imagery URL ──────────────────────────────────────
+  function getImageryUrl(x: number, y: number, z: number): string {
+    switch (imagerySource) {
+      case 'mapbox':
+        // Mapbox satellite — requires user token via MAPBOX_ACCESS_TOKEN env var
+        {
+          const token = process.env.MAPBOX_ACCESS_TOKEN;
+          if (!token) {
+            throw new Error('MAPBOX_ACCESS_TOKEN environment variable is required for Mapbox imagery source');
+          }
+          return `https://api.mapbox.com/v4/mapbox.satellite/${z}/${x}/${y}@2x.png?access_token=${token}`;
+        }
+      case 'maptiler':
+        // MapTiler satellite — high-res, free tier available
+        return `https://api.maptiler.com/tiles/satellite/${z}/${x}/${y}.jpg?key=get_your_own_key`;
+      case 'arcgis':
+      default:
+        return `https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/${z}/${y}/${x}`;
+    }
+  }
 
   // ── Download DEM tiles ─────────────────────────────────────
   const demRange = getTileRange(bounds, demZoom);
@@ -537,7 +581,7 @@ export async function executeExport(options: ExportOptions): Promise<{
 
   for (let y = demRange.minY; y <= demRange.maxY; y++) {
     for (let x = demRange.minX; x <= demRange.maxX; x++) {
-      const url = `https://s3.amazonaws.com/elevation-tiles-prod/terrarium/${demZoom}/${x}/${y}.png`;
+      const url = getDEMUrl(x, y, demZoom);
       console.log(`[Export] Downloading DEM tile: ${url}`);
       try {
         const buffer = await downloadTileWithRetry(url);
@@ -557,7 +601,7 @@ export async function executeExport(options: ExportOptions): Promise<{
 
   for (let y = imgRange.minY; y <= imgRange.maxY; y++) {
     for (let x = imgRange.minX; x <= imgRange.maxX; x++) {
-      const url = `https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/${imgZoom}/${y}/${x}`;
+      const url = getImageryUrl(x, y, imgZoom);
       console.log(`[Export] Downloading imagery tile: ${url}`);
       try {
         const buffer = await downloadTileWithRetry(url);

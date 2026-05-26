@@ -48,13 +48,21 @@ export const Native = {
     preset: string,
     bounds: GeoBounds,
     heightmapFormat: HeightmapFormat,
-    albedoFormat: AlbedoFormat
+    albedoFormat: AlbedoFormat,
+    heightmapResolution = 1024,
+    albedoResolution = 1024,
+    imageryZoom = 0,
+    demSource = 'aws-terrarium',
+    imagerySource = 'arcgis',
   ): Promise<string> {
     if (!isElectron()) {
       console.log('[Mock] Export package:', { sessionId, outputPath, preset, bounds, heightmapFormat, albedoFormat });
       return outputPath;
     }
-    return window.electronAPI!.native.exportPackage(sessionId, outputPath, preset, bounds, heightmapFormat, albedoFormat);
+    return window.electronAPI!.native.exportPackage(
+      sessionId, outputPath, preset, bounds, heightmapFormat, albedoFormat,
+      heightmapResolution, albedoResolution, imageryZoom, demSource, imagerySource
+    );
   },
 };
 
