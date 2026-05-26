@@ -11,8 +11,8 @@ const defaultProfile: TerrainProfile = {
     pixelSizeM: 10,
   },
   sources: {
-    demSource: 'aws-terrain',
-    imagerySource: 'arcgis-world-imagery',
+    demSource: 'aws-terrarium',
+    imagerySource: 'arcgis',
     enableOSM: true,
   },
   processing: {
@@ -68,7 +68,7 @@ export const useTerrainStore = create<AppState & {
   exportedManifest: null,
   exportedPackagePath: null,
   demSource: 'aws-terrarium',
-  imagerySource: 'arcgis-world-imagery',
+  imagerySource: 'arcgis',
   imageryZoom: 0,
   heightmapResolution: 1024,
   albedoResolution: 1024,

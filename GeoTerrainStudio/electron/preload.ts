@@ -25,10 +25,15 @@ export interface ElectronAPI {
   dialog: {
     selectFolder: () => Promise<string | null>;
     selectPackage: () => Promise<string | null>;
+    saveProject: () => Promise<string | null>;
+    loadProject: () => Promise<string | null>;
   };
   fs: {
     readManifest: (packagePath: string) => Promise<unknown>;
     writeManifest: (packagePath: string, manifest: object) => Promise<boolean>;
+    saveProject: (filePath: string, data: object) => Promise<boolean>;
+    loadProject: (filePath: string) => Promise<object | null>;
+    readFileBinary: (filePath: string) => Promise<Buffer>;
   };
   onProgressUpdate: (callback: (progress: JobProgress) => void) => () => void;
 }
@@ -89,10 +94,15 @@ const api: ElectronAPI = {
   dialog: {
     selectFolder: () => ipcRenderer.invoke('dialog:selectFolder'),
     selectPackage: () => ipcRenderer.invoke('dialog:selectPackage'),
+    saveProject: () => ipcRenderer.invoke('dialog:saveProject'),
+    loadProject: () => ipcRenderer.invoke('dialog:loadProject'),
   },
   fs: {
     readManifest: (packagePath) => ipcRenderer.invoke('fs:readManifest', packagePath),
     writeManifest: (packagePath, manifest) => ipcRenderer.invoke('fs:writeManifest', packagePath, manifest),
+    saveProject: (filePath, data) => ipcRenderer.invoke('fs:saveProject', filePath, data),
+    loadProject: (filePath) => ipcRenderer.invoke('fs:loadProject', filePath),
+    readFileBinary: (filePath) => ipcRenderer.invoke('fs:readFileBinary', filePath),
   },
   onProgressUpdate: (callback) => {
     const handler = (_event: unknown, progress: JobProgress) => callback(progress);

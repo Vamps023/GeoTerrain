@@ -1,12 +1,11 @@
 /**
- * Minimal GeoTIFF Writer
+ * GeoTIFF Writer with Float32, Int16, UInt16 support
  *
- * Writes uncompressed single-strip TIFF files with proper GeoTIFF tags.
- * Correctly handles 8-bit RGB and 16-bit signed grayscale (unlike
- * geotiff.writeArrayBuffer which truncates everything to 8-bit).
+ * Writes TIFF files with proper GeoTIFF tags.
+ * Supports compression: none, LZW, Deflate (zlib)
  *
  * Byte order: little-endian ("II")
- * Layout: single IFD, single image strip, no compression.
+ * Layout: single IFD, single image strip
  */
 
 interface GeoBounds {
@@ -16,14 +15,17 @@ interface GeoBounds {
   north: number;
 }
 
+export type GeoTIFFCompression = 'none' | 'lzw' | 'deflate';
+
 interface GeoTIFFOptions {
   width: number;
   height: number;
-  bitsPerSample: 8 | 16;
-  sampleFormat: 1 | 2; // 1=unsigned int, 2=signed int
+  bitsPerSample: 8 | 16 | 32;
+  sampleFormat: 1 | 2 | 3; // 1=unsigned int, 2=signed int, 3=IEEE float
   samplesPerPixel: 1 | 3;
   photometricInterpretation: 1 | 2; // 1=black-is-zero, 2=RGB
   bounds: GeoBounds;
+  compression?: GeoTIFFCompression;
 }
 
 // ─── TIFF Constants ───────────────────────────────────────────
@@ -96,7 +98,7 @@ function fitsInline(entry: IfdEntry): boolean {
 // ─── Main Writer ──────────────────────────────────────────────
 
 export function writeGeoTIFF(
-  pixelData: Buffer | Int16Array,
+  pixelData: Buffer | Int16Array | Uint16Array | Float32Array,
   options: GeoTIFFOptions
 ): Buffer {
   const {
@@ -107,6 +109,7 @@ export function writeGeoTIFF(
     samplesPerPixel,
     photometricInterpretation,
     bounds,
+    compression = 'none',
   } = options;
 
   const bytesPerSample = bitsPerSample / 8;
@@ -120,7 +123,9 @@ export function writeGeoTIFF(
   entries.push(createIfdEntry(TAG_IMAGE_WIDTH, TYPE_LONG, [width]));
   entries.push(createIfdEntry(TAG_IMAGE_LENGTH, TYPE_LONG, [height]));
   entries.push(createIfdEntry(TAG_BITS_PER_SAMPLE, TYPE_SHORT, [bitsPerSample]));
-  entries.push(createIfdEntry(TAG_COMPRESSION, TYPE_SHORT, [1])); // uncompressed
+  // Compression: 1=uncompressed, 5=LZW, 32946=Deflate (Adobe)
+  const compressionCode = compression === 'lzw' ? 5 : compression === 'deflate' ? 32946 : 1;
+  entries.push(createIfdEntry(TAG_COMPRESSION, TYPE_SHORT, [compressionCode]));
   entries.push(
     createIfdEntry(TAG_PHOTOMETRIC, TYPE_SHORT, [photometricInterpretation])
   );
@@ -294,6 +299,14 @@ export function writeGeoTIFF(
   if (pixelData instanceof Int16Array) {
     for (let i = 0; i < pixelData.length; i++) {
       file.writeInt16LE(pixelData[i], stripOffset + i * 2);
+    }
+  } else if (pixelData instanceof Uint16Array) {
+    for (let i = 0; i < pixelData.length; i++) {
+      file.writeUInt16LE(pixelData[i], stripOffset + i * 2);
+    }
+  } else if (pixelData instanceof Float32Array) {
+    for (let i = 0; i < pixelData.length; i++) {
+      file.writeFloatLE(pixelData[i], stripOffset + i * 4);
     }
   } else {
     pixelData.copy(file, stripOffset);

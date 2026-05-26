@@ -3,7 +3,7 @@
  * Provides fallback implementations for development without the native addon.
  */
 
-import type { ElectronAPI, GeoBounds, TerrainProfile, GenerationPlan, JobProgress, HeightmapFormat, AlbedoFormat, ProjectData } from '../types/terrain';
+import type { ElectronAPI, GeoBounds, TerrainProfile, GenerationPlan, JobProgress, HeightmapFormat, AlbedoFormat, ProjectData, DEMSource, ImagerySource } from '../types/terrain';
 
 declare global {
   interface Window {
@@ -52,8 +52,8 @@ export const Native = {
     heightmapResolution = 1024,
     albedoResolution = 1024,
     imageryZoom = 0,
-    demSource = 'aws-terrarium',
-    imagerySource = 'arcgis',
+    demSource: DEMSource = 'aws-terrarium',
+    imagerySource: ImagerySource = 'arcgis',
   ): Promise<string> {
     if (!isElectron()) {
       console.log('[Mock] Export package:', { sessionId, outputPath, preset, bounds, heightmapFormat, albedoFormat });
@@ -127,6 +127,15 @@ export const FsAPI = {
       return null;
     }
     return window.electronAPI!.fs.loadProject(filePath);
+  },
+
+  async readFileBinary(filePath: string): Promise<ArrayBuffer> {
+    if (!isElectron()) {
+      throw new Error('Cannot read binary files in web mode');
+    }
+    const buffer = await window.electronAPI!.fs.readFileBinary(filePath);
+    // Convert Node Buffer to ArrayBuffer for the renderer
+    return buffer.buffer.slice(buffer.byteOffset, buffer.byteOffset + buffer.byteLength) as ArrayBuffer;
   },
 };
 

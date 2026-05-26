@@ -3,7 +3,7 @@
   "version": "2.0.0",
   "description": "Standalone real-world terrain data extractor and exporter",
   "private": true,
-  "main": "electron/main.cjs",
+  "main": "dist-electron/main.js",
   "author": "Vamps",
   "license": "UNLICENSED",
   "pnpm": {
@@ -14,11 +14,13 @@
   },
   "scripts": {
     "dev": "vite --open",
-    "dev:electron": "concurrently \"vite\" \"wait-on http://localhost:5173 && start-electron.bat\"",
-    "build": "tsc && vite build && electron-builder",
-    "build:win": "tsc && vite build && electron-builder --win",
-    "build:mac": "tsc && vite build && electron-builder --mac",
-    "build:linux": "tsc && vite build && electron-builder --linux",
+    "dev:electron": "concurrently \"vite\" \"wait-on http://localhost:5173 && cross-env NODE_ENV=development electron electron/main.ts\"",
+    "build": "npm run build:vite && npm run build:electron && electron-builder",
+    "build:win": "npm run build:vite && npm run build:electron && electron-builder --win",
+    "build:mac": "npm run build:vite && npm run build:electron && electron-builder --mac",
+    "build:linux": "npm run build:vite && npm run build:electron && electron-builder --linux",
+    "build:vite": "vite build",
+    "build:electron": "tsc --project electron/tsconfig.json",
     "lint": "eslint . --ext ts,tsx --report-unused-disable-directives --max-warnings 0",
     "preview": "vite preview",
     "rebuild:native": "cd electron/native && npx node-gyp rebuild"
@@ -29,8 +31,6 @@
     "geotiff": "^2.1.3",
     "lucide-react": "^0.378.0",
     "maplibre-gl": "^5.24.0",
-    "pngjs": "^7.0.0",
-    "pnpm": "^11.3.0",
     "react": "^18.3.1",
     "react-dom": "^18.3.1",
     "react-router-dom": "^6.23.1",
@@ -70,8 +70,8 @@
     },
     "files": [
       "dist",
-      "electron",
-      "node_modules/cesium/Build/Cesium/**/*"
+      "dist-electron",
+      "!node_modules"
     ],
     "asarUnpack": [
       "node_modules/sharp/**/*",

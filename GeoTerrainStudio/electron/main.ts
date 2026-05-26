@@ -35,10 +35,11 @@ function createWindow(): void {
     minWidth: 1200,
     minHeight: 800,
     title: 'GeoTerrain Studio',
+    icon: path.join(__dirname, '../public/logo/logo.png'),
     darkTheme: true,
     backgroundColor: '#1a1a1a',
     webPreferences: {
-      preload: path.join(__dirname, 'preload.cjs'),
+      preload: path.join(__dirname, 'preload.js'),
       contextIsolation: true,
       nodeIntegration: false,
       sandbox: false,
@@ -189,7 +190,7 @@ ipcMain.handle('native:exportPackage', async (_event: any,
       throw err;
     }
   }
-  return nativeAddon.exportPackage(sessionId, outputPath, preset, bounds, heightmapFormat, albedoFormat);
+  return nativeAddon.exportPackage(sessionId, outputPath, preset, bounds, heightmapFormat, albedoFormat, heightmapResolution, albedoResolution, imageryZoom, demSource, imagerySource);
 });
 
 ipcMain.handle('dialog:selectFolder', async () => {
@@ -219,6 +220,64 @@ ipcMain.handle('fs:writeManifest', async (_event: any, packagePath: string, mani
   await fs.promises.mkdir(packagePath, { recursive: true });
   await fs.promises.writeFile(manifestPath, JSON.stringify(manifest, null, 2));
   return true;
+});
+
+// ─── Project Save/Load ────────────────────────────────────────
+
+ipcMain.handle('dialog:saveProject', async () => {
+  const result = await dialog.showSaveDialog(mainWindow ?? undefined, {
+    title: 'Save Project',
+    defaultPath: 'project.gtp',
+    filters: [
+      { name: 'GeoTerrain Project', extensions: ['gtp'] },
+      { name: 'All Files', extensions: ['*'] },
+    ],
+  });
+  return result.canceled ? null : result.filePath;
+});
+
+ipcMain.handle('dialog:loadProject', async () => {
+  const result = await dialog.showOpenDialog(mainWindow ?? undefined, {
+    properties: ['openFile'],
+    title: 'Load Project',
+    filters: [
+      { name: 'GeoTerrain Project', extensions: ['gtp'] },
+      { name: 'All Files', extensions: ['*'] },
+    ],
+  });
+  return result.canceled ? null : result.filePaths[0];
+});
+
+ipcMain.handle('fs:saveProject', async (_event: any, filePath: string, data: object) => {
+  try {
+    await fs.promises.writeFile(filePath, JSON.stringify(data, null, 2), 'utf-8');
+    return true;
+  } catch (err) {
+    console.error('[Main] Failed to save project:', err);
+    return false;
+  }
+});
+
+ipcMain.handle('fs:loadProject', async (_event: any, filePath: string) => {
+  try {
+    const data = await fs.promises.readFile(filePath, 'utf-8');
+    return JSON.parse(data);
+  } catch (err) {
+    console.error('[Main] Failed to load project:', err);
+    return null;
+  }
+});
+
+// ─── Binary File Reading for 3D Viewer ────────────────────────
+
+ipcMain.handle('fs:readFileBinary', async (_event: any, filePath: string) => {
+  try {
+    const buffer = await fs.promises.readFile(filePath);
+    return buffer;
+  } catch (err) {
+    console.error('[Main] Failed to read file:', filePath, err);
+    throw err;
+  }
 });
 
 // ─── Type Definitions ─────────────────────────────────────────

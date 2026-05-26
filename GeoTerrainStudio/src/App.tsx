@@ -14,7 +14,7 @@ const TABS = [
   { id: 'view3d' as const, label: '3D View', icon: Box },
 ];
 
-function App(): JSX.Element {
+function App(): React.JSX.Element {
   const activeTab = useTerrainStore((s) => s.activeTab);
   const setActiveTab = useTerrainStore((s) => s.setActiveTab);
   const exportedManifest = useTerrainStore((s) => s.exportedManifest);
@@ -25,7 +25,7 @@ function App(): JSX.Element {
       {/* Title Bar */}
       <header className="h-12 bg-[#1a1a1a] border-b border-gray-800 flex items-center px-4 justify-between select-none">
         <div className="flex items-center gap-3">
-          <img src="/logo/logo.png" alt="GeoTerrain" className="w-8 h-8 rounded object-contain" />
+          <img src="./logo/logo.png" alt="GeoTerrain" className="w-8 h-8 rounded object-contain" />
           <h1 className="text-sm font-semibold tracking-wide">GeoTerrain Studio</h1>
           <span className="text-[10px] px-1.5 py-0.5 bg-cyan-500/20 text-cyan-400 rounded">v2.0.0-beta</span>
         </div>
@@ -89,7 +89,7 @@ function App(): JSX.Element {
         <div className="flex items-center gap-3">
           <span>Ready</span>
           <span className="text-gray-700">|</span>
-          <span>CesiumJS</span>
+          <span>MapLibre + Babylon.js</span>
         </div>
         <div className="flex items-center gap-3">
           <span>Native Core: v2.0.0</span>

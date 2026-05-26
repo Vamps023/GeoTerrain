@@ -2,7 +2,8 @@ import React, { useState } from 'react';
 import { Download, FolderOpen, FileArchive, Check } from 'lucide-react';
 import { useTerrainStore } from '../../core/store';
 import { Native, Dialog } from '../../core/ipc';
-import type { ExportPreset, HeightmapFormat, AlbedoFormat } from '../../types/terrain';
+import type { ExportPreset, HeightmapFormat, AlbedoFormat, DEMSource, ImagerySource, TerrainManifest } from '../../types/terrain';
+import { FsAPI } from '../../core/ipc';
 
 const PRESETS: Array<{ id: ExportPreset; name: string; desc: string; icon: string }> = [
   { id: 'unigine', name: 'UNIGINE', desc: 'LandscapeLayerMap (.lmap) + materials', icon: 'U' },
@@ -65,62 +66,7 @@ export const ExportPanel: React.FC = () => {
       setIsExporting(true);
       setExportResult(null);
 
-      // Special handling for Babylon.js export
-      if (selectedPreset === 'babylon') {
-        const mockManifest = {
-          version: '1.0.0',
-          createdBy: 'GeoTerrain Studio',
-          createdAt: new Date().toISOString(),
-          terrainName: 'Babylon.js Terrain',
-          description: 'Terrain for 3D viewport viewing',
-          bounds: selectedBounds,
-          crs: 'EPSG:4326',
-          tileGrid: {
-            rows: 1,
-            cols: 1,
-            chunkSizeM: 1000,
-            heightmapResolution: 1024,
-            albedoResolution: 1024,
-          },
-          tiles: [
-            {
-              row: 0,
-              col: 0,
-              bounds: selectedBounds,
-              worldOffset: { x: 0, y: 0, z: 0 },
-              files: {
-                heightmap: 'heightmap.tif',
-                albedo: 'albedo.png',
-              },
-              elevation: { min: 0, max: 100, units: 'meters' as const },
-            },
-          ],
-          sources: {
-            dem: { id: 'aws-terrain', name: 'AWS Terrain Tiles', attribution: 'AWS' },
-            imagery: { id: 'arcgis', name: 'ArcGIS World Imagery', attribution: 'Esri' },
-          },
-          exportPreset: 'babylon' as const,
-          processing: {
-            normalizeHeights: true,
-            heightScale: 1.0,
-            seamStitching: true,
-            fillNodata: true,
-            generateRoadMasks: false,
-            generateWaterMasks: false,
-            generateVegetationMasks: false,
-            generateBuildingMasks: false,
-            generateCliffMasks: false,
-            cliffThresholdDegrees: 45.0,
-          },
-        };
-
-        setExportedData(mockManifest, outputPath);
-        setExportResult(`Terrain prepared for 3D viewing. Output path: ${outputPath}`);
-        setActiveTab('view3d');
-        return;
-      }
-
-      // Multi-tile export
+      // Multi-tile export (works for all presets including Babylon.js)
       const grid = useTerrainStore.getState().tileGrid;
       const tilesToExport = grid?.tiles.filter((t: { row: number; col: number }) =>
         selectedTiles.has(`${t.row},${t.col}`)
@@ -138,7 +84,8 @@ export const ExportPanel: React.FC = () => {
       for (let i = 0; i < tilesToExport.length; i++) {
         const tile = tilesToExport[i];
         const sessionId = `session-${Date.now()}-${i}`;
-        const tileOutputPath = `${outputPath}/tile_${tile.row}_${tile.col}`;
+        // Use platform-agnostic path construction
+        const tileOutputPath = `${outputPath}${window.navigator.platform.startsWith('Win') ? '\\' : '/'}tile_${tile.row}_${tile.col}`;
 
         setExportProgress({ current: i + 1, total });
 
@@ -157,8 +104,24 @@ export const ExportPanel: React.FC = () => {
         );
       }
 
-      setExportProgress(null);
-      setExportResult(`Export complete. ${total} tile(s) saved to: ${outputPath}`);
+      // For Babylon.js preset, switch to 3D view after export
+      if (selectedPreset === 'babylon') {
+        // Read the first tile's manifest for the 3D viewer
+        const firstTile = tilesToExport[0];
+        if (firstTile) {
+          const firstTilePath = `${outputPath}${window.navigator.platform.startsWith('Win') ? '\\' : '/'}tile_${firstTile.row}_${firstTile.col}`;
+          try {
+            const manifest = await FsAPI.readManifest(firstTilePath);
+            setExportedData(manifest as TerrainManifest, firstTilePath);
+          } catch (e) {
+            console.warn('Could not read manifest for 3D view:', e);
+          }
+        }
+        setExportResult(`Terrain exported for 3D viewing. ${total} tile(s) saved to: ${outputPath}`);
+        setActiveTab('view3d');
+      } else {
+        setExportResult(`Export complete. ${total} tile(s) saved to: ${outputPath}`);
+      }
     } catch (err) {
       console.error('Export failed:', err);
       setExportResult(`Export failed: ${err instanceof Error ? err.message : String(err)}`);
@@ -311,7 +274,7 @@ export const ExportPanel: React.FC = () => {
               <label className="text-xs text-gray-400">DEM Source</label>
               <select
                 value={demSource}
-                onChange={(e) => setDEMSource(e.target.value as any)}
+                onChange={(e) => setDEMSource(e.target.value as DEMSource)}
                 className="w-full bg-gray-700 border border-gray-600 rounded text-sm py-1.5 px-2 text-white"
               >
                 <option value="aws-terrarium">AWS Terrarium (~30m)</option>
@@ -322,12 +285,12 @@ export const ExportPanel: React.FC = () => {
               <label className="text-xs text-gray-400">Imagery Source</label>
               <select
                 value={imagerySource}
-                onChange={(e) => setImagerySource(e.target.value as any)}
+                onChange={(e) => setImagerySource(e.target.value as ImagerySource)}
                 className="w-full bg-gray-700 border border-gray-600 rounded text-sm py-1.5 px-2 text-white"
               >
-                <option value="arcgis-world-imagery">ArcGIS World Imagery (free)</option>
-                <option value="mapbox-satellite">Mapbox Satellite (token req)</option>
-                <option value="maptiler-satellite">MapTiler Satellite (token req)</option>
+                <option value="arcgis">ArcGIS World Imagery (free)</option>
+                <option value="mapbox">Mapbox Satellite (token req)</option>
+                <option value="maptiler">MapTiler Satellite (token req)</option>
               </select>
             </div>
           </div>
@@ -346,10 +309,11 @@ export const ExportPanel: React.FC = () => {
                 onChange={(e) => setHeightmapFormat(e.target.value as HeightmapFormat)}
                 className="w-full bg-gray-700 border border-gray-600 rounded text-sm py-1.5 px-2 text-white"
               >
-                <option value="dem">DEM (GeoTIFF float32)</option>
-                <option value="geotiff">GeoTIFF (16-bit normalized)</option>
+                <option value="float32">Float32 GeoTIFF (full precision)</option>
+                <option value="dem">DEM (Int16 GeoTIFF)</option>
+                <option value="geotiff">UInt16 GeoTIFF (normalized)</option>
                 <option value="r16">R16 (Raw 16-bit)</option>
-                <option value="png">PNG (8-bit grayscale)</option>
+                <option value="png">PNG (16-bit grayscale)</option>
               </select>
             </div>
             <div className="space-y-1">

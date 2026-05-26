@@ -13,8 +13,9 @@ import {
   Color3,
   Color4,
 } from '@babylonjs/core';
-import { fromUrl } from 'geotiff';
+import { fromArrayBuffer } from 'geotiff';
 import type { TerrainManifest, TerrainTile } from '../../types/terrain';
+import { FsAPI } from '../../core/ipc';
 
 interface TerrainViewer3DProps {
   manifest: TerrainManifest | null;
@@ -181,30 +182,24 @@ export const TerrainViewer3D: React.FC<TerrainViewer3DProps> = ({ manifest, pack
           return;
         }
 
-        // In web mode, file:// URLs are blocked by CSP, so use demo terrain
-        if (typeof window !== 'undefined' && window.location.protocol === 'http:') {
-          setStatus('Web mode: using demo terrain (file access restricted)');
-          buildDemoTerrain(scene);
-          setIsLoading(false);
-          return;
-        }
-
-        // Read GeoTIFF
+        // Read GeoTIFF via IPC (file:// URLs don't work in packaged Electron)
         setStatus('Reading heightmap...');
-        const tiff = await fromUrl(`file://${heightmapPath}`).catch(() => null);
         let elevations: Float32Array | null = null;
         let imgWidth = 128;
         let imgHeight = 128;
 
-        if (tiff) {
+        try {
+          // Use IPC to read binary file
+          const buffer = await FsAPI.readFileBinary(heightmapPath);
+          const tiff = await fromArrayBuffer(buffer);
           const image = await tiff.getImage();
           const data = await image.readRasters();
           elevations = data[0] as Float32Array;
           imgWidth = image.getWidth();
           imgHeight = image.getHeight();
-        } else {
-          // Fallback: try loading as image
-          setStatus('GeoTIFF read failed, using demo terrain');
+        } catch (err) {
+          console.error('Failed to read heightmap:', err);
+          setStatus('Failed to read heightmap, using demo terrain');
           buildDemoTerrain(scene);
           setIsLoading(false);
           return;
@@ -212,7 +207,7 @@ export const TerrainViewer3D: React.FC<TerrainViewer3DProps> = ({ manifest, pack
 
         // Build mesh
         setStatus('Building mesh...');
-        buildTerrainMesh(scene, imgWidth, imgHeight, elevations, albedoPath);
+        await buildTerrainMesh(scene, imgWidth, imgHeight, elevations, albedoPath);
         setStatus(`Terrain loaded: ${imgWidth}x${imgHeight}`);
       } catch (err) {
         console.error('Failed to load terrain:', err);
@@ -225,7 +220,7 @@ export const TerrainViewer3D: React.FC<TerrainViewer3DProps> = ({ manifest, pack
     [buildDemoTerrain]
   );
 
-  const buildTerrainMesh = (
+  const buildTerrainMesh = async (
     scene: Scene,
     width: number,
     height: number,
@@ -300,9 +295,20 @@ export const TerrainViewer3D: React.FC<TerrainViewer3DProps> = ({ manifest, pack
 
     if (albedoPath) {
       try {
-        const tex = new Texture(`file://${albedoPath}`, scene);
+        // Read albedo via IPC and create blob URL
+        const albedoBuffer = await FsAPI.readFileBinary(albedoPath);
+        // Detect MIME type from file extension
+        const isTiff = albedoPath.toLowerCase().endsWith('.tif') || albedoPath.toLowerCase().endsWith('.tiff');
+        const mimeType = isTiff ? 'image/tiff' : 'image/png';
+        const blob = new Blob([albedoBuffer], { type: mimeType });
+        const blobUrl = URL.createObjectURL(blob);
+        const tex = new Texture(blobUrl, scene, false, false, Texture.NEAREST_SAMPLINGMODE, () => {
+          // Clean up blob URL after texture loads
+          URL.revokeObjectURL(blobUrl);
+        });
         material.diffuseTexture = tex;
-      } catch {
+      } catch (err) {
+        console.warn('Failed to load albedo, using default color:', err);
         material.diffuseColor = new Color3(0.4, 0.5, 0.3);
       }
     } else {

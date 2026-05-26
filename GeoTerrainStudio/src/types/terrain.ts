@@ -35,6 +35,7 @@ export interface ElectronAPI {
     writeManifest: (packagePath: string, manifest: object) => Promise<boolean>;
     saveProject: (filePath: string, data: ProjectData) => Promise<boolean>;
     loadProject: (filePath: string) => Promise<ProjectData | null>;
+    readFileBinary: (filePath: string) => Promise<Buffer>;
   };
   onProgressUpdate: (callback: (progress: JobProgress) => void) => () => void;
 }
@@ -114,7 +115,7 @@ export interface ProcessingOptions {
 
 export type ExportPreset = 'unigine' | 'unreal' | 'unity' | 'godot' | 'generic' | 'babylon';
 
-export type HeightmapFormat = 'dem' | 'geotiff' | 'r16' | 'png';
+export type HeightmapFormat = 'dem' | 'geotiff' | 'r16' | 'png' | 'float32';
 export type AlbedoFormat = 'png' | 'geotiff';
 
 export interface ExportPresetConfig {
@@ -174,7 +175,7 @@ export interface TerrainProfile {
 }
 
 export type DEMSource = 'aws-terrarium' | 'mapzen' | 'copernicus-30m';
-export type ImagerySource = 'arcgis-world-imagery' | 'mapbox-satellite' | 'maptiler-satellite';
+export type ImagerySource = 'arcgis' | 'mapbox' | 'maptiler';
 
 export interface GenerationPlan {
   zoom: number;
