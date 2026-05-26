@@ -55,6 +55,8 @@ export const Native = {
     demSource: DEMSource = 'aws-terrarium',
     imagerySource: ImagerySource = 'arcgis',
     apiKeys?: ApiKeys,
+    tileRow = 0,
+    tileCol = 0,
   ): Promise<string> {
     if (!isElectron()) {
       console.log('[Mock] Export package:', { sessionId, outputPath, preset, bounds, heightmapFormat, albedoFormat });
@@ -62,7 +64,7 @@ export const Native = {
     }
     return window.electronAPI!.native.exportPackage(
       sessionId, outputPath, preset, bounds, heightmapFormat, albedoFormat,
-      heightmapResolution, albedoResolution, imageryZoom, demSource, imagerySource, apiKeys
+      heightmapResolution, albedoResolution, imageryZoom, demSource, imagerySource, apiKeys, tileRow, tileCol
     );
   },
 };

@@ -187,10 +187,53 @@ export const ExportPanel: React.FC = () => {
       }
 
       const total = tilesToExport.length;
+      // Sort tiles by row then col to ensure correct offset calculation
+      const sortedTiles = [...tilesToExport].sort((a, b) => {
+        if (a.row !== b.row) return a.row - b.row;
+        return a.col - b.col;
+      });
+
+      // Compute cumulative world offsets for variable-sized tiles
+      const centerLat = tilesToExport.reduce((sum, t) => sum + (t.bounds.north + t.bounds.south) / 2, 0) / tilesToExport.length;
+      const kmPerDegLat = 111.32;
+      const kmPerDegLng = 111.32 * Math.cos((centerLat * Math.PI) / 180);
+      const mPerDegLat = kmPerDegLat * 1000;
+      const mPerDegLng = kmPerDegLng * 1000;
+
+      const colWidths = new Map<number, number>();
+      const rowHeights = new Map<number, number>();
+      for (const t of sortedTiles) {
+        if (!colWidths.has(t.col)) {
+          const widthM = Math.max(1, (t.bounds.east - t.bounds.west) * mPerDegLng);
+          colWidths.set(t.col, widthM);
+        }
+        if (!rowHeights.has(t.row)) {
+          const heightM = Math.max(1, (t.bounds.north - t.bounds.south) * mPerDegLat);
+          rowHeights.set(t.row, heightM);
+        }
+      }
+
+      const colOffsetX = new Map<number, number>();
+      const rowOffsetZ = new Map<number, number>();
+      const minCol = Math.min(...tilesToExport.map(t => t.col));
+      const maxCol = Math.max(...tilesToExport.map(t => t.col));
+      const minRow = Math.min(...tilesToExport.map(t => t.row));
+      const maxRow = Math.max(...tilesToExport.map(t => t.row));
+
+      let currentX = 0;
+      for (let c = minCol; c <= maxCol; c++) {
+        colOffsetX.set(c, currentX);
+        currentX += colWidths.get(c) ?? 0;
+      }
+      let currentZ = 0;
+      for (let r = minRow; r <= maxRow; r++) {
+        rowOffsetZ.set(r, currentZ);
+        currentZ += rowHeights.get(r) ?? 0;
+      }
 
       // Export each tile
-      for (let i = 0; i < tilesToExport.length; i++) {
-        const tile = tilesToExport[i];
+      for (let i = 0; i < sortedTiles.length; i++) {
+        const tile = sortedTiles[i];
         const sessionId = `session-${Date.now()}-${i}`;
         // Use platform-agnostic path construction
         const tileOutputPath = `${outputPath}${window.navigator.platform.startsWith('Win') ? '\\' : '/'}tile_${tile.row}_${tile.col}`;
@@ -217,6 +260,8 @@ export const ExportPanel: React.FC = () => {
           demSource,
           imagerySource,
           apiKeys,
+          tile.row,
+          tile.col,
         );
 
         // Update progress AFTER tile completes
@@ -231,17 +276,51 @@ export const ExportPanel: React.FC = () => {
 
       // For Babylon.js preset, switch to 3D view after export
       if (selectedPreset === 'babylon') {
-        // Read the first tile's manifest for the 3D viewer
-        const firstTile = tilesToExport[0];
-        if (firstTile) {
-          const firstTilePath = `${outputPath}${window.navigator.platform.startsWith('Win') ? '\\' : '/'}tile_${firstTile.row}_${firstTile.col}`;
-          try {
-            const manifest = await FsAPI.readManifest(firstTilePath);
-            setExportedData(manifest as TerrainManifest, firstTilePath);
-          } catch (e) {
-            console.warn('Could not read manifest for 3D view:', e);
-          }
+        const sep = window.navigator.platform.startsWith('Win') ? '\\' : '/';
+        const tileManifests: TerrainManifest[] = [];
+
+        for (const tile of tilesToExport) {
+          const tileFolder = `tile_${tile.row}_${tile.col}`;
+          const tilePath = `${outputPath}${sep}${tileFolder}`;
+          const manifest = await FsAPI.readManifest(tilePath) as TerrainManifest;
+          const manifestTile = manifest.tiles[0];
+
+          tileManifests.push({
+            ...manifest,
+            tiles: [{
+              ...manifestTile,
+              row: tile.row,
+              col: tile.col,
+              bounds: tile.bounds,
+              files: {
+                ...manifestTile.files,
+                heightmap: manifestTile.files.heightmap ? `${tileFolder}/${manifestTile.files.heightmap}` : undefined,
+                albedo: manifestTile.files.albedo ? `${tileFolder}/${manifestTile.files.albedo}` : undefined,
+              },
+            }],
+          });
         }
+
+        if (tileManifests.length > 0) {
+          const allTiles = tileManifests.flatMap((m) => m.tiles);
+          const minRow = Math.min(...allTiles.map((t) => t.row));
+          const maxRow = Math.max(...allTiles.map((t) => t.row));
+          const minCol = Math.min(...allTiles.map((t) => t.col));
+          const maxCol = Math.max(...allTiles.map((t) => t.col));
+          const combinedManifest: TerrainManifest = {
+            ...tileManifests[0],
+            tileGrid: {
+              ...tileManifests[0].tileGrid,
+              rows: Math.max(1, maxRow - minRow + 1),
+              cols: Math.max(1, maxCol - minCol + 1),
+            },
+            tiles: allTiles,
+          };
+
+          await FsAPI.writeManifest(outputPath, combinedManifest);
+          setExportedData(combinedManifest, outputPath);
+        }
+
         setExportResult(`Terrain exported for 3D viewing. ${total} tile(s) saved to: ${outputPath}`);
         setActiveTab('view3d');
       } else {

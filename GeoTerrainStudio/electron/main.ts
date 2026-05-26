@@ -168,33 +168,34 @@ ipcMain.handle('native:exportPackage', async (_event: any,
   demSource = 'aws-terrarium',
   imagerySource = 'arcgis',
   apiKeys?: { opentopography?: string; mapbox?: string; maptiler?: string },
+  tileRow = 0,
+  tileCol = 0,
 ) => {
-  if (!nativeAddon) {
-    console.warn('[Main] Native addon not loaded, using Node.js export engine');
-    try {
-      const result = await executeExport({
-        sessionId,
-        outputPath,
-        preset,
-        bounds,
-        heightmapFormat: heightmapFormat as any,
-        albedoFormat: albedoFormat as any,
-        heightmapSize: heightmapResolution,
-        albedoSize: albedoResolution,
-        imageryZoom,
-        demSource: demSource as any,
-        imagerySource: imagerySource as any,
-        opentopographyApiKey: apiKeys?.opentopography,
-        mapboxAccessToken: apiKeys?.mapbox,
-        maptilerApiKey: apiKeys?.maptiler,
-      });
-      return result.manifestPath;
-    } catch (err) {
-      console.error('[Main] Export failed:', err);
-      throw err;
-    }
+  // Native export is currently a stub; keep exports on the fully implemented JS engine.
+  try {
+    const result = await executeExport({
+      sessionId,
+      outputPath,
+      preset,
+      bounds,
+      heightmapFormat: heightmapFormat as any,
+      albedoFormat: albedoFormat as any,
+      heightmapSize: heightmapResolution,
+      albedoSize: albedoResolution,
+      imageryZoom,
+      demSource: demSource as any,
+      imagerySource: imagerySource as any,
+      opentopographyApiKey: apiKeys?.opentopography,
+      mapboxAccessToken: apiKeys?.mapbox,
+      maptilerApiKey: apiKeys?.maptiler,
+      tileRow,
+      tileCol,
+    });
+    return result.manifestPath;
+  } catch (err) {
+    console.error('[Main] Export failed:', err);
+    throw err;
   }
-  return nativeAddon.exportPackage(sessionId, outputPath, preset, bounds, heightmapFormat, albedoFormat, heightmapResolution, albedoResolution, imageryZoom, demSource, imagerySource);
 });
 
 // ─── Settings (API Keys) ────────────────────────────────────

@@ -29,6 +29,8 @@ export interface ElectronAPI {
       demSource?: string,
       imagerySource?: string,
       apiKeys?: ApiKeys,
+      tileRow?: number,
+      tileCol?: number,
     ) => Promise<string>;
   };
   settings: {
@@ -99,6 +101,8 @@ export interface TileGridConfig {
   rows: number;
   cols: number;
   chunkSizeM: number;
+  tileWidthM?: number;
+  tileHeightM?: number;
   heightmapResolution: number;
   albedoResolution: number;
   pixelSizeM?: number;

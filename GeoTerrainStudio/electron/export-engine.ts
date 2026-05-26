@@ -121,6 +121,15 @@ interface ElevationMetadata {
   hasNoData: boolean;
 }
 
+function estimateTileSizeMeters(bounds: GeoBounds): { widthM: number; heightM: number; chunkSizeM: number } {
+  const midLatRad = ((bounds.north + bounds.south) * 0.5 * Math.PI) / 180.0;
+  const metersPerDegLat = 111320.0;
+  const metersPerDegLon = metersPerDegLat * Math.cos(midLatRad);
+  const widthM = Math.max(1.0, (bounds.east - bounds.west) * metersPerDegLon);
+  const heightM = Math.max(1.0, (bounds.north - bounds.south) * metersPerDegLat);
+  return { widthM, heightM, chunkSizeM: Math.max(widthM, heightM) };
+}
+
 // ─── Validation & Safety ──────────────────────────────────────
 
 export function validateExport(options: ExportOptions): ExportValidation {
@@ -291,6 +300,18 @@ async function downloadBuffer(url: string): Promise<Buffer> {
           downloadBuffer(loc).then(resolve).catch(reject);
           return;
         }
+      }
+      if (res.statusCode === 401) {
+        const isOpenTopo = url.includes('opentopography.org');
+        if (isOpenTopo) {
+          reject(new Error(
+            'HTTP 401: OpenTopography API key invalid. ' +
+            'Get a new free key at https://portal.opentopography.org/myopentopo'
+          ));
+        } else {
+          reject(new Error('HTTP 401 Unauthorized'));
+        }
+        return;
       }
       if (res.statusCode !== 200) {
         reject(new Error(`HTTP ${res.statusCode} for ${url}`));
@@ -1180,6 +1201,10 @@ export async function executeExport(
     onProgress({ stage: 'write_manifest', current: 0, total: 100, message: 'Writing manifest...' });
   }
 
+  const { widthM: tileWidthM, heightM: tileHeightM, chunkSizeM } = estimateTileSizeMeters(bounds);
+  const worldOffsetX = tileCol * tileWidthM;
+  const worldOffsetZ = tileRow * tileHeightM;
+
   const manifest = {
     version: '1.0.0',
     createdBy: 'GeoTerrain Studio',
@@ -1190,7 +1215,9 @@ export async function executeExport(
     tileGrid: {
       rows: 1,
       cols: 1,
-      chunkSizeM: 1000,
+      chunkSizeM,
+      tileWidthM,
+      tileHeightM,
       heightmapResolution: heightmapSize,
       albedoResolution: albedoSize,
     },
@@ -1199,7 +1226,7 @@ export async function executeExport(
         row: tileRow,
         col: tileCol,
         bounds,
-        worldOffset: { x: 0, y: 0, z: 0 },
+        worldOffset: { x: worldOffsetX, y: 0, z: worldOffsetZ },
         files: {
           heightmap: fileNames.heightmap,
           albedo: fileNames.albedo,

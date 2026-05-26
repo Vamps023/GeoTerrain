@@ -27,6 +27,12 @@ interface TerrainViewer3DProps {
 const DEFAULT_TILE_SIZE_M = 4000; // 4 km fallback
 const HEIGHT_EXAGGERATION = 1.5;  // mild vertical scale for visual clarity (1.0 = true-to-life)
 
+function tileCoordsFromPath(filePath?: string): { row: number; col: number } | null {
+  const match = filePath?.match(/(?:^|[\\/])tile_(\d+)_(\d+)(?:[\\/]|$)/);
+  if (!match) return null;
+  return { row: Number(match[1]), col: Number(match[2]) };
+}
+
 export const TerrainViewer3D: React.FC<TerrainViewer3DProps> = ({ manifest, packagePath }) => {
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const engineRef = useRef<Engine | null>(null);
@@ -143,7 +149,8 @@ export const TerrainViewer3D: React.FC<TerrainViewer3DProps> = ({ manifest, pack
     tile: TerrainTile,
     pkgPath: string,
     tileIndex: number,
-    tileSizeM: number
+    tileWidthM: number,
+    tileHeightM: number
   ) => {
     const basePath = pkgPath.replace(/\\/g, '/');
     const heightmapPath = tile.files.heightmap ? `${basePath}/${tile.files.heightmap}` : null;
@@ -154,7 +161,7 @@ export const TerrainViewer3D: React.FC<TerrainViewer3DProps> = ({ manifest, pack
       ? manifest.tileGrid.heightmapResolution - 1
       : 511; // default 512x512 mesh → 511 subdivisions
 
-    const meshName = `tile_${tile.row}_${tile.col}`;
+    const meshName = `tile_${tile.row}_${tile.col}_${tileIndex}`;
     const existing = scene.getMeshByName(meshName);
     if (existing) existing.dispose();
 
@@ -164,24 +171,24 @@ export const TerrainViewer3D: React.FC<TerrainViewer3DProps> = ({ manifest, pack
       try {
         // Read heightmap file and create blob URL
         const buf = await FsAPI.readFileBinary(heightmapPath);
-        const isTiff = heightmapPath.toLowerCase().endsWith('.tif') || heightmapPath.toLowerCase().endsWith('.tiff');
-        const blob = new Blob([buf], { type: isTiff ? 'image/tiff' : 'image/png' });
+        const blob = new Blob([buf], { type: 'image/png' });
         const url = URL.createObjectURL(blob);
 
         // Use Babylon's native heightmap loader
         // Parameters: name, url, width, depth, subdivisions, minHeight, maxHeight, scene, onReady
-        const elevationMin = tile.elevation.min;
-        const elevationMax = tile.elevation.max;
+        const elevationMin = Number.isFinite(tile.elevation.min) ? tile.elevation.min : 0;
+        const elevationMax = Number.isFinite(tile.elevation.max) ? tile.elevation.max : 100;
+        const elevationRange = Math.max(2, elevationMax - elevationMin);
 
         mesh = MeshBuilder.CreateGroundFromHeightMap(
           meshName,
           url,
           {
-            width: tileSizeM,
-            height: tileSizeM,
+            width: tileWidthM,
+            height: tileHeightM,
             subdivisions: Math.min(subDivs, 1024), // Cap at 1024 to prevent performance issues
-            minHeight: elevationMin * HEIGHT_EXAGGERATION,
-            maxHeight: elevationMax * HEIGHT_EXAGGERATION,
+            minHeight: 0,
+            maxHeight: elevationRange * HEIGHT_EXAGGERATION,
             onReady: () => {
               // Clean up blob URL after mesh is ready
               URL.revokeObjectURL(url);
@@ -192,18 +199,19 @@ export const TerrainViewer3D: React.FC<TerrainViewer3DProps> = ({ manifest, pack
       } catch (e) {
         console.warn(`Tile ${tileIndex} heightmap failed, using flat ground:`, e);
         // Fallback to flat ground
-        mesh = MeshBuilder.CreateGround(meshName, { width: tileSizeM, height: tileSizeM, subdivisions: 10 }, scene);
+        mesh = MeshBuilder.CreateGround(meshName, { width: tileWidthM, height: tileHeightM, subdivisions: 10 }, scene);
       }
     } else {
       // No heightmap — flat ground
-      mesh = MeshBuilder.CreateGround(meshName, { width: tileSizeM, height: tileSizeM, subdivisions: 10 }, scene);
+      mesh = MeshBuilder.CreateGround(meshName, { width: tileWidthM, height: tileHeightM, subdivisions: 10 }, scene);
     }
 
     // Position the mesh at its world offset
     // CreateGroundFromHeightMap centers the mesh at origin, so we position after creation
-    mesh.position.x = tile.worldOffset.x + tileSizeM / 2;
-    mesh.position.z = tile.worldOffset.z + tileSizeM / 2;
-    // Y position stays at 0 (heightmap handles vertical range via minHeight/maxHeight)
+    mesh.position.x = tile.worldOffset.x + tileWidthM / 2;
+    mesh.position.z = tile.worldOffset.z + tileHeightM / 2;
+    mesh.position.y = 0;
+    // Terrain preview uses relative height, while absolute elevation remains in the manifest.
 
     // Apply albedo texture
     const mat = new StandardMaterial(`mat_${tileIndex}`, scene);
@@ -237,20 +245,40 @@ export const TerrainViewer3D: React.FC<TerrainViewer3DProps> = ({ manifest, pack
       // Dispose old tile meshes
       scene.meshes.filter(m => m.name.startsWith('tile_')).forEach(m => m.dispose());
 
-      const tiles = manifest.tiles;
-      if (!tiles || tiles.length === 0) {
+      const sourceTiles = manifest.tiles;
+      if (!sourceTiles || sourceTiles.length === 0) {
         setStatus('No tiles in manifest');
         setIsLoading(false);
         return;
       }
 
-      // Read real tile size from manifest (in meters), fallback to default
-      const tileSizeM = manifest.tileGrid?.chunkSizeM ?? DEFAULT_TILE_SIZE_M;
-      const rows = manifest.tileGrid?.rows ?? 1;
-      const cols = manifest.tileGrid?.cols ?? 1;
-      const totalW = cols * tileSizeM;
-      const totalD = rows * tileSizeM;
+      const seenTileKeys = new Set<string>();
+      const hasDuplicateCoords = sourceTiles.some((tile) => {
+        const key = `${tile.row},${tile.col}`;
+        if (seenTileKeys.has(key)) return true;
+        seenTileKeys.add(key);
+        return false;
+      });
 
+      const tiles = sourceTiles.map((tile) => {
+        if (!hasDuplicateCoords) return tile;
+        const coords = tileCoordsFromPath(tile.files.heightmap) ?? tileCoordsFromPath(tile.files.albedo);
+        return coords ? { ...tile, row: coords.row, col: coords.col } : tile;
+      });
+
+      // Read real tile size from manifest (in meters), fallback to default.
+      // Tile folders can contain global row/col values even when only one tile is loaded.
+      const tileSizeM = manifest.tileGrid?.chunkSizeM ?? DEFAULT_TILE_SIZE_M;
+      const tileWidthM = manifest.tileGrid?.tileWidthM ?? tileSizeM;
+      const tileHeightM = manifest.tileGrid?.tileHeightM ?? tileSizeM;
+      const minRow = Math.min(...tiles.map((t) => t.row));
+      const maxRow = Math.max(...tiles.map((t) => t.row));
+      const minCol = Math.min(...tiles.map((t) => t.col));
+      const maxCol = Math.max(...tiles.map((t) => t.col));
+      const rows = Math.max(1, maxRow - minRow + 1);
+      const cols = Math.max(1, maxCol - minCol + 1);
+      const totalW = cols * tileWidthM;
+      const totalD = rows * tileHeightM;
       // Global elevation range (for camera positioning only)
       let globalMinH = Infinity, globalMaxH = -Infinity;
       for (const t of tiles) {
@@ -268,12 +296,12 @@ export const TerrainViewer3D: React.FC<TerrainViewer3DProps> = ({ manifest, pack
           const centeredTile: TerrainTile = {
             ...tile,
             worldOffset: {
-              x: (tile.col * tileSizeM) - totalW / 2,
+              x: ((tile.col - minCol) * tileWidthM) - totalW / 2,
               y: 0,
-              z: (tile.row * tileSizeM) - totalD / 2,
+              z: ((tile.row - minRow) * tileHeightM) - totalD / 2,
             },
           };
-          await buildTileMesh(scene, centeredTile, pkgPath, loaded, tileSizeM);
+          await buildTileMesh(scene, centeredTile, pkgPath, loaded, tileWidthM, tileHeightM);
           loaded++;
           setStatus(`Loading tiles... ${loaded}/${tiles.length}`);
         } catch (e) {
@@ -286,10 +314,11 @@ export const TerrainViewer3D: React.FC<TerrainViewer3DProps> = ({ manifest, pack
       if (camera) {
         const elevRange = (globalMaxH - globalMinH) * HEIGHT_EXAGGERATION;
         const viewDist = Math.max(totalW, totalD) * 0.8;
-        camera.position = new Vector3(0, elevRange * 0.5 + viewDist * 0.3, -viewDist);
-        camera.setTarget(new Vector3(0, 0, 0));
+        const targetY = Math.max(1, elevRange * 0.5);
+        camera.position = new Vector3(0, targetY + viewDist * 0.35, -viewDist);
+        camera.setTarget(new Vector3(0, targetY, 0));
         camera.speed = Math.max(20, totalW / 100);
-        camera.maxZ = totalW * 5;
+        camera.maxZ = Math.max(totalW, totalD, elevRange) * 8;
       }
 
       setStatus(`✓ ${loaded} tile(s) loaded — WASD fly, Q/E up/down, mouse look, Shift sprint`);

@@ -21,6 +21,8 @@ export interface ElectronAPI {
       demSource?: string,
       imagerySource?: string,
       apiKeys?: { opentopography?: string; mapbox?: string; maptiler?: string },
+      tileRow?: number,
+      tileCol?: number,
     ) => Promise<string>;
   };
   settings: {
@@ -93,8 +95,8 @@ const api: ElectronAPI = {
     startGeneration: (sessionId, plan) => ipcRenderer.invoke('native:startGeneration', sessionId, plan),
     cancelGeneration: (jobId) => ipcRenderer.invoke('native:cancelGeneration', jobId),
     getProgress: (jobId) => ipcRenderer.invoke('native:getProgress', jobId),
-    exportPackage: (sessionId, outputPath, preset, bounds, heightmapFormat, albedoFormat, heightmapResolution, albedoResolution, imageryZoom, demSource, imagerySource, apiKeys) =>
-      ipcRenderer.invoke('native:exportPackage', sessionId, outputPath, preset, bounds, heightmapFormat, albedoFormat, heightmapResolution, albedoResolution, imageryZoom, demSource, imagerySource, apiKeys),
+    exportPackage: (sessionId, outputPath, preset, bounds, heightmapFormat, albedoFormat, heightmapResolution, albedoResolution, imageryZoom, demSource, imagerySource, apiKeys, tileRow, tileCol) =>
+      ipcRenderer.invoke('native:exportPackage', sessionId, outputPath, preset, bounds, heightmapFormat, albedoFormat, heightmapResolution, albedoResolution, imageryZoom, demSource, imagerySource, apiKeys, tileRow, tileCol),
   },
   settings: {
     getApiKeys: () => ipcRenderer.invoke('settings:getApiKeys'),
