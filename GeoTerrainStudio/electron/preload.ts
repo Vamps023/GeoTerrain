@@ -1,6 +1,16 @@
 import { contextBridge, ipcRenderer } from 'electron';
 
 // Type-safe IPC API exposed to renderer
+export interface MaskSettings {
+  generateRoadMask: boolean;
+  generateWaterMask: boolean;
+  generateVegetationMask: boolean;
+  generateBuildingMask: boolean;
+  generateCliffMask: boolean;
+  cliffThresholdDegrees: number;
+  roadLineWidthPx: number;
+}
+
 export interface ElectronAPI {
   native: {
     getVersion: () => Promise<string>;
@@ -23,6 +33,7 @@ export interface ElectronAPI {
       apiKeys?: { opentopography?: string; mapbox?: string; maptiler?: string },
       tileRow?: number,
       tileCol?: number,
+      maskSettings?: MaskSettings,
     ) => Promise<string>;
   };
   settings: {
@@ -43,6 +54,16 @@ export interface ElectronAPI {
     readFileBinary: (filePath: string) => Promise<Buffer>;
   };
   onProgressUpdate: (callback: (progress: JobProgress) => void) => () => void;
+}
+
+export interface MaskSettings {
+  generateRoadMask: boolean;
+  generateWaterMask: boolean;
+  generateVegetationMask: boolean;
+  generateBuildingMask: boolean;
+  generateCliffMask: boolean;
+  cliffThresholdDegrees: number;  // 0-90, default 45
+  roadLineWidthPx: number;        // 1-10, default 3
 }
 
 export interface GeoBounds {
@@ -95,8 +116,8 @@ const api: ElectronAPI = {
     startGeneration: (sessionId, plan) => ipcRenderer.invoke('native:startGeneration', sessionId, plan),
     cancelGeneration: (jobId) => ipcRenderer.invoke('native:cancelGeneration', jobId),
     getProgress: (jobId) => ipcRenderer.invoke('native:getProgress', jobId),
-    exportPackage: (sessionId, outputPath, preset, bounds, heightmapFormat, albedoFormat, heightmapResolution, albedoResolution, imageryZoom, demSource, imagerySource, apiKeys, tileRow, tileCol) =>
-      ipcRenderer.invoke('native:exportPackage', sessionId, outputPath, preset, bounds, heightmapFormat, albedoFormat, heightmapResolution, albedoResolution, imageryZoom, demSource, imagerySource, apiKeys, tileRow, tileCol),
+    exportPackage: (sessionId, outputPath, preset, bounds, heightmapFormat, albedoFormat, heightmapResolution, albedoResolution, imageryZoom, demSource, imagerySource, apiKeys, tileRow, tileCol, maskSettings) =>
+      ipcRenderer.invoke('native:exportPackage', sessionId, outputPath, preset, bounds, heightmapFormat, albedoFormat, heightmapResolution, albedoResolution, imageryZoom, demSource, imagerySource, apiKeys, tileRow, tileCol, maskSettings),
   },
   settings: {
     getApiKeys: () => ipcRenderer.invoke('settings:getApiKeys'),

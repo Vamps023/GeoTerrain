@@ -1,5 +1,5 @@
 import { create } from 'zustand';
-import type { AppState, GeoBounds, TerrainProfile, GenerationPlan, JobProgress, ExportPreset, TerrainManifest, HeightmapFormat, AlbedoFormat, DEMSource, ImagerySource, TileGrid } from '../types/terrain';
+import type { AppState, GeoBounds, TerrainProfile, GenerationPlan, JobProgress, ExportPreset, TerrainManifest, HeightmapFormat, AlbedoFormat, DEMSource, ImagerySource, TileGrid, MaskSettings } from '../types/terrain';
 
 const defaultProfile: TerrainProfile = {
   id: 'balanced',
@@ -51,6 +51,7 @@ export const useTerrainStore = create<AppState & {
   selectAllTiles: () => void;
   deselectAllTiles: () => void;
   setSelectedTiles: (tiles: Set<string>) => void;
+  setMaskSettings: (settings: Partial<MaskSettings>) => void;
   setActiveTab: (tab: AppState['activeTab']) => void;
   setExportedData: (manifest: TerrainManifest | null, packagePath: string | null) => void;
   resetGeneration: () => void;
@@ -85,6 +86,15 @@ export const useTerrainStore = create<AppState & {
   tileSizeKm: 4,
   tileGrid: null,
   selectedTiles: new Set<string>(),
+  maskSettings: {
+    generateRoadMask: false,
+    generateWaterMask: false,
+    generateVegetationMask: false,
+    generateBuildingMask: false,
+    generateCliffMask: false,
+    cliffThresholdDegrees: 45,
+    roadLineWidthPx: 3,
+  },
   activeTab: 'map',
   exportProgress: null,
   exportResult: null,
@@ -128,6 +138,9 @@ export const useTerrainStore = create<AppState & {
   }),
   deselectAllTiles: () => set({ selectedTiles: new Set<string>() }),
   setSelectedTiles: (tiles) => set({ selectedTiles: tiles }),
+  setMaskSettings: (settings) => set((state) => ({
+    maskSettings: { ...state.maskSettings, ...settings },
+  })),
   setActiveTab: (tab) => set({ activeTab: tab }),
   setExportedData: (manifest, packagePath) => set({ exportedManifest: manifest, exportedPackagePath: packagePath }),
   setExportProgress: (p) => set({ exportProgress: p }),

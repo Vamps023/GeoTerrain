@@ -3,7 +3,7 @@
  * Provides fallback implementations for development without the native addon.
  */
 
-import type { ElectronAPI, GeoBounds, TerrainProfile, GenerationPlan, JobProgress, HeightmapFormat, AlbedoFormat, ProjectData, DEMSource, ImagerySource, ApiKeys } from '../types/terrain';
+import type { ElectronAPI, GeoBounds, TerrainProfile, GenerationPlan, JobProgress, HeightmapFormat, AlbedoFormat, ProjectData, DEMSource, ImagerySource, ApiKeys, MaskSettings } from '../types/terrain';
 
 declare global {
   interface Window {
@@ -57,14 +57,15 @@ export const Native = {
     apiKeys?: ApiKeys,
     tileRow = 0,
     tileCol = 0,
+    maskSettings?: MaskSettings,
   ): Promise<string> {
     if (!isElectron()) {
-      console.log('[Mock] Export package:', { sessionId, outputPath, preset, bounds, heightmapFormat, albedoFormat });
+      console.log('[Mock] Export package:', { sessionId, outputPath, preset, bounds, heightmapFormat, albedoFormat, maskSettings });
       return outputPath;
     }
     return window.electronAPI!.native.exportPackage(
       sessionId, outputPath, preset, bounds, heightmapFormat, albedoFormat,
-      heightmapResolution, albedoResolution, imageryZoom, demSource, imagerySource, apiKeys, tileRow, tileCol
+      heightmapResolution, albedoResolution, imageryZoom, demSource, imagerySource, apiKeys, tileRow, tileCol, maskSettings
     );
   },
 };

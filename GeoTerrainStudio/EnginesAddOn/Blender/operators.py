@@ -161,7 +161,8 @@ class GEOTERRAIN_OT_import_package(bpy.types.Operator):
                     tile_path,
                     row,
                     col,
-                    root_manifest
+                    root_manifest,
+                    files
                 )
                 imported_count += 1
             except Exception as e:
@@ -177,7 +178,8 @@ class GEOTERRAIN_OT_import_package(bpy.types.Operator):
         return {'FINISHED'}
     
     def _setup_terrain_mesh(self, context, obj, mesh, heightmap_path, albedo_file,
-                           elevation, world_offset, package_path, row, col, root_manifest):
+                           elevation, world_offset, package_path, row, col, root_manifest,
+                           tile_files=None):
         """Setup a plane with displacement modifier for terrain"""
         
         # Get resolution from manifest or default
@@ -250,6 +252,7 @@ class GEOTERRAIN_OT_import_package(bpy.types.Operator):
         disp.strength = max(1.0, float(elev_range))
         
         # Apply albedo texture if available
+        mat = None
         if albedo_file:
             albedo_path = os.path.join(package_path, albedo_file)
             if os.path.exists(albedo_path):
@@ -277,6 +280,40 @@ class GEOTERRAIN_OT_import_package(bpy.types.Operator):
                 
                 # Assign material
                 plane_obj.data.materials.append(mat)
+        
+        # Import mask textures from manifest
+        if tile_files is None:
+            tile_files = {}
+        mask_keys = ['roadMask', 'waterMask', 'vegetationMask', 'buildingMask', 'cliffMask']
+        has_any_mask = any(tile_files.get(k) for k in mask_keys)
+        
+        if has_any_mask:
+            # Ensure a material exists for mask texture nodes
+            if mat is None:
+                mat = bpy.data.materials.new(name=f"Mat_{obj.name}")
+                mat.use_nodes = True
+                mat.node_tree.nodes.clear()
+                output = mat.node_tree.nodes.new('ShaderNodeOutputMaterial')
+                diffuse = mat.node_tree.nodes.new('ShaderNodeBsdfDiffuse')
+                mat.node_tree.links.new(diffuse.outputs['BSDF'], output.inputs['Surface'])
+                plane_obj.data.materials.append(mat)
+            
+            # Add mask texture nodes below existing nodes
+            mask_y_offset = -300
+            for i, mask_key in enumerate(mask_keys):
+                mask_filename = tile_files.get(mask_key)
+                if not mask_filename:
+                    continue
+                mask_path = os.path.join(package_path, mask_filename)
+                if os.path.exists(mask_path):
+                    mask_img = bpy.data.images.load(mask_path)
+                    mask_tex_node = mat.node_tree.nodes.new('ShaderNodeTexImage')
+                    mask_tex_node.image = mask_img
+                    mask_tex_node.image.colorspace_settings.name = 'Non-Color'
+                    mask_tex_node.label = mask_key
+                    mask_tex_node.location = (-300, mask_y_offset - (i * 300))
+                else:
+                    print(f"[GeoTerrain] Warning: Mask file not found: {mask_path}")
         
         # Shade smooth
         bpy.ops.object.shade_smooth()

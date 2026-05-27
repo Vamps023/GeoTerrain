@@ -113,3 +113,6 @@ Desktop.ini
 *.swo
 *~
 node_modules
+
+#kiro
+.kiro

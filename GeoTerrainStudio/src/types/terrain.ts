@@ -31,6 +31,7 @@ export interface ElectronAPI {
       apiKeys?: ApiKeys,
       tileRow?: number,
       tileCol?: number,
+      maskSettings?: MaskSettings,
     ) => Promise<string>;
   };
   settings: {
@@ -198,7 +199,8 @@ export type DEMSource =
   | 'opentopo-aw3d30'
   | 'opentopo-cop30'
   | 'opentopo-nasadem'
-  | 'opentopo-usgs10m';
+  | 'opentopo-usgs10m'
+  | 'nasa-earthdata';
 export type ImagerySource = 'arcgis' | 'mapbox' | 'maptiler';
 
 export interface GenerationPlan {
@@ -254,6 +256,9 @@ export interface AppState {
   tileGrid: TileGrid | null; // Computed tile grid from selected bounds
   selectedTiles: Set<string>; // Set of "row,col" strings for selected tiles
 
+  // Mask generation settings
+  maskSettings: MaskSettings;
+
   // UI
   activeTab: 'map' | 'layers' | 'jobs' | 'export' | 'view3d';
 
@@ -274,6 +279,54 @@ export interface TileDefinition {
   bounds: GeoBounds;
   center: { lng: number; lat: number };
   selected: boolean;
+}
+
+// ─── Mask Generation ──────────────────────────────────────────
+
+export interface MaskSettings {
+  generateRoadMask: boolean;
+  generateWaterMask: boolean;
+  generateVegetationMask: boolean;
+  generateBuildingMask: boolean;
+  generateCliffMask: boolean;
+  cliffThresholdDegrees: number;  // 0-90, default 45
+  roadLineWidthPx: number;        // 1-10, default 3
+}
+
+export interface MaskGenerationOptions {
+  bounds: GeoBounds;
+  resolution: number;
+  outputPath: string;
+  tilePrefix: string;
+  generateRoadMask: boolean;
+  generateWaterMask: boolean;
+  generateVegetationMask: boolean;
+  generateBuildingMask: boolean;
+  generateCliffMask: boolean;
+  cliffThresholdDegrees: number;
+  roadLineWidthPx?: number;       // Default: 3
+}
+
+export interface MaskResult {
+  roadMask?: string;
+  waterMask?: string;
+  vegetationMask?: string;
+  buildingMask?: string;
+  cliffMask?: string;
+  generationTimeMs: number;
+}
+
+export interface OverpassFeature {
+  type: 'way' | 'relation';
+  id: number;
+  geometry: Array<{ lat: number; lon: number }>;
+  tags: Record<string, string>;
+}
+
+export interface OverpassQueryResult {
+  features: OverpassFeature[];
+  queryTimeMs: number;
+  featureCount: number;
 }
 
 // ─── Project Save/Load ────────────────────────────────────────

@@ -239,6 +239,7 @@ ipcMain.handle('native:exportPackage', async (_event: any,
   apiKeys?: { opentopography?: string; mapbox?: string; maptiler?: string },
   tileRow = 0,
   tileCol = 0,
+  maskSettings?: { generateRoadMask: boolean; generateWaterMask: boolean; generateVegetationMask: boolean; generateBuildingMask: boolean; generateCliffMask: boolean; cliffThresholdDegrees: number; roadLineWidthPx: number },
 ) => {
   // Construct tile output path server-side using path.join (avoids deprecated navigator.platform in renderer)
   const tileOutputPath = path.join(outputPath, `tile_${tileRow}_${tileCol}`);
@@ -265,6 +266,7 @@ ipcMain.handle('native:exportPackage', async (_event: any,
       maptilerApiKey: apiKeys?.maptiler,
       tileRow,
       tileCol,
+      maskSettings,
     });
     return result.manifestPath;
   } catch (err) {
@@ -333,6 +335,8 @@ ipcMain.handle('fs:readManifest', async (_event: any, packagePath: string) => {
     const allowedBasePaths: string[] = [app.getPath('userData')];
     if (lastOutputFolder) allowedBasePaths.push(lastOutputFolder);
     allowedBasePaths.push(app.getPath('documents'));
+    allowedBasePaths.push(app.getPath('desktop'));
+    allowedBasePaths.push(app.getPath('home'));
 
     if (!validatePath(packagePath, allowedBasePaths)) {
       console.error('[Main] Failed to read manifest:', packagePath, 'Path validation failed');
@@ -353,6 +357,8 @@ ipcMain.handle('fs:writeManifest', async (_event: any, packagePath: string, mani
   const allowedBasePaths: string[] = [app.getPath('userData')];
   if (lastOutputFolder) allowedBasePaths.push(lastOutputFolder);
   allowedBasePaths.push(app.getPath('documents'));
+  allowedBasePaths.push(app.getPath('desktop'));
+  allowedBasePaths.push(app.getPath('home'));
 
   if (!validatePath(packagePath, allowedBasePaths)) {
     throw new Error(`[Security] Path validation failed: "${packagePath}" is not within allowed directories.`);
@@ -395,6 +401,8 @@ ipcMain.handle('fs:saveProject', async (_event: any, filePath: string, data: obj
   const allowedBasePaths: string[] = [app.getPath('userData')];
   if (lastOutputFolder) allowedBasePaths.push(lastOutputFolder);
   allowedBasePaths.push(app.getPath('documents'));
+  allowedBasePaths.push(app.getPath('desktop'));
+  allowedBasePaths.push(app.getPath('home'));
 
   if (!validatePath(filePath, allowedBasePaths)) {
     throw new Error(`[Security] Path validation failed: "${filePath}" is not within allowed directories.`);
@@ -419,6 +427,8 @@ ipcMain.handle('fs:loadProject', async (_event: any, filePath: string) => {
   const allowedBasePaths: string[] = [app.getPath('userData')];
   if (lastOutputFolder) allowedBasePaths.push(lastOutputFolder);
   allowedBasePaths.push(app.getPath('documents'));
+  allowedBasePaths.push(app.getPath('desktop'));
+  allowedBasePaths.push(app.getPath('home'));
 
   if (!validatePath(filePath, allowedBasePaths)) {
     throw new Error(`[Security] Path validation failed: "${filePath}" is not within allowed directories.`);
@@ -441,6 +451,9 @@ ipcMain.handle('fs:readFileBinary', async (_event: any, filePath: string) => {
   if (lastOutputFolder) {
     allowedBasePaths.push(lastOutputFolder);
   }
+  allowedBasePaths.push(app.getPath('documents'));
+  allowedBasePaths.push(app.getPath('desktop'));
+  allowedBasePaths.push(app.getPath('home'));
 
   if (!validatePath(filePath, allowedBasePaths)) {
     const error = new Error(

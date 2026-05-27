@@ -20,6 +20,8 @@ import * as path from 'path';
 import sharp from 'sharp';
 import { writeGeoTIFF, GeoTIFFCompression } from './geotiff-writer';
 import { fromArrayBuffer } from 'geotiff';
+import { generateMasks } from './mask-generator';
+import type { MaskGenerationOptions, MaskResult } from './mask-generator';
 
 // ─── Constants ─────────────────────────────────────────────────
 
@@ -68,7 +70,9 @@ type DEMSource =
   | 'opentopo-aw3d30'     // ALOS AW3D30, ~30m global
   | 'opentopo-cop30'      // Copernicus GLO-30, ~30m best quality
   | 'opentopo-nasadem'    // NASADEM, ~30m reprocessed
-  | 'opentopo-usgs10m';   // USGS 3DEP, ~10m USA only
+  | 'opentopo-usgs10m'    // USGS 3DEP, ~10m USA only
+  // NASA Earthdata direct (requires free Earthdata bearer token, no rate limit)
+  | 'nasa-earthdata';     // NASADEM via NASA LP DAAC, ~30m global
 
 const OPENTOPO_SOURCES: DEMSource[] = [
   'opentopo-srtmgl1',
@@ -94,6 +98,7 @@ function getOpenTopoDemType(source: DEMSource): string {
     case 'aws-terrarium':
     case 'mapzen':
     case 'mapbox-terrain-rgb':
+    case 'nasa-earthdata':
       throw new Error(`getOpenTopoDemType called with non-OpenTopo source: ${source}`);
     default: return assertNever(source);
   }
@@ -119,6 +124,8 @@ function getDEMSourceInfo(source: DEMSource): { name: string; attribution: strin
       return { name: 'NASADEM (30m)', attribution: 'NASA / OpenTopography' };
     case 'opentopo-usgs10m':
       return { name: 'USGS 3DEP (10m)', attribution: 'USGS / OpenTopography' };
+    case 'nasa-earthdata':
+      return { name: 'Copernicus GLO-30 (30m) via AWS', attribution: 'ESA / Copernicus' };
     default:
       return assertNever(source);
   }
@@ -145,6 +152,18 @@ interface ExportOptions {
   opentopographyApiKey?: string;
   mapboxAccessToken?: string;
   maptilerApiKey?: string;
+  // Mask generation settings
+  maskSettings?: MaskSettings;
+}
+
+interface MaskSettings {
+  generateRoadMask: boolean;
+  generateWaterMask: boolean;
+  generateVegetationMask: boolean;
+  generateBuildingMask: boolean;
+  generateCliffMask: boolean;
+  cliffThresholdDegrees: number;
+  roadLineWidthPx: number;
 }
 
 interface TileRange {
@@ -357,11 +376,26 @@ async function downloadBuffer(url: string, maxRedirects = 5): Promise<Buffer> {
       if (res.statusCode === 401) {
         const isOpenTopo = url.includes('opentopography.org');
         if (isOpenTopo) {
-          reject(new Error(
-            'HTTP 401: OpenTopography API key invalid. ' +
-            'Get a new free key at https://portal.opentopography.org/myopentopo'
-          ));
+          // OpenTopography returns 401 for both invalid keys AND rate limits.
+          // Collect the response body to distinguish between the two.
+          const errChunks: Buffer[] = [];
+          res.on('data', (chunk) => errChunks.push(chunk));
+          res.on('end', () => {
+            const body = Buffer.concat(errChunks).toString('utf-8');
+            if (body.includes('rate limit')) {
+              reject(new Error(
+                'OpenTopography API rate limit reached (50 calls/24hrs). ' +
+                'Wait 24 hours or switch to AWS Terrarium (free, no limit).'
+              ));
+            } else {
+              reject(new Error(
+                'HTTP 401: OpenTopography API key invalid or unauthorized for this dataset. ' +
+                'Check your key at https://portal.opentopography.org/myopentopo'
+              ));
+            }
+          });
         } else {
+          res.resume();
           reject(new Error('HTTP 401 Unauthorized'));
         }
         return;
@@ -446,7 +480,7 @@ async function fetchOpenTopoDEM(
   source: DEMSource,
   apiKeyArg?: string
 ): Promise<{ elevations: Float32Array; width: number; height: number }> {
-  const apiKey = apiKeyArg || process.env.OPENTOPOGRAPHY_API_KEY;
+  const apiKey = (apiKeyArg || process.env.OPENTOPOGRAPHY_API_KEY || '').trim();
   if (!apiKey) {
     throw new Error(
       'OpenTopography API key is required. ' +
@@ -463,7 +497,7 @@ async function fetchOpenTopoDEM(
     `&west=${bounds.west}` +
     `&east=${bounds.east}` +
     `&outputFormat=GTiff` +
-    `&API_Key=${apiKey}`;
+    `&API_Key=${encodeURIComponent(apiKey)}`;
 
   console.log(`[OpenTopo] Requesting ${demType} for bbox: ${bounds.west},${bounds.south},${bounds.east},${bounds.north} (API key: ${apiKey.substring(0, 4)}***)`);
 
@@ -512,6 +546,197 @@ async function fetchOpenTopoDEM(
   console.log(`[OpenTopo] Received ${demType}: ${width}x${height} pixels, ${(buffer.length / 1024).toFixed(1)} KB`);
 
   return { elevations, width, height };
+}
+
+// ─── NASA Earthdata Direct DEM Download ───────────────────────
+
+/**
+ * Fetches Copernicus GLO-30 DEM data directly from AWS Open Data (S3).
+ * Downloads the needed 1°×1° GeoTIFF tile(s), reads the georeferencing from
+ * the GeoTIFF metadata, and crops to the exact requested bounds.
+ *
+ * NO authentication required. NO rate limit. Free and open.
+ * Same data as OpenTopography's "Copernicus GLO-30" but without the 50 calls/day limit.
+ */
+async function fetchNasaEarthdataDEM(
+  bounds: GeoBounds,
+  _bearerTokenArg?: string
+): Promise<{ elevations: Float32Array; width: number; height: number }> {
+  // Determine which 1°×1° tiles we need
+  const minLat = Math.floor(bounds.south);
+  const maxLat = Math.floor(bounds.north);
+  const minLon = Math.floor(bounds.west);
+  const maxLon = Math.floor(bounds.east);
+
+  // Download all needed tiles
+  const tileData: Array<{
+    elevations: Float32Array;
+    width: number;
+    height: number;
+    originLat: number; // geographic lat of pixel row 0 (north edge)
+    originLon: number; // geographic lon of pixel col 0 (west edge)
+    pixelWidth: number; // degrees per pixel in X
+    pixelHeight: number; // degrees per pixel in Y (positive = south)
+  }> = [];
+
+  for (let lat = minLat; lat <= maxLat; lat++) {
+    for (let lon = minLon; lon <= maxLon; lon++) {
+      const tile = await fetchCopernicusDEMTileWithGeo(lat, lon);
+      tileData.push(tile);
+    }
+  }
+
+  if (tileData.length === 0) {
+    throw new Error('No Copernicus DEM tiles found for the selected area');
+  }
+
+  if (tileData.length === 1) {
+    // Single tile — crop using its georeferencing
+    const t = tileData[0];
+    return cropUsingGeoref(t.elevations, t.width, t.height, t.originLat, t.originLon, t.pixelWidth, t.pixelHeight, bounds);
+  }
+
+  // Multiple tiles — merge then crop
+  const numTilesLat = maxLat - minLat + 1;
+  const numTilesLon = maxLon - minLon + 1;
+  const tileW = tileData[0].width;
+  const tileH = tileData[0].height;
+  const mergedWidth = numTilesLon * tileW;
+  const mergedHeight = numTilesLat * tileH;
+  const merged = new Float32Array(mergedWidth * mergedHeight);
+
+  for (const t of tileData) {
+    // Determine grid position from the tile's origin coordinates
+    const tileCol = Math.round((t.originLon - minLon) / 1);
+    const tileRow = Math.round((maxLat + 1 - t.originLat) / 1);
+    const offsetX = tileCol * tileW;
+    const offsetY = tileRow * tileH;
+
+    for (let y = 0; y < t.height; y++) {
+      for (let x = 0; x < t.width; x++) {
+        const dx = offsetX + x;
+        const dy = offsetY + y;
+        if (dx < mergedWidth && dy < mergedHeight) {
+          merged[dy * mergedWidth + dx] = t.elevations[y * t.width + x];
+        }
+      }
+    }
+  }
+
+  // Crop merged grid using georeferencing of the full merged area
+  const mergedOriginLat = maxLat + 1; // north edge
+  const mergedOriginLon = minLon;     // west edge
+  const pixelW = tileData[0].pixelWidth;
+  const pixelH = tileData[0].pixelHeight;
+
+  return cropUsingGeoref(merged, mergedWidth, mergedHeight, mergedOriginLat, mergedOriginLon, pixelW, pixelH, bounds);
+}
+
+/**
+ * Crops elevation data using actual georeferencing parameters.
+ * originLat = latitude of the TOP edge (north) of pixel row 0
+ * originLon = longitude of the LEFT edge (west) of pixel col 0
+ * pixelWidth = degrees per pixel in longitude (positive, going east)
+ * pixelHeight = degrees per pixel in latitude (positive, going south)
+ */
+function cropUsingGeoref(
+  elevations: Float32Array,
+  srcWidth: number,
+  srcHeight: number,
+  originLat: number,
+  originLon: number,
+  pixelWidth: number,
+  pixelHeight: number,
+  bounds: GeoBounds
+): { elevations: Float32Array; width: number; height: number } {
+  // Convert target bounds to pixel coordinates
+  const startCol = Math.max(0, Math.floor((bounds.west - originLon) / pixelWidth));
+  const endCol = Math.min(srcWidth - 1, Math.ceil((bounds.east - originLon) / pixelWidth) - 1);
+  const startRow = Math.max(0, Math.floor((originLat - bounds.north) / pixelHeight));
+  const endRow = Math.min(srcHeight - 1, Math.ceil((originLat - bounds.south) / pixelHeight) - 1);
+
+  const cropWidth = Math.max(1, endCol - startCol + 1);
+  const cropHeight = Math.max(1, endRow - startRow + 1);
+
+  console.log(`[COP30] Crop: origin=(${originLat},${originLon}), px=(${pixelWidth.toFixed(6)},${pixelHeight.toFixed(6)}), src=${srcWidth}x${srcHeight}, bounds=[${bounds.south.toFixed(4)},${bounds.west.toFixed(4)}→${bounds.north.toFixed(4)},${bounds.east.toFixed(4)}], pixels=[col ${startCol}-${endCol}, row ${startRow}-${endRow}], result=${cropWidth}x${cropHeight}`);
+
+  const cropped = new Float32Array(cropWidth * cropHeight);
+  for (let y = 0; y < cropHeight; y++) {
+    for (let x = 0; x < cropWidth; x++) {
+      cropped[y * cropWidth + x] = elevations[(startRow + y) * srcWidth + (startCol + x)];
+    }
+  }
+
+  return { elevations: cropped, width: cropWidth, height: cropHeight };
+}
+
+/**
+ * Downloads a Copernicus GLO-30 tile and extracts its georeferencing metadata.
+ */
+async function fetchCopernicusDEMTileWithGeo(
+  lat: number,
+  lon: number
+): Promise<{
+  elevations: Float32Array;
+  width: number;
+  height: number;
+  originLat: number;
+  originLon: number;
+  pixelWidth: number;
+  pixelHeight: number;
+}> {
+  const latDir = lat >= 0 ? 'N' : 'S';
+  const lonDir = lon >= 0 ? 'E' : 'W';
+  const latStr = String(Math.abs(lat)).padStart(2, '0');
+  const lonStr = String(Math.abs(lon)).padStart(3, '0');
+  const tileName = `Copernicus_DSM_COG_10_${latDir}${latStr}_00_${lonDir}${lonStr}_00_DEM`;
+
+  const url = `https://copernicus-dem-30m.s3.eu-central-1.amazonaws.com/${tileName}/${tileName}.tif`;
+
+  console.log(`[COP30] Downloading tile: ${latDir}${latStr} ${lonDir}${lonStr}`);
+
+  const buffer = await downloadBuffer(url);
+
+  if (buffer.length < 100) {
+    throw new Error(`Copernicus DEM tile ${latDir}${latStr}${lonDir}${lonStr} returned empty response`);
+  }
+
+  // Parse GeoTIFF
+  const arrayBuffer = buffer.buffer.slice(buffer.byteOffset, buffer.byteOffset + buffer.byteLength) as ArrayBuffer;
+  const tiff = await fromArrayBuffer(arrayBuffer);
+  const image = await tiff.getImage();
+  const width = image.getWidth();
+  const height = image.getHeight();
+
+  // Extract georeferencing from GeoTIFF metadata
+  const origin = image.getOrigin(); // [originX (lon), originY (lat), ...]
+  const resolution = image.getResolution(); // [pixelWidth, pixelHeight (negative for north-up), ...]
+
+  const originLon = origin[0];
+  const originLat = origin[1];
+  const pixelWidth = Math.abs(resolution[0]);
+  const pixelHeight = Math.abs(resolution[1]);
+
+  console.log(`[COP30] Tile ${latDir}${latStr}${lonDir}${lonStr}: ${width}x${height}px, origin=(${originLat.toFixed(4)}, ${originLon.toFixed(4)}), res=(${pixelWidth.toFixed(6)}°, ${pixelHeight.toFixed(6)}°), ${(buffer.length / 1024 / 1024).toFixed(1)} MB`);
+
+  const rasters = await image.readRasters();
+  const raw = rasters[0] as Float32Array | Int16Array | Uint16Array;
+
+  // Convert to Float32Array
+  const elevations = new Float32Array(width * height);
+  const noDataValue = image.getGDALNoData();
+
+  if (noDataValue !== null && noDataValue !== undefined) {
+    for (let i = 0; i < raw.length; i++) {
+      elevations[i] = raw[i] === noDataValue ? 0 : raw[i];
+    }
+  } else {
+    for (let i = 0; i < raw.length; i++) {
+      elevations[i] = raw[i];
+    }
+  }
+
+  return { elevations, width, height, originLat, originLon, pixelWidth, pixelHeight };
 }
 
 // ─── DEM Decode ───────────────────────────────────────────────
@@ -1117,6 +1342,8 @@ export async function executeExport(
       case 'opentopo-nasadem':
       case 'opentopo-usgs10m':
         throw new Error(`getDEMUrl called with OpenTopo source: ${demSource}. Use fetchOpenTopoDEM instead.`);
+      case 'nasa-earthdata':
+        throw new Error(`getDEMUrl called with NASA Earthdata source. Use fetchNasaEarthdataDEM instead.`);
       default: return assertNever(demSource);
     }
   }
@@ -1155,6 +1382,15 @@ export async function executeExport(
     demSourceData = await fetchOpenTopoDEM(bounds, demSource, options.opentopographyApiKey);
     if (onProgress) {
       onProgress({ stage: 'download_dem', current: 1, total: 1, message: `Downloaded ${getOpenTopoDemType(demSource)} (${demSourceData.width}x${demSourceData.height})` });
+    }
+  } else if (demSource === 'nasa-earthdata') {
+    // NASA Earthdata: download NASADEM HGT tiles directly from LP DAAC
+    if (onProgress) {
+      onProgress({ stage: 'download_dem', current: 0, total: 1, message: 'Downloading NASADEM from NASA Earthdata...' });
+    }
+    demSourceData = await fetchNasaEarthdataDEM(bounds, options.opentopographyApiKey);
+    if (onProgress) {
+      onProgress({ stage: 'download_dem', current: 1, total: 1, message: `Downloaded NASADEM (${demSourceData.width}x${demSourceData.height})` });
     }
   } else {
     // Tile-based DEM (Terrarium, Mapbox)
@@ -1335,6 +1571,90 @@ export async function executeExport(
     onProgress({ stage: 'write_manifest', current: 0, total: 100, message: 'Writing manifest...' });
   }
 
+  // ── Generate terrain masks (if any enabled) ──────────────────
+  const maskFiles: Record<string, string> = {};
+  const { maskSettings } = options;
+
+  if (maskSettings && (
+    maskSettings.generateRoadMask ||
+    maskSettings.generateWaterMask ||
+    maskSettings.generateVegetationMask ||
+    maskSettings.generateBuildingMask ||
+    maskSettings.generateCliffMask
+  )) {
+    if (onProgress) {
+      onProgress({ stage: 'generate_masks', current: 0, total: 100, message: 'Generating terrain masks...' });
+    }
+
+    const tilePrefix = `tile_${tileRow}_${tileCol}`;
+
+    const maskOptions: MaskGenerationOptions = {
+      bounds,
+      resolution: heightmapSize,
+      outputPath,
+      tilePrefix,
+      generateRoadMask: maskSettings.generateRoadMask,
+      generateWaterMask: maskSettings.generateWaterMask,
+      generateVegetationMask: maskSettings.generateVegetationMask,
+      generateBuildingMask: maskSettings.generateBuildingMask,
+      generateCliffMask: maskSettings.generateCliffMask,
+      cliffThresholdDegrees: maskSettings.cliffThresholdDegrees,
+      roadLineWidthPx: maskSettings.roadLineWidthPx,
+      onProgress: (message: string) => {
+        if (onProgress) {
+          onProgress({ stage: 'generate_masks', current: 0, total: 100, message });
+        }
+      },
+    };
+
+    try {
+      const maskResult: MaskResult = await generateMasks(
+        maskOptions,
+        demSourceData.elevations,
+        demSourceData.width,
+        demSourceData.height
+      );
+
+      // Verify each mask file exists on disk before including in manifest
+      const maskKeys: Array<{ key: keyof MaskResult; manifestKey: string }> = [
+        { key: 'roadMask', manifestKey: 'roadMask' },
+        { key: 'waterMask', manifestKey: 'waterMask' },
+        { key: 'vegetationMask', manifestKey: 'vegetationMask' },
+        { key: 'buildingMask', manifestKey: 'buildingMask' },
+        { key: 'cliffMask', manifestKey: 'cliffMask' },
+      ];
+
+      for (const { key, manifestKey } of maskKeys) {
+        const filename = maskResult[key];
+        if (typeof filename === 'string' && filename.length > 0) {
+          const fullPath = path.join(outputPath, filename);
+          if (fs.existsSync(fullPath)) {
+            maskFiles[manifestKey] = filename;
+          } else {
+            console.warn(`[Export] Mask file not found on disk, omitting from manifest: ${fullPath}`);
+          }
+        }
+      }
+
+      if (onProgress) {
+        onProgress({ stage: 'generate_masks', current: 100, total: 100, message: `Mask generation complete (${maskResult.generationTimeMs}ms)` });
+      }
+    } catch (err) {
+      const error = err as Error;
+      // Disk write failures should abort the export
+      if (error.message && (
+        error.message.includes('ENOSPC') ||
+        error.message.includes('EACCES') ||
+        error.message.includes('EROFS') ||
+        error.message.includes('EIO')
+      )) {
+        throw new Error(`Mask generation failed due to disk write error: ${error.message}`);
+      }
+      // Other mask generation failures are non-fatal — skip masks and continue
+      console.warn(`[Export] Mask generation failed (non-fatal), continuing without masks:`, error.message);
+    }
+  }
+
   const { widthM: tileWidthM, heightM: tileHeightM, chunkSizeM } = estimateTileSizeMeters(bounds);
   const worldOffsetX = tileCol * tileWidthM;
   const worldOffsetZ = tileRow * tileHeightM;
@@ -1366,6 +1686,11 @@ export async function executeExport(
         files: {
           heightmap: fileNames.heightmap,
           albedo: fileNames.albedo,
+          ...(maskFiles.roadMask ? { roadMask: maskFiles.roadMask } : {}),
+          ...(maskFiles.waterMask ? { waterMask: maskFiles.waterMask } : {}),
+          ...(maskFiles.vegetationMask ? { vegetationMask: maskFiles.vegetationMask } : {}),
+          ...(maskFiles.buildingMask ? { buildingMask: maskFiles.buildingMask } : {}),
+          ...(maskFiles.cliffMask ? { cliffMask: maskFiles.cliffMask } : {}),
         },
         elevation: {
           min: Math.round(elevationMeta.min * 100) / 100,
@@ -1387,12 +1712,12 @@ export async function executeExport(
       heightScale: 1.0,
       seamStitching: true,
       fillNodata: true,
-      generateRoadMasks: false,
-      generateWaterMasks: false,
-      generateVegetationMasks: false,
-      generateBuildingMasks: false,
-      generateCliffMasks: false,
-      cliffThresholdDegrees: 45.0,
+      generateRoadMasks: maskSettings?.generateRoadMask ?? false,
+      generateWaterMasks: maskSettings?.generateWaterMask ?? false,
+      generateVegetationMasks: maskSettings?.generateVegetationMask ?? false,
+      generateBuildingMasks: maskSettings?.generateBuildingMask ?? false,
+      generateCliffMasks: maskSettings?.generateCliffMask ?? false,
+      cliffThresholdDegrees: maskSettings?.cliffThresholdDegrees ?? 45.0,
     },
   };
 
