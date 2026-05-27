@@ -161,7 +161,7 @@ async function generateOsmMask(
   result: MaskResult,
   progress: (message: string) => void
 ): Promise<void> {
-  const filename = `${options.tilePrefix}_${maskType}_mask.png`;
+  const filename = `${options.tilePrefix}_${maskType}_mask.tif`;
   const outputFilePath = path.join(options.outputPath, filename);
 
   try {
@@ -210,7 +210,7 @@ async function generateCliffMaskTask(
   elevationWidth?: number,
   elevationHeight?: number
 ): Promise<void> {
-  const filename = `${options.tilePrefix}_cliff_mask.png`;
+  const filename = `${options.tilePrefix}_cliff_mask.tif`;
   const outputFilePath = path.join(options.outputPath, filename);
 
   // Skip if elevation data is unavailable
@@ -394,7 +394,7 @@ export function resizeNearestNeighbor(
  * @param buffer - Raw 8-bit pixel data
  * @param width - Image width in pixels
  * @param height - Image height in pixels
- * @param outputPath - Full path to write the output PNG file
+ * @param outputPath - Full path to write the output TIFF file
  */
 export async function writeGrayscalePng(
   buffer: Buffer,
@@ -409,6 +409,6 @@ export async function writeGrayscalePng(
       channels: 1,
     },
   })
-    .png()
+    .tiff({ compression: 'lzw' })
     .toFile(outputPath);
 }

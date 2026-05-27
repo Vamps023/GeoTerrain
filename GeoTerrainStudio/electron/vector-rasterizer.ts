@@ -256,12 +256,12 @@ function fillCircle(
 
 /**
  * Rasterize features and write the result as an 8-bit single-channel
- * grayscale PNG file via sharp.
+ * grayscale GeoTIFF file via sharp.
  *
  * @param features - Array of OverpassFeature objects to rasterize
  * @param featureType - 'polygon' for filled areas, 'line' for linear features
  * @param options - Rasterization options (dimensions, bounds, styling)
- * @param outputPath - Full path to write the output PNG file
+ * @param outputPath - Full path to write the output file (.tif)
  */
 export async function rasterizeToFile(
   features: OverpassFeature[],
@@ -285,7 +285,7 @@ export async function rasterizeToFile(
     }
   }
 
-  // Write as 8-bit single-channel grayscale PNG via sharp
+  // Write as 8-bit single-channel grayscale TIFF via sharp
   await sharp(rawBuffer, {
     raw: {
       width: options.width,
@@ -293,6 +293,6 @@ export async function rasterizeToFile(
       channels: 1,
     },
   })
-    .png()
+    .tiff({ compression: 'lzw' })
     .toFile(outputPath);
 }

@@ -1575,6 +1575,8 @@ export async function executeExport(
   const maskFiles: Record<string, string> = {};
   const { maskSettings } = options;
 
+  console.log(`[Export] maskSettings from options:`, maskSettings ? JSON.stringify(maskSettings) : 'undefined');
+
   if (maskSettings && (
     maskSettings.generateRoadMask ||
     maskSettings.generateWaterMask ||
@@ -1585,6 +1587,8 @@ export async function executeExport(
     if (onProgress) {
       onProgress({ stage: 'generate_masks', current: 0, total: 100, message: 'Generating terrain masks...' });
     }
+
+    console.log(`[Export] Mask settings received:`, JSON.stringify(maskSettings));
 
     const tilePrefix = `tile_${tileRow}_${tileCol}`;
 

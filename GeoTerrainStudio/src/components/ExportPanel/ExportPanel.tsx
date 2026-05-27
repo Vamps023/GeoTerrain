@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { Download, FolderOpen, FileArchive, Check, Key, Eye, EyeOff, Layers } from 'lucide-react';
+import { Download, FolderOpen, FileArchive, Check, Key, Eye, EyeOff } from 'lucide-react';
 import { useTerrainStore } from '../../core/store';
 import { Native, Dialog, Settings } from '../../core/ipc';
 import type { ExportPreset, HeightmapFormat, AlbedoFormat, DEMSource, ImagerySource, TerrainManifest, ApiKeys } from '../../types/terrain';
@@ -103,11 +103,8 @@ export const ExportPanel: React.FC = () => {
   const setExportStartTime = useTerrainStore((s) => s.setExportStartTime);
   const addNotification = useTerrainStore((s) => s.addNotification);
 
-  // Mask settings
+  // Mask settings (used by export, controlled from Layers tab)
   const maskSettings = useTerrainStore((s) => s.maskSettings);
-  const setMaskSettings = useTerrainStore((s) => s.setMaskSettings);
-  const [masksExpanded, setMasksExpanded] = useState(false);
-  const [maskValidationError, setMaskValidationError] = useState<string | null>(null);
 
   const [isExporting, setIsExporting] = useState(false);
 
@@ -183,16 +180,13 @@ export const ExportPanel: React.FC = () => {
 
     // Validate mask settings before export
     if (maskSettings.generateCliffMask && (maskSettings.cliffThresholdDegrees < 0 || maskSettings.cliffThresholdDegrees > 90)) {
-      setMaskValidationError('Cliff threshold must be between 0 and 90 degrees.');
       addNotification({ type: 'error', message: 'Cliff threshold must be between 0 and 90 degrees.' });
       return;
     }
     if (maskSettings.generateRoadMask && (maskSettings.roadLineWidthPx < 1 || maskSettings.roadLineWidthPx > 10)) {
-      setMaskValidationError('Road width must be between 1 and 10 pixels.');
       addNotification({ type: 'error', message: 'Road width must be between 1 and 10 pixels.' });
       return;
     }
-    setMaskValidationError(null);
 
     try {
       setIsExporting(true);
@@ -278,6 +272,7 @@ export const ExportPanel: React.FC = () => {
         });
 
         // Pass base outputPath and tile row/col; main process constructs tile path with path.join
+        const currentMaskSettings = useTerrainStore.getState().maskSettings;
         await Native.exportPackage(
           sessionId,
           outputPath,
@@ -293,7 +288,7 @@ export const ExportPanel: React.FC = () => {
           apiKeys,
           tile.row,
           tile.col,
-          maskSettings,
+          currentMaskSettings,
         );
 
         // Update progress AFTER tile completes
@@ -638,119 +633,6 @@ export const ExportPanel: React.FC = () => {
               </select>
             </div>
           </div>
-        </div>
-
-        {/* Terrain Masks */}
-        <div>
-          <button
-            onClick={() => setMasksExpanded(!masksExpanded)}
-            className="w-full flex items-center justify-between text-xs font-semibold text-gray-400 uppercase tracking-wider mb-3 hover:text-white"
-          >
-            <span className="flex items-center gap-2">
-              <Layers className="w-3 h-3" />
-              Terrain Masks
-            </span>
-            <span>{masksExpanded ? '−' : '+'}</span>
-          </button>
-          {masksExpanded && (
-            <div className="space-y-3 bg-gray-800/50 p-3 rounded border border-gray-700">
-              {/* Road Mask Toggle */}
-              <label className="flex items-center justify-between cursor-pointer">
-                <span className="text-xs text-gray-300">Road Mask</span>
-                <input
-                  type="checkbox"
-                  checked={maskSettings.generateRoadMask}
-                  onChange={(e) => setMaskSettings({ generateRoadMask: e.target.checked })}
-                  className="w-4 h-4 rounded bg-gray-700 border-gray-600 text-cyan-500 focus:ring-cyan-500 focus:ring-offset-0 cursor-pointer"
-                />
-              </label>
-              {/* Road Width Slider — shown only when road toggle is enabled */}
-              {maskSettings.generateRoadMask && (
-                <div className="pl-2 space-y-1">
-                  <div className="flex items-center justify-between">
-                    <label className="text-[10px] text-gray-400">Road Width</label>
-                    <span className="text-[10px] text-gray-400">{maskSettings.roadLineWidthPx}px</span>
-                  </div>
-                  <input
-                    type="range"
-                    min={1}
-                    max={10}
-                    step={1}
-                    value={maskSettings.roadLineWidthPx}
-                    onChange={(e) => setMaskSettings({ roadLineWidthPx: Number(e.target.value) })}
-                    className="w-full h-1.5 bg-gray-700 rounded-lg appearance-none cursor-pointer accent-cyan-500"
-                  />
-                </div>
-              )}
-
-              {/* Water Mask Toggle */}
-              <label className="flex items-center justify-between cursor-pointer">
-                <span className="text-xs text-gray-300">Water Mask</span>
-                <input
-                  type="checkbox"
-                  checked={maskSettings.generateWaterMask}
-                  onChange={(e) => setMaskSettings({ generateWaterMask: e.target.checked })}
-                  className="w-4 h-4 rounded bg-gray-700 border-gray-600 text-cyan-500 focus:ring-cyan-500 focus:ring-offset-0 cursor-pointer"
-                />
-              </label>
-
-              {/* Vegetation Mask Toggle */}
-              <label className="flex items-center justify-between cursor-pointer">
-                <span className="text-xs text-gray-300">Vegetation Mask</span>
-                <input
-                  type="checkbox"
-                  checked={maskSettings.generateVegetationMask}
-                  onChange={(e) => setMaskSettings({ generateVegetationMask: e.target.checked })}
-                  className="w-4 h-4 rounded bg-gray-700 border-gray-600 text-cyan-500 focus:ring-cyan-500 focus:ring-offset-0 cursor-pointer"
-                />
-              </label>
-
-              {/* Building Mask Toggle */}
-              <label className="flex items-center justify-between cursor-pointer">
-                <span className="text-xs text-gray-300">Building Mask</span>
-                <input
-                  type="checkbox"
-                  checked={maskSettings.generateBuildingMask}
-                  onChange={(e) => setMaskSettings({ generateBuildingMask: e.target.checked })}
-                  className="w-4 h-4 rounded bg-gray-700 border-gray-600 text-cyan-500 focus:ring-cyan-500 focus:ring-offset-0 cursor-pointer"
-                />
-              </label>
-
-              {/* Cliff Mask Toggle */}
-              <label className="flex items-center justify-between cursor-pointer">
-                <span className="text-xs text-gray-300">Cliff Mask</span>
-                <input
-                  type="checkbox"
-                  checked={maskSettings.generateCliffMask}
-                  onChange={(e) => setMaskSettings({ generateCliffMask: e.target.checked })}
-                  className="w-4 h-4 rounded bg-gray-700 border-gray-600 text-cyan-500 focus:ring-cyan-500 focus:ring-offset-0 cursor-pointer"
-                />
-              </label>
-              {/* Cliff Threshold Slider — shown only when cliff toggle is enabled */}
-              {maskSettings.generateCliffMask && (
-                <div className="pl-2 space-y-1">
-                  <div className="flex items-center justify-between">
-                    <label className="text-[10px] text-gray-400">Cliff Threshold</label>
-                    <span className="text-[10px] text-gray-400">{maskSettings.cliffThresholdDegrees}°</span>
-                  </div>
-                  <input
-                    type="range"
-                    min={0}
-                    max={90}
-                    step={1}
-                    value={maskSettings.cliffThresholdDegrees}
-                    onChange={(e) => setMaskSettings({ cliffThresholdDegrees: Number(e.target.value) })}
-                    className="w-full h-1.5 bg-gray-700 rounded-lg appearance-none cursor-pointer accent-cyan-500"
-                  />
-                </div>
-              )}
-
-              {/* Validation Error */}
-              {maskValidationError && (
-                <p className="text-[10px] text-red-400 mt-1">{maskValidationError}</p>
-              )}
-            </div>
-          )}
         </div>
 
         {/* Format Selection */}

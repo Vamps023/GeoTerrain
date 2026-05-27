@@ -298,11 +298,24 @@ export const MapViewport: React.FC<MapViewportProps> = ({ className }) => {
       const lngLat = map.unproject(point);
       const current = { lng: lngLat.lng, lat: lngLat.lat };
       const start = dragStartRef.current;
+
+      // Constrain to 1:1 square ratio
+      const dLat = Math.abs(current.lat - start.lat);
+      const dLng = Math.abs(current.lng - start.lng);
+      const size = Math.max(dLat, dLng);
+
+      // Determine direction of drag
+      const signLat = current.lat >= start.lat ? 1 : -1;
+      const signLng = current.lng >= start.lng ? 1 : -1;
+
+      const endLat = start.lat + signLat * size;
+      const endLng = start.lng + signLng * size;
+
       const bounds: GeoBounds = {
-        west: Math.min(start.lng, current.lng),
-        south: Math.min(start.lat, current.lat),
-        east: Math.max(start.lng, current.lng),
-        north: Math.max(start.lat, current.lat),
+        west: Math.min(start.lng, endLng),
+        south: Math.min(start.lat, endLat),
+        east: Math.max(start.lng, endLng),
+        north: Math.max(start.lat, endLat),
       };
       liveBoundsRef.current = bounds;
       setLiveBoundsState(bounds);
