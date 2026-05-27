@@ -434,9 +434,6 @@ export const TerrainViewer3D: React.FC<TerrainViewer3DProps> = ({ manifest, pack
     mesh.position.x = tile.worldOffset.x + tileWidthM / 2;
     mesh.position.z = tile.worldOffset.z + tileHeightM / 2;
     mesh.position.y = 0;
-    // Flip Y by default for Babylon terrain orientation
-    mesh.scaling.z = -1;
-    // Terrain preview uses relative height, while absolute elevation remains in the manifest.
 
     // Apply albedo texture
     const mat = new StandardMaterial(`mat_${tileIndex}`, scene);
@@ -447,10 +444,14 @@ export const TerrainViewer3D: React.FC<TerrainViewer3DProps> = ({ manifest, pack
         const isTiff = albedoPath.toLowerCase().endsWith('.tif') || albedoPath.toLowerCase().endsWith('.tiff');
         const blob = new Blob([albedoBuf], { type: isTiff ? 'image/tiff' : 'image/png' });
         albedoBlobUrl = URL.createObjectURL(blob);
-        mat.diffuseTexture = new Texture(albedoBlobUrl, scene, false, false, Texture.BILINEAR_SAMPLINGMODE, () => {
+        const tex = new Texture(albedoBlobUrl, scene, false, false, Texture.BILINEAR_SAMPLINGMODE, () => {
           URL.revokeObjectURL(albedoBlobUrl!);
           albedoBlobUrl = null;
         });
+        // Flip V so albedo aligns correctly with terrain
+        tex.vScale = -1;
+        tex.vOffset = 1;
+        mat.diffuseTexture = tex;
       } catch {
         // Revoke blob URL on failure to prevent memory leak
         if (albedoBlobUrl) URL.revokeObjectURL(albedoBlobUrl);
