@@ -66,6 +66,10 @@ GeoTerrainBridge/**/moc_*.h
 GeoTerrainBridge/**/qrc_*.cpp
 GeoTerrainBridge/**/ui_*.h
 
+# ─── EnginesAddOn (generated archives) ──────────────────────────────────────
+EnginesAddOn/GeoTerrainBlender.zip
+GeoTerrainStudio/EnginesAddOn/GeoTerrain-Blender-*.zip
+
 # ─── Shared / Global ────────────────────────────────────────────────────────
 
 # Terrain data (large GeoTIFFs, never commit)

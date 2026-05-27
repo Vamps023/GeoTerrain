@@ -2,11 +2,13 @@
  * GeoTIFF Writer with Float32, Int16, UInt16 support
  *
  * Writes TIFF files with proper GeoTIFF tags.
- * Supports compression: none, LZW, Deflate (zlib)
+ * Supports compression: none, Deflate (zlib)
  *
  * Byte order: little-endian ("II")
  * Layout: single IFD, single image strip
  */
+
+import * as zlib from 'zlib';
 
 interface GeoBounds {
   west: number;
@@ -15,7 +17,7 @@ interface GeoBounds {
   north: number;
 }
 
-export type GeoTIFFCompression = 'none' | 'lzw' | 'deflate';
+export type GeoTIFFCompression = 'none' | 'deflate';
 export type GeoTIFFRasterType = 'area' | 'point';
 
 interface GeoTIFFOptions {
@@ -131,8 +133,8 @@ export function writeGeoTIFF(
   entries.push(createIfdEntry(TAG_IMAGE_WIDTH, TYPE_LONG, [width]));
   entries.push(createIfdEntry(TAG_IMAGE_LENGTH, TYPE_LONG, [height]));
   entries.push(createIfdEntry(TAG_BITS_PER_SAMPLE, TYPE_SHORT, [bitsPerSample]));
-  // Compression: 1=uncompressed, 5=LZW, 32946=Deflate (Adobe)
-  const compressionCode = compression === 'lzw' ? 5 : compression === 'deflate' ? 32946 : 1;
+  // Compression: 1=uncompressed, 32946=Deflate (Adobe)
+  const compressionCode = compression === 'deflate' ? 32946 : 1;
   entries.push(createIfdEntry(TAG_COMPRESSION, TYPE_SHORT, [compressionCode]));
   entries.push(
     createIfdEntry(TAG_PHOTOMETRIC, TYPE_SHORT, [photometricInterpretation])
@@ -270,8 +272,32 @@ export function writeGeoTIFF(
     inlineValues.set(stripOffsetsEntryIdx, stripOffset);
   }
 
+  // ── Serialize pixel data to raw buffer ────────────────────
+  const rawPixelBuf = Buffer.allocUnsafe(stripByteCount);
+  if (pixelData instanceof Int16Array) {
+    Buffer.from(pixelData.buffer, pixelData.byteOffset, pixelData.byteLength).copy(rawPixelBuf);
+  } else if (pixelData instanceof Uint16Array) {
+    Buffer.from(pixelData.buffer, pixelData.byteOffset, pixelData.byteLength).copy(rawPixelBuf);
+  } else if (pixelData instanceof Float32Array) {
+    Buffer.from(pixelData.buffer, pixelData.byteOffset, pixelData.byteLength).copy(rawPixelBuf);
+  } else {
+    pixelData.copy(rawPixelBuf);
+  }
+
+  // ── Apply compression if requested ────────────────────────
+  const stripData = compression === 'deflate'
+    ? zlib.deflateSync(rawPixelBuf)
+    : rawPixelBuf;
+  const actualStripByteCount = stripData.length;
+
+  // Update StripByteCounts entry with actual (possibly compressed) size
+  const stripByteCountsEntryIdx = entries.findIndex((e) => e.tag === TAG_STRIP_BYTE_COUNTS);
+  if (stripByteCountsEntryIdx >= 0) {
+    inlineValues.set(stripByteCountsEntryIdx, actualStripByteCount);
+  }
+
   // Total file size
-  const totalSize = stripOffset + stripByteCount;
+  const totalSize = stripOffset + actualStripByteCount;
 
   // ── Assemble file ─────────────────────────────────────────
   const file = Buffer.allocUnsafe(totalSize);
@@ -305,22 +331,8 @@ export function writeGeoTIFF(
     blob.data.copy(file, blob.offset);
   }
 
-  // Pixel data
-  if (pixelData instanceof Int16Array) {
-    for (let i = 0; i < pixelData.length; i++) {
-      file.writeInt16LE(pixelData[i], stripOffset + i * 2);
-    }
-  } else if (pixelData instanceof Uint16Array) {
-    for (let i = 0; i < pixelData.length; i++) {
-      file.writeUInt16LE(pixelData[i], stripOffset + i * 2);
-    }
-  } else if (pixelData instanceof Float32Array) {
-    for (let i = 0; i < pixelData.length; i++) {
-      file.writeFloatLE(pixelData[i], stripOffset + i * 4);
-    }
-  } else {
-    pixelData.copy(file, stripOffset);
-  }
+  // Write (possibly compressed) pixel data
+  stripData.copy(file, stripOffset);
 
   return file;
 }

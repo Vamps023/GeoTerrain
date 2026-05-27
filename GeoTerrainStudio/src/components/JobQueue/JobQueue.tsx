@@ -19,13 +19,20 @@ export const JobQueue: React.FC = () => {
   // Subscribe to progress updates
   useEffect(() => {
     if (!activeJobId) return;
+
     const unsubscribe = onProgressUpdate((progress: JobProgress) => {
+      // Only process updates for the current active job
+      if (progress.jobId && progress.jobId !== activeJobId) return;
       setJobProgress(progress);
       if (progress.state === 'complete' || progress.state === 'cancelled' || progress.state === 'error') {
         setIsGenerating(false);
       }
     });
-    return unsubscribe;
+
+    return () => {
+      // Clean up subscription when activeJobId changes or component unmounts
+      unsubscribe();
+    };
   }, [activeJobId, setJobProgress]);
 
   // Poll progress as fallback

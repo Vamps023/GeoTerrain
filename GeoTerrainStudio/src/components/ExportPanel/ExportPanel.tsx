@@ -116,13 +116,25 @@ export const ExportPanel: React.FC = () => {
     Settings.getApiKeys().then(setApiKeys).catch(console.error);
   }, []);
 
-  // Apply preset defaults on first mount — ensures formats always match the active preset
+  // Apply preset defaults on first mount — only if formats haven't been changed from initial values
   useEffect(() => {
-    const config = getPresetConfig(selectedPreset);
-    setHeightmapFormat(config.heightmapFormat);
-    setAlbedoFormat(config.albedoFormat);
-    setHeightmapResolution(config.recommendedRes.heightmap);
-    setAlbedoResolution(config.recommendedRes.albedo);
+    const state = useTerrainStore.getState();
+    // Only apply preset defaults if the user hasn't customized formats away from store defaults.
+    // Store initializes with UNIGINE defaults (float32 / geotiff / 4096 / 4096).
+    // If values still match those initial defaults, apply the active preset's config.
+    const isAtInitialDefaults =
+      state.heightmapFormat === 'float32' &&
+      state.albedoFormat === 'geotiff' &&
+      state.heightmapResolution === 4096 &&
+      state.albedoResolution === 4096;
+
+    if (isAtInitialDefaults) {
+      const config = getPresetConfig(selectedPreset);
+      setHeightmapFormat(config.heightmapFormat);
+      setAlbedoFormat(config.albedoFormat);
+      setHeightmapResolution(config.recommendedRes.heightmap);
+      setAlbedoResolution(config.recommendedRes.albedo);
+    }
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []); // intentionally only on mount
 
@@ -191,7 +203,8 @@ export const ExportPanel: React.FC = () => {
       const sortedTiles = [...tilesToExport].sort((a, b) => {
         if (a.row !== b.row) return a.row - b.row;
         return a.col - b.col;
-      });
+      });
+
 
       // Compute cumulative world offsets for variable-sized tiles
       const centerLat = tilesToExport.reduce((sum, t) => sum + (t.bounds.north + t.bounds.south) / 2, 0) / tilesToExport.length;
@@ -235,8 +248,6 @@ export const ExportPanel: React.FC = () => {
       for (let i = 0; i < sortedTiles.length; i++) {
         const tile = sortedTiles[i];
         const sessionId = `session-${Date.now()}-${i}`;
-        // Use platform-agnostic path construction
-        const tileOutputPath = `${outputPath}${window.navigator.platform.startsWith('Win') ? '\\' : '/'}tile_${tile.row}_${tile.col}`;
 
         // Set progress BEFORE starting this tile (percent = tiles completed so far)
         setExportProgress({
@@ -247,9 +258,10 @@ export const ExportPanel: React.FC = () => {
           percent: Math.round((i / total) * 100),
         });
 
+        // Pass base outputPath and tile row/col; main process constructs tile path with path.join
         await Native.exportPackage(
           sessionId,
-          tileOutputPath,
+          outputPath,
           selectedPreset,
           tile.bounds,
           heightmapFormat,
@@ -276,14 +288,20 @@ export const ExportPanel: React.FC = () => {
 
       // For Babylon.js preset, switch to 3D view after export
       if (selectedPreset === 'babylon') {
-        const sep = window.navigator.platform.startsWith('Win') ? '\\' : '/';
         const tileManifests: TerrainManifest[] = [];
 
         for (const tile of tilesToExport) {
           const tileFolder = `tile_${tile.row}_${tile.col}`;
-          const tilePath = `${outputPath}${sep}${tileFolder}`;
-          const manifest = await FsAPI.readManifest(tilePath) as TerrainManifest;
-          const manifestTile = manifest.tiles[0];
+          // Use forward slash — main process resolves via path.join in fs:readManifest handler
+          const tilePath = `${outputPath}/${tileFolder}`;
+          const manifest = await FsAPI.readManifest(tilePath) as any;
+
+          if (manifest && manifest.error) {
+            addNotification({ type: 'error', message: `Failed to read manifest for tile ${tile.row},${tile.col}: ${manifest.error}` });
+            continue;
+          }
+
+          const manifestTile = (manifest as TerrainManifest).tiles[0];
 
           tileManifests.push({
             ...manifest,

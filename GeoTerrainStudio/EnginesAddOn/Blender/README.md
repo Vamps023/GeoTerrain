@@ -1,5 +1,10 @@
 # GeoTerrain Bridge for Blender
 
+> **SYNC NOTE**: This directory is a copy of the canonical addon source at
+> `EnginesAddOn/GeoTerrainBlender/`. Do NOT edit files here directly.
+> Any changes must be made in the canonical source and then copied here.
+> To sync: copy all files from `EnginesAddOn/GeoTerrainBlender/` into this directory.
+
 Blender addon to import terrain packages from **GeoTerrain Studio**.
 
 ## Features

@@ -7,6 +7,8 @@ import { ExportPanel } from './components/ExportPanel/ExportPanel';
 import { TerrainViewer3D } from './components/Viewer3D/TerrainViewer3D';
 import { ToastContainer } from './components/Toast/Toast';
 
+const APP_VERSION = __APP_VERSION__ || '2.0.0';
+
 // Left nav: Map + 3D toggle only
 const LEFT_TABS = [
   { id: 'map' as const, label: 'Map', icon: Map },
@@ -168,7 +170,7 @@ function App(): React.JSX.Element {
         <div className="flex items-center gap-3">
           <img src="./logo/logo.png" alt="GeoTerrain" className="w-8 h-8 rounded object-contain" />
           <h1 className="text-sm font-semibold tracking-wide">GeoTerrain Studio</h1>
-          <span className="text-[10px] px-1.5 py-0.5 bg-cyan-500/20 text-cyan-400 rounded">v2.0.0-beta</span>
+          <span className="text-[10px] px-1.5 py-0.5 bg-cyan-500/20 text-cyan-400 rounded">v{APP_VERSION}-beta</span>
         </div>
         <div className="text-xs text-gray-500">Standalone Terrain Extractor</div>
       </header>
@@ -274,7 +276,7 @@ function App(): React.JSX.Element {
           <span>MapLibre + Babylon.js</span>
         </div>
         <div className="flex items-center gap-3">
-          <span>Native Core: v2.0.0</span>
+          <span>Native Core: v{APP_VERSION}</span>
         </div>
       </footer>
     </div>

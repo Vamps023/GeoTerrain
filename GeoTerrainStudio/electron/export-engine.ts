@@ -28,6 +28,25 @@ const MAX_CONCURRENT_DOWNLOADS = 6;
 const MAX_TILES_PER_EXPORT = 1024; // Safety limit
 const MAX_MEMORY_MB = 2048; // 2GB safety limit
 
+/**
+ * Exhaustive switch check helper. When used as the default case in a switch
+ * on a union type, TypeScript will error at compile time if any case is missing.
+ */
+function assertNever(x: never): never {
+  throw new Error(`Unexpected value: ${x}`);
+}
+
+/**
+ * Redact sensitive tokens/keys from URLs before logging.
+ * Handles API_Key, access_token, and key query parameters.
+ */
+function redactUrl(url: string): string {
+  return url
+    .replace(/API_Key=[^&]+/gi, 'API_Key=****')
+    .replace(/access_token=[^&]+/gi, 'access_token=****')
+    .replace(/\bkey=[^&]+/gi, 'key=****');
+}
+
 // ─── Types ─────────────────────────────────────────────────────
 
 interface GeoBounds {
@@ -72,9 +91,39 @@ function getOpenTopoDemType(source: DEMSource): string {
     case 'opentopo-cop30': return 'COP30';
     case 'opentopo-nasadem': return 'NASADEM';
     case 'opentopo-usgs10m': return 'USGS10m';
-    default: return 'SRTMGL1';
+    case 'aws-terrarium':
+    case 'mapzen':
+    case 'mapbox-terrain-rgb':
+      throw new Error(`getOpenTopoDemType called with non-OpenTopo source: ${source}`);
+    default: return assertNever(source);
   }
 }
+
+function getDEMSourceInfo(source: DEMSource): { name: string; attribution: string } {
+  switch (source) {
+    case 'aws-terrarium':
+      return { name: 'AWS Terrain Tiles (Terrarium)', attribution: 'Mapzen / AWS' };
+    case 'mapzen':
+      return { name: 'Mapzen Terrain Tiles', attribution: 'Mapzen' };
+    case 'mapbox-terrain-rgb':
+      return { name: 'Mapbox Terrain RGB', attribution: 'Mapbox' };
+    case 'opentopo-srtmgl1':
+      return { name: 'SRTM GL1 (30m)', attribution: 'NASA / OpenTopography' };
+    case 'opentopo-srtmgl3':
+      return { name: 'SRTM GL3 (90m)', attribution: 'NASA / OpenTopography' };
+    case 'opentopo-aw3d30':
+      return { name: 'ALOS World 3D (30m)', attribution: 'JAXA / OpenTopography' };
+    case 'opentopo-cop30':
+      return { name: 'Copernicus GLO-30', attribution: 'ESA / OpenTopography' };
+    case 'opentopo-nasadem':
+      return { name: 'NASADEM (30m)', attribution: 'NASA / OpenTopography' };
+    case 'opentopo-usgs10m':
+      return { name: 'USGS 3DEP (10m)', attribution: 'USGS / OpenTopography' };
+    default:
+      return assertNever(source);
+  }
+}
+
 type ImagerySource = 'arcgis' | 'mapbox' | 'maptiler';
 
 interface ExportOptions {
@@ -290,14 +339,18 @@ interface DownloadResult<T> {
   error?: string;
 }
 
-async function downloadBuffer(url: string): Promise<Buffer> {
+async function downloadBuffer(url: string, maxRedirects = 5): Promise<Buffer> {
+  if (maxRedirects <= 0) {
+    throw new Error(`[Download] Too many redirects for ${redactUrl(url)}`);
+  }
+
   return new Promise((resolve, reject) => {
     const req = https.get(url, { timeout: 30000 }, (res) => {
       // Handle redirects (301, 302, 303, 307, 308)
       if (res.statusCode && res.statusCode >= 300 && res.statusCode < 400) {
         const loc = res.headers.location;
         if (loc) {
-          downloadBuffer(loc).then(resolve).catch(reject);
+          downloadBuffer(loc, maxRedirects - 1).then(resolve).catch(reject);
           return;
         }
       }
@@ -314,7 +367,7 @@ async function downloadBuffer(url: string): Promise<Buffer> {
         return;
       }
       if (res.statusCode !== 200) {
-        reject(new Error(`HTTP ${res.statusCode} for ${url}`));
+        reject(new Error(`HTTP ${res.statusCode} for ${redactUrl(url)}`));
         return;
       }
       const chunks: Buffer[] = [];
@@ -325,7 +378,7 @@ async function downloadBuffer(url: string): Promise<Buffer> {
     req.on('error', reject);
     req.on('timeout', () => {
       req.destroy();
-      reject(new Error(`Timeout for ${url}`));
+      reject(new Error(`Timeout for ${redactUrl(url)}`));
     });
   });
 }
@@ -412,7 +465,7 @@ async function fetchOpenTopoDEM(
     `&outputFormat=GTiff` +
     `&API_Key=${apiKey}`;
 
-  console.log(`[OpenTopo] Requesting ${demType} for bbox: ${bounds.west},${bounds.south},${bounds.east},${bounds.north}`);
+  console.log(`[OpenTopo] Requesting ${demType} for bbox: ${bounds.west},${bounds.south},${bounds.east},${bounds.north} (API key: ${apiKey.substring(0, 4)}***)`);
 
   const buffer = await downloadBuffer(url);
 
@@ -441,11 +494,19 @@ async function fetchOpenTopoDEM(
 
   // Convert to Float32Array for consistent downstream processing
   const elevations = new Float32Array(width * height);
-  const noDataValue = image.getGDALNoData() ?? -32768;
+  const noDataValue = image.getGDALNoData();
 
-  for (let i = 0; i < raw.length; i++) {
-    const v = raw[i];
-    elevations[i] = v === noDataValue ? 0 : v;
+  // Only replace noData pixels if a noData value is actually defined
+  if (noDataValue !== null && noDataValue !== undefined) {
+    for (let i = 0; i < raw.length; i++) {
+      const v = raw[i];
+      elevations[i] = v === noDataValue ? 0 : v;
+    }
+  } else {
+    // No noData value defined — all pixel values are valid elevation data
+    for (let i = 0; i < raw.length; i++) {
+      elevations[i] = raw[i];
+    }
   }
 
   console.log(`[OpenTopo] Received ${demType}: ${width}x${height} pixels, ${(buffer.length / 1024).toFixed(1)} KB`);
@@ -524,8 +585,19 @@ async function mergeImageryTilesChunked(
   const canvasW = tilesX * TILE_SIZE;
   const canvasH = tilesY * TILE_SIZE;
 
+  // Guard against OOM: reject if merged buffer would exceed 512MB
+  const requiredBytes = canvasW * canvasH * 4; // RGBA
+  const MAX_MERGE_BYTES = 512 * 1024 * 1024; // 512 MB
+  if (requiredBytes > MAX_MERGE_BYTES) {
+    throw new Error(
+      `[Export] Imagery merge would require ${Math.round(requiredBytes / (1024 * 1024))}MB ` +
+      `(${canvasW}x${canvasH} pixels), exceeding the ${Math.round(MAX_MERGE_BYTES / (1024 * 1024))}MB safety limit. ` +
+      `Reduce the export area, lower the imagery zoom level, or use fewer tiles.`
+    );
+  }
+
   // Build merged canvas as raw RGBA
-  const canvas = Buffer.alloc(canvasW * canvasH * 4);
+  const canvas = Buffer.alloc(requiredBytes);
   canvas.fill(0);
 
   let processed = 0;
@@ -586,6 +658,10 @@ function cropDEM(
   const width = Math.round(Math.abs(pxEast - pxWest));
   const height = Math.round(Math.abs(pxSouth - pxNorth));
 
+  if (width <= 0 || height <= 0) {
+    throw new Error(`[cropDEM] Invalid crop dimensions: width=${width}, height=${height}. Check bounds coordinates.`);
+  }
+
   const cropped = new Float32Array(width * height);
 
   for (let y = 0; y < height; y++) {
@@ -644,6 +720,9 @@ function resizeDEM(
   dstW: number,
   dstH: number
 ): Float32Array {
+  if (dstW < 2 || dstH < 2) {
+    throw new Error(`[resizeDEM] Target dimensions must be at least 2x2, got ${dstW}x${dstH}`);
+  }
   // Use PixelIsPoint sampling: dst pixel positions map to fractional source positions
   // This ensures adjacent tile edges share exact values (last pixel = src[W-1])
   // Bilinear interpolation prevents aliasing
@@ -799,6 +878,50 @@ async function writeHeightmapGeoTIFFInt16(
   await fs.promises.writeFile(outputPath, buf);
 }
 
+async function writeHeightmapGeoTIFFUint16(
+  elevations: Float32Array,
+  width: number,
+  height: number,
+  bounds: GeoBounds,
+  outputPath: string,
+  compression: GeoTIFFCompression = 'none'
+): Promise<void> {
+  // Compute per-tile min/max for normalization
+  let min = Infinity;
+  let max = -Infinity;
+  for (let i = 0; i < elevations.length; i++) {
+    const v = elevations[i];
+    if (isNaN(v) || v === -Infinity) continue;
+    if (v < min) min = v;
+    if (v > max) max = v;
+  }
+  if (min === Infinity) { min = 0; max = 0; }
+  const range = max - min;
+
+  // Normalize elevations to 0–65535 range
+  const uint16 = new Uint16Array(width * height);
+  for (let i = 0; i < elevations.length; i++) {
+    let v = elevations[i];
+    if (isNaN(v) || v === -Infinity) v = min;
+    const norm = Math.round(((v - min) / (range || 1)) * 65535);
+    uint16[i] = Math.max(0, Math.min(65535, norm));
+  }
+
+  const buf = writeGeoTIFF(uint16, {
+    width,
+    height,
+    bitsPerSample: 16,
+    sampleFormat: 1, // unsigned integer
+    samplesPerPixel: 1,
+    photometricInterpretation: 1, // grayscale
+    bounds,
+    compression,
+    rasterType: 'point', // Heightmaps use PixelIsPoint to prevent tile seams (UNIGINE)
+  });
+
+  await fs.promises.writeFile(outputPath, buf);
+}
+
 async function writeHeightmapGeoTIFFFloat32(
   elevations: Float32Array,
   width: number,
@@ -894,28 +1017,28 @@ function getHeightmapExtension(format: HeightmapFormat): string {
     case 'png': return 'png';
     case 'r16': return 'r16';
     case 'float32': return 'tif';
-    case 'geotiff':
-    case 'dem':
-    default: return 'tif';
+    case 'geotiff': return 'tif';
+    case 'dem': return 'tif';
+    default: return assertNever(format);
   }
 }
 
 function getAlbedoExtension(format: AlbedoFormat): string {
   switch (format) {
     case 'geotiff': return 'tif';
-    case 'png':
-    default: return 'png';
+    case 'png': return 'png';
+    default: return assertNever(format);
   }
 }
 
 function getHeightmapFormatLabel(format: HeightmapFormat): string {
   switch (format) {
     case 'float32': return 'Float32 GeoTIFF';
-    case 'geotiff': return 'Int16 GeoTIFF';
+    case 'geotiff': return 'UInt16 GeoTIFF (normalized)';
     case 'dem': return 'DEM (Int16 GeoTIFF)';
     case 'r16': return 'R16 (Raw 16-bit)';
     case 'png': return 'PNG (16-bit grayscale)';
-    default: return 'GeoTIFF';
+    default: return assertNever(format);
   }
 }
 
@@ -986,8 +1109,15 @@ export async function executeExport(
       case 'mapzen':
         return `https://s3.amazonaws.com/elevation-tiles-prod/terrarium/${z}/${x}/${y}.png`;
       case 'aws-terrarium':
-      default:
         return `https://s3.amazonaws.com/elevation-tiles-prod/terrarium/${z}/${x}/${y}.png`;
+      case 'opentopo-srtmgl1':
+      case 'opentopo-srtmgl3':
+      case 'opentopo-aw3d30':
+      case 'opentopo-cop30':
+      case 'opentopo-nasadem':
+      case 'opentopo-usgs10m':
+        throw new Error(`getDEMUrl called with OpenTopo source: ${demSource}. Use fetchOpenTopoDEM instead.`);
+      default: return assertNever(demSource);
     }
   }
 
@@ -1008,8 +1138,8 @@ export async function executeExport(
         return `https://api.maptiler.com/tiles/satellite/${z}/${x}/${y}.jpg?key=${key}`;
       }
       case 'arcgis':
-      default:
         return `https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/${z}/${y}/${x}`;
+      default: return assertNever(imagerySource);
     }
   }
 
@@ -1173,10 +1303,13 @@ export async function executeExport(
       await writeHeightmapGeoTIFFFloat32(resizedDEM, heightmapSize, heightmapSize, bounds, heightmapPath, compression);
       break;
     case 'geotiff':
+      await writeHeightmapGeoTIFFUint16(resizedDEM, heightmapSize, heightmapSize, bounds, heightmapPath, compression);
+      break;
     case 'dem':
-    default:
       await writeHeightmapGeoTIFFInt16(resizedDEM, heightmapSize, heightmapSize, bounds, heightmapPath, compression);
       break;
+    default:
+      assertNever(heightmapFormat);
   }
 
   // ── Write albedo ─────────────────────────────────────────────
@@ -1191,9 +1324,10 @@ export async function executeExport(
       await writeAlbedoGeoTIFF(resizedImg, albedoSize, albedoSize, bounds, albedoPath, compression);
       break;
     case 'png':
-    default:
       await writeAlbedoPNG(resizedImg, albedoSize, albedoSize, albedoPath);
       break;
+    default:
+      assertNever(albedoFormat);
   }
 
   // ── Write manifest ───────────────────────────────────────────
@@ -1204,6 +1338,8 @@ export async function executeExport(
   const { widthM: tileWidthM, heightM: tileHeightM, chunkSizeM } = estimateTileSizeMeters(bounds);
   const worldOffsetX = tileCol * tileWidthM;
   const worldOffsetZ = tileRow * tileHeightM;
+
+  const demInfo = getDEMSourceInfo(demSource);
 
   const manifest = {
     version: '1.0.0',
@@ -1242,7 +1378,7 @@ export async function executeExport(
       },
     ],
     sources: {
-      dem: { id: demSource, name: demSource === 'aws-terrarium' ? 'AWS Terrarium DEM' : 'Mapzen DEM', attribution: 'Mapzen / AWS' },
+      dem: { id: demSource, name: demInfo.name, attribution: demInfo.attribution },
       imagery: { id: imagerySource, name: imagerySource === 'arcgis' ? 'ArcGIS World Imagery' : imagerySource === 'mapbox' ? 'Mapbox Satellite' : 'MapTiler Satellite', attribution: imagerySource === 'arcgis' ? 'Esri' : imagerySource === 'mapbox' ? 'Mapbox' : 'MapTiler' },
     },
     exportPreset: preset,

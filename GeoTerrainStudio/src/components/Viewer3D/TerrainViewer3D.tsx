@@ -15,6 +15,7 @@ import {
   Color4,
   HighlightLayer,
 } from '@babylonjs/core';
+import { fromArrayBuffer } from 'geotiff';
 import type { TerrainManifest, TerrainTile } from '../../types/terrain';
 import { FsAPI } from '../../core/ipc';
 
@@ -29,9 +30,164 @@ const DEFAULT_TILE_SIZE_M = 4000; // 4 km fallback
 const HEIGHT_EXAGGERATION = 1.5;  // mild vertical scale for visual clarity (1.0 = true-to-life)
 
 function tileCoordsFromPath(filePath?: string): { row: number; col: number } | null {
-  const match = filePath?.match(/(?:^|[\\/])tile_(\d+)_(\d+)(?:[\\/]|$)/);
-  if (!match) return null;
-  return { row: Number(match[1]), col: Number(match[2]) };
+  if (!filePath) return null;
+  // Try folder-based pattern first: tile_R_C/ or \tile_R_C\
+  const folderMatch = filePath.match(/(?:^|[\\/])tile_(\d+)_(\d+)(?:[\\/]|$)/);
+  if (folderMatch) return { row: Number(folderMatch[1]), col: Number(folderMatch[2]) };
+  // Fallback: flat filename pattern like tile_0_1_heightmap.png
+  const fileMatch = filePath.match(/tile_(\d+)_(\d+)_/);
+  if (fileMatch) return { row: Number(fileMatch[1]), col: Number(fileMatch[2]) };
+  return null;
+}
+
+/**
+ * Detect heightmap format from file extension.
+ */
+function getHeightmapFormat(filePath: string): 'png' | 'tif' | 'r16' {
+  const lower = filePath.toLowerCase();
+  if (lower.endsWith('.tif') || lower.endsWith('.tiff')) return 'tif';
+  if (lower.endsWith('.r16')) return 'r16';
+  return 'png';
+}
+
+/**
+ * Convert a grayscale pixel array (normalized 0–255) to a PNG Blob using an offscreen canvas.
+ * @param grayscale - Uint8Array of grayscale values (width * height)
+ * @param width - image width
+ * @param height - image height
+ */
+async function grayscaleToPngBlob(grayscale: Uint8Array, width: number, height: number): Promise<Blob> {
+  const canvas = document.createElement('canvas');
+  canvas.width = width;
+  canvas.height = height;
+  const ctx = canvas.getContext('2d')!;
+  const imageData = ctx.createImageData(width, height);
+  const data = imageData.data;
+  for (let i = 0; i < grayscale.length; i++) {
+    const v = grayscale[i];
+    const offset = i * 4;
+    data[offset] = v;     // R
+    data[offset + 1] = v; // G
+    data[offset + 2] = v; // B
+    data[offset + 3] = 255; // A
+  }
+  ctx.putImageData(imageData, 0, 0);
+  return new Promise<Blob>((resolve, reject) => {
+    canvas.toBlob((blob) => {
+      if (blob) resolve(blob);
+      else reject(new Error('Failed to encode canvas as PNG'));
+    }, 'image/png');
+  });
+}
+
+/**
+ * Parse a GeoTIFF buffer and return a normalized PNG Blob (0–255 grayscale).
+ * Uses the `geotiff` library to extract raster data.
+ */
+async function geotiffToPngBlob(buffer: ArrayBuffer): Promise<{ blob: Blob; width: number; height: number }> {
+  const tiff = await fromArrayBuffer(buffer);
+  const image = await tiff.getImage();
+  const width = image.getWidth();
+  const height = image.getHeight();
+  const rasters = await image.readRasters();
+  // Use the first band (elevation data)
+  const band = rasters[0] as Float32Array | Float64Array | Int16Array | Uint16Array | Int32Array | Uint32Array;
+
+  // Find min/max for normalization
+  let min = Infinity;
+  let max = -Infinity;
+  for (let i = 0; i < band.length; i++) {
+    const v = band[i];
+    if (isFinite(v)) {
+      if (v < min) min = v;
+      if (v > max) max = v;
+    }
+  }
+  if (!isFinite(min) || !isFinite(max) || min === max) {
+    min = 0;
+    max = 1;
+  }
+
+  // Normalize to 0–255
+  const range = max - min;
+  const grayscale = new Uint8Array(width * height);
+  for (let i = 0; i < band.length; i++) {
+    const v = band[i];
+    const normalized = isFinite(v) ? ((v - min) / range) * 255 : 0;
+    grayscale[i] = Math.round(Math.max(0, Math.min(255, normalized)));
+  }
+
+  const blob = await grayscaleToPngBlob(grayscale, width, height);
+  return { blob, width, height };
+}
+
+/**
+ * Parse a raw 16-bit (R16) buffer and return a normalized PNG Blob (0–255 grayscale).
+ * R16 format: raw 16-bit unsigned little-endian integers, square dimensions assumed.
+ */
+async function r16ToPngBlob(buffer: ArrayBuffer): Promise<{ blob: Blob; width: number; height: number }> {
+  const uint16 = new Uint16Array(buffer);
+  const pixelCount = uint16.length;
+  // Assume square dimensions
+  const side = Math.round(Math.sqrt(pixelCount));
+  const width = side;
+  const height = side;
+
+  // Find min/max for normalization
+  let min = 65535;
+  let max = 0;
+  for (let i = 0; i < pixelCount; i++) {
+    const v = uint16[i];
+    if (v < min) min = v;
+    if (v > max) max = v;
+  }
+  if (min === max) {
+    min = 0;
+    max = 1;
+  }
+
+  // Normalize to 0–255
+  const range = max - min;
+  const grayscale = new Uint8Array(width * height);
+  for (let i = 0; i < Math.min(pixelCount, width * height); i++) {
+    const normalized = ((uint16[i] - min) / range) * 255;
+    grayscale[i] = Math.round(Math.max(0, Math.min(255, normalized)));
+  }
+
+  const blob = await grayscaleToPngBlob(grayscale, width, height);
+  return { blob, width, height };
+}
+
+/**
+ * Convert a heightmap buffer to a PNG Blob URL suitable for Babylon.js CreateGroundFromHeightMap.
+ * Detects format from file extension and applies appropriate conversion.
+ * Returns the blob URL and optionally the detected resolution.
+ */
+async function heightmapToPngBlobUrl(
+  buffer: ArrayBuffer,
+  filePath: string
+): Promise<{ url: string; width?: number; height?: number }> {
+  const format = getHeightmapFormat(filePath);
+
+  switch (format) {
+    case 'tif': {
+      const { blob, width, height } = await geotiffToPngBlob(buffer);
+      const url = URL.createObjectURL(blob);
+      return { url, width, height };
+    }
+    case 'r16': {
+      const { blob, width, height } = await r16ToPngBlob(buffer);
+      const url = URL.createObjectURL(blob);
+      return { url, width, height };
+    }
+    case 'png':
+    default: {
+      // PNG: use existing path — create blob directly
+      const blob = new Blob([buffer], { type: 'image/png' });
+      const url = URL.createObjectURL(blob);
+      return { url };
+    }
+  }
 }
 
 export const TerrainViewer3D: React.FC<TerrainViewer3DProps> = ({ manifest, packagePath }) => {
@@ -155,6 +311,7 @@ export const TerrainViewer3D: React.FC<TerrainViewer3DProps> = ({ manifest, pack
   useEffect(() => {
     if (!manifest || !packagePath || !sceneRef.current) return;
     loadAllTiles(manifest, packagePath, sceneRef.current);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [manifest, packagePath]);
 
   // Apply flip transformations to selected mesh
@@ -228,11 +385,14 @@ export const TerrainViewer3D: React.FC<TerrainViewer3DProps> = ({ manifest, pack
     let mesh: Mesh;
 
     if (heightmapPath) {
+      // Track blob URL for cleanup on failure
+      let heightmapBlobUrl: string | null = null;
       try {
-        // Read heightmap file and create blob URL
+        // Read heightmap file and convert to PNG blob URL
+        // (handles .tif, .r16, and .png formats)
         const buf = await FsAPI.readFileBinary(heightmapPath);
-        const blob = new Blob([buf], { type: 'image/png' });
-        const url = URL.createObjectURL(blob);
+        const { url } = await heightmapToPngBlobUrl(buf, heightmapPath);
+        heightmapBlobUrl = url;
 
         // Use Babylon's native heightmap loader
         // Parameters: name, url, width, depth, subdivisions, minHeight, maxHeight, scene, onReady
@@ -252,11 +412,14 @@ export const TerrainViewer3D: React.FC<TerrainViewer3DProps> = ({ manifest, pack
             onReady: () => {
               // Clean up blob URL after mesh is ready
               URL.revokeObjectURL(url);
+              heightmapBlobUrl = null;
             },
           },
           scene
         );
       } catch (e) {
+        // Revoke blob URL on failure to prevent memory leak
+        if (heightmapBlobUrl) URL.revokeObjectURL(heightmapBlobUrl);
         console.warn(`Tile ${tileIndex} heightmap failed, using flat ground:`, e);
         // Fallback to flat ground
         mesh = MeshBuilder.CreateGround(meshName, { width: tileWidthM, height: tileHeightM, subdivisions: 10 }, scene);
@@ -278,15 +441,19 @@ export const TerrainViewer3D: React.FC<TerrainViewer3DProps> = ({ manifest, pack
     // Apply albedo texture
     const mat = new StandardMaterial(`mat_${tileIndex}`, scene);
     if (albedoPath) {
+      let albedoBlobUrl: string | null = null;
       try {
         const albedoBuf = await FsAPI.readFileBinary(albedoPath);
         const isTiff = albedoPath.toLowerCase().endsWith('.tif') || albedoPath.toLowerCase().endsWith('.tiff');
         const blob = new Blob([albedoBuf], { type: isTiff ? 'image/tiff' : 'image/png' });
-        const url = URL.createObjectURL(blob);
-        mat.diffuseTexture = new Texture(url, scene, false, false, Texture.BILINEAR_SAMPLINGMODE, () => {
-          URL.revokeObjectURL(url);
+        albedoBlobUrl = URL.createObjectURL(blob);
+        mat.diffuseTexture = new Texture(albedoBlobUrl, scene, false, false, Texture.BILINEAR_SAMPLINGMODE, () => {
+          URL.revokeObjectURL(albedoBlobUrl!);
+          albedoBlobUrl = null;
         });
       } catch {
+        // Revoke blob URL on failure to prevent memory leak
+        if (albedoBlobUrl) URL.revokeObjectURL(albedoBlobUrl);
         mat.diffuseColor = new Color3(0.35, 0.45, 0.25);
       }
     } else {
@@ -389,7 +556,7 @@ export const TerrainViewer3D: React.FC<TerrainViewer3DProps> = ({ manifest, pack
       setStatus(`✓ ${loaded} tile(s) loaded — WASD fly, Q/E up/down, mouse look, Shift sprint`);
       setIsLoading(false);
     },
-    []
+    [manifest, packagePath]
   );
 
   return (

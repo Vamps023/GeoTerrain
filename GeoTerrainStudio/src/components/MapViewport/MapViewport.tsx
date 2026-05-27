@@ -52,15 +52,21 @@ function computeTileGrid(bounds: GeoBounds, tileSizeKm: number): TileGrid {
 
 // ─── Shapefile Parser ─────────────────────────────────────────
 
-function parseShpBuffer(buffer: ArrayBuffer): number[][][][] {
+interface ShpParseResult {
+  polygons: number[][][][];
+  skippedTypes: Map<number, number>; // recordType → count
+}
+
+function parseShpBuffer(buffer: ArrayBuffer): ShpParseResult {
   const view = new DataView(buffer);
   const polygons: number[][][][] = [];
+  const skippedTypes = new Map<number, number>();
 
   // File header (100 bytes)
   const fileCode = view.getInt32(0, false);
   if (fileCode !== 9994) {
     console.error('[SHP] Invalid shapefile, file code:', fileCode);
-    return polygons;
+    return { polygons, skippedTypes };
   }
 
   const fileLengthWords = view.getInt32(24, false); // in 16-bit words
@@ -176,6 +182,7 @@ function parseShpBuffer(buffer: ArrayBuffer): number[][][][] {
         // Null shape — skip
       } else {
         console.log('[SHP] Skipping unsupported record type:', recordType, 'at record', recordNumber);
+        skippedTypes.set(recordType, (skippedTypes.get(recordType) || 0) + 1);
       }
 
       recordCount++;
@@ -188,7 +195,7 @@ function parseShpBuffer(buffer: ArrayBuffer): number[][][][] {
   }
 
   console.log('[SHP] Parsed', polygons.length, 'polygons/lines from', recordCount, 'records');
-  return polygons;
+  return { polygons, skippedTypes };
 }
 
 // ─── Component ────────────────────────────────────────────────
@@ -405,15 +412,12 @@ export const MapViewport: React.FC<MapViewportProps> = ({ className }) => {
     // Only auto-select all if no tiles are currently selected (fresh selection)
     const currentSelected = useTerrainStore.getState().selectedTiles;
     if (currentSelected.size === 0) {
-      const all = new Set<string>();
-      for (const tile of grid.tiles) {
-        all.add(`${tile.row},${tile.col}`);
-      }
       useTerrainStore.getState().selectAllTiles();
     }
   }, [selectedBounds, tileSizeKm, setTileGrid]);
 
-  // Render tile grid overlay
+  // Render tile grid overlay — separated into data update + one-time handler setup
+  // Update GeoJSON data whenever tileGrid or selectedTiles changes
   useEffect(() => {
     const map = mapRef.current;
     if (!map || !tileGrid) return;
@@ -424,7 +428,7 @@ export const MapViewport: React.FC<MapViewportProps> = ({ className }) => {
     const labelLayerId = 'tilegrid-label';
 
     const features = tileGrid.tiles.map((tile) => {
-      const isSelected = selectedTiles.has(`${tile.row},${tile.col}`);
+      const isSelected = selectedTilesRef.current.has(`${tile.row},${tile.col}`);
       return {
         type: 'Feature',
         geometry: {
@@ -500,29 +504,43 @@ export const MapViewport: React.FC<MapViewportProps> = ({ className }) => {
           'text-halo-width': 1,
         },
       });
-
-      // Click handler for tile selection
-      map.on('click', fillLayerId, (e) => {
-        if (!e.features || e.features.length === 0) return;
-        const feature = e.features[0];
-        const row = feature.properties?.row as number;
-        const col = feature.properties?.col as number;
-        toggleTileSelection(row, col);
-      });
-
-      // Hover cursor
-      map.on('mouseenter', fillLayerId, () => {
-        map.getCanvas().style.cursor = 'pointer';
-      });
-      map.on('mouseleave', fillLayerId, () => {
-        map.getCanvas().style.cursor = '';
-      });
     }
+  }, [tileGrid, selectedTiles]);
+
+  // One-time handler setup for tile grid interaction — only depends on tileGrid
+  useEffect(() => {
+    const map = mapRef.current;
+    if (!map || !tileGrid) return;
+
+    const fillLayerId = 'tilegrid-fill';
+
+    // Click handler for tile selection — uses ref to avoid stale closure
+    const handleClick = (e: maplibregl.MapLayerMouseEvent) => {
+      if (!e.features || e.features.length === 0) return;
+      const feature = e.features[0];
+      const row = feature.properties?.row as number;
+      const col = feature.properties?.col as number;
+      toggleTileSelection(row, col);
+    };
+
+    // Hover cursor handlers
+    const handleMouseEnter = () => {
+      map.getCanvas().style.cursor = 'pointer';
+    };
+    const handleMouseLeave = () => {
+      map.getCanvas().style.cursor = '';
+    };
+
+    map.on('click', fillLayerId, handleClick);
+    map.on('mouseenter', fillLayerId, handleMouseEnter);
+    map.on('mouseleave', fillLayerId, handleMouseLeave);
 
     return () => {
-      // Don't remove on every update, only when tileGrid becomes null
+      map.off('click', fillLayerId, handleClick);
+      map.off('mouseenter', fillLayerId, handleMouseEnter);
+      map.off('mouseleave', fillLayerId, handleMouseLeave);
     };
-  }, [tileGrid, selectedTiles]);
+  }, [tileGrid, toggleTileSelection]);
 
   // Cleanup tile grid when bounds cleared
   useEffect(() => {
@@ -677,7 +695,15 @@ export const MapViewport: React.FC<MapViewportProps> = ({ className }) => {
       reader.onload = (event) => {
         const buffer = event.target?.result as ArrayBuffer;
         if (!buffer) return;
-        const polygons = parseShpBuffer(buffer);
+        const { polygons, skippedTypes } = parseShpBuffer(buffer);
+        if (skippedTypes.size > 0) {
+          const totalSkipped = Array.from(skippedTypes.values()).reduce((a, b) => a + b, 0);
+          const skippedTypesList = Array.from(skippedTypes.keys()).join(', ');
+          addNotification({
+            type: 'warning',
+            message: `Shapefile: skipped ${totalSkipped} unsupported records (types: ${skippedTypesList})`,
+          });
+        }
         if (polygons.length > 0) {
           addShapefileToMap(polygons);
         }

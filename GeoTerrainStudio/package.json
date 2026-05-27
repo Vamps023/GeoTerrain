@@ -23,7 +23,10 @@
     "build:electron": "tsc --project electron/tsconfig.json",
     "lint": "eslint . --ext ts,tsx --report-unused-disable-directives --max-warnings 0",
     "preview": "vite preview",
-    "rebuild:native": "cd electron/native && npx node-gyp rebuild"
+    "rebuild:native": "cd electron/native && npx node-gyp rebuild",
+    "build:blender-addon": "cd ../EnginesAddOn/GeoTerrainBlender && zip -r ../GeoTerrainBlender.zip .",
+    "test": "vitest --run",
+    "test:watch": "vitest"
   },
   "dependencies": {
     "@babylonjs/core": "^7.8.1",
@@ -33,18 +36,18 @@
     "maplibre-gl": "^5.24.0",
     "react": "^18.3.1",
     "react-dom": "^18.3.1",
-    "react-router-dom": "^6.23.1",
     "sharp": "^0.34.5",
     "tailwind-merge": "^2.3.0",
     "zustand": "^4.5.2"
   },
   "devDependencies": {
-    "@types/node": "^20.12.12",
+    "@types/node": "^20.19.41",
     "@types/react": "^18.3.3",
     "@types/react-dom": "^18.3.0",
     "@typescript-eslint/eslint-plugin": "^7.10.0",
     "@typescript-eslint/parser": "^7.10.0",
     "@vitejs/plugin-react": "^4.3.0",
+    "@vitest/runner": "^4.1.7",
     "autoprefixer": "^10.4.19",
     "concurrently": "^8.2.2",
     "cross-env": "^7.0.3",
@@ -53,6 +56,7 @@
     "eslint": "^8.57.0",
     "eslint-plugin-react-hooks": "^4.6.2",
     "eslint-plugin-react-refresh": "^0.4.7",
+    "fast-check": "^4.8.0",
     "node-addon-api": "^8.0.0",
     "node-gyp": "^12.3.0",
     "postcss": "^8.4.38",
@@ -60,6 +64,7 @@
     "tailwindcss": "^3.4.3",
     "typescript": "^5.4.5",
     "vite": "^7.3.3",
+    "vitest": "^4.1.7",
     "wait-on": "^7.2.0"
   },
   "build": {
@@ -76,15 +81,6 @@
     "asarUnpack": [
       "node_modules/sharp/**/*",
       "node_modules/@img/**/*"
-    ],
-    "extraResources": [
-      {
-        "from": "electron/native/build/Release",
-        "to": "native",
-        "filter": [
-          "**/*"
-        ]
-      }
     ],
     "win": {
       "target": "nsis",

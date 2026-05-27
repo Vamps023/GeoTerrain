@@ -26,9 +26,9 @@ static Napi::Value ListSources(const Napi::CallbackInfo& info) {
     };
     
     SourceInfo sources[] = {
-        {"aws-terrain", "AWS Terrain Tiles", "dem", false},
+        {"aws-terrarium", "AWS Terrain Tiles", "dem", false},
         {"copernicus-dem", "Copernicus DEM GLO-30", "dem", false},
-        {"arcgis-world-imagery", "ArcGIS World Imagery", "imagery", false},
+        {"arcgis", "ArcGIS World Imagery", "imagery", false},
         {"overpass-osm", "OpenStreetMap (Overpass)", "vector", false},
     };
     

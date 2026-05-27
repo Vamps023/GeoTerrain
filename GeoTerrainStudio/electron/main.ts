@@ -5,6 +5,8 @@
  * interop issues with Electron 34's CommonJS loader.
  */
 
+import type { BrowserWindow as BrowserWindowType } from 'electron';
+
 const electron = require('electron');
 const path = require('path');
 const fs = require('fs');
@@ -12,8 +14,73 @@ const { executeExport } = require('./export-engine');
 
 const { app, BrowserWindow, ipcMain, dialog, nativeTheme } = electron;
 
+// ─── Path Validation Utility ──────────────────────────────────
+
+/**
+ * Tracks the last output folder used during export.
+ * Updated each time native:exportPackage is called successfully.
+ */
+let lastOutputFolder: string | null = null;
+
+/**
+ * Validates that a requested file path is within one of the allowed base directories.
+ * Prevents arbitrary file reads from a compromised renderer process.
+ *
+ * Handles edge cases:
+ * - Path traversal (../)
+ * - Null bytes
+ * - Case sensitivity on Windows (uses lowercase comparison)
+ * - Trailing separators
+ */
+function validatePath(requestedPath: string, allowedBasePaths: string[]): boolean {
+  // Reject paths containing null bytes (poison null byte attack)
+  if (requestedPath.includes('\0')) {
+    return false;
+  }
+
+  // Resolve and normalize the requested path
+  const resolved = path.resolve(requestedPath);
+
+  for (const basePath of allowedBasePaths) {
+    if (!basePath) continue;
+
+    // Resolve and normalize the base path, ensure trailing separator
+    const resolvedBase = path.resolve(basePath) + path.sep;
+
+    if (process.platform === 'win32') {
+      // Case-insensitive comparison on Windows
+      if (resolved.toLowerCase().startsWith(resolvedBase.toLowerCase()) ||
+          resolved.toLowerCase() === resolvedBase.slice(0, -1).toLowerCase()) {
+        return true;
+      }
+    } else {
+      if (resolved.startsWith(resolvedBase) || resolved === resolvedBase.slice(0, -1)) {
+        return true;
+      }
+    }
+  }
+
+  return false;
+}
+
+// Native addon interface based on usage in IPC handlers
+interface NativeAddon {
+  getVersion(): string;
+  planGeneration(bounds: GeoBounds, profile: TerrainProfile): GenerationPlan;
+  startGeneration(sessionId: string, plan: GenerationPlan): string;
+  cancelGeneration(jobId: string): void;
+  getProgress(jobId: string): {
+    jobId: string;
+    state: string;
+    overallProgress: number;
+    currentTile: string;
+    tileProgress: number;
+    message: string;
+  };
+}
+
 // Native addon loader
-let nativeAddon: any = null;
+let nativeAddon: NativeAddon | null = null;
 try {
   const addonPath = path.join(__dirname, '../native/geoterrain_native.node');
   if (fs.existsSync(addonPath)) {
@@ -26,10 +93,10 @@ try {
   console.error('[Main] Failed to load native addon:', err);
 }
 
-let mainWindow: any = null;
+let mainWindow: BrowserWindowType | null = null;
 
 function createWindow(): void {
-  mainWindow = new BrowserWindow({
+  const win = new BrowserWindow({
     width: 1600,
     height: 1000,
     minWidth: 1200,
@@ -48,6 +115,8 @@ function createWindow(): void {
     show: false,
   });
 
+  mainWindow = win;
+
   // Load Vite dev server or production build
   const devServerUrl = process.env.VITE_DEV_SERVER_URL || 'http://localhost:5173';
   const distPath = path.join(__dirname, '../dist/index.html');
@@ -55,18 +124,18 @@ function createWindow(): void {
   // Check if we're in development mode (dist doesn't exist or VITE_DEV_SERVER_URL is set)
   if (process.env.VITE_DEV_SERVER_URL || !fs.existsSync(distPath)) {
     console.log('[Main] Loading Vite dev server:', devServerUrl);
-    mainWindow.loadURL(devServerUrl);
-    mainWindow.webContents.openDevTools();
+    win.loadURL(devServerUrl);
+    win.webContents.openDevTools();
   } else {
     console.log('[Main] Loading production build from:', distPath);
-    mainWindow.loadFile(distPath);
+    win.loadFile(distPath);
   }
 
-  mainWindow.once('ready-to-show', () => {
-    mainWindow?.show();
+  win.once('ready-to-show', () => {
+    win.show();
   });
 
-  mainWindow.on('closed', () => {
+  win.on('closed', () => {
     mainWindow = null;
   });
 }
@@ -171,11 +240,17 @@ ipcMain.handle('native:exportPackage', async (_event: any,
   tileRow = 0,
   tileCol = 0,
 ) => {
+  // Construct tile output path server-side using path.join (avoids deprecated navigator.platform in renderer)
+  const tileOutputPath = path.join(outputPath, `tile_${tileRow}_${tileCol}`);
+
+  // Track the output folder for path validation in fs:readFileBinary
+  lastOutputFolder = path.resolve(outputPath);
+
   // Native export is currently a stub; keep exports on the fully implemented JS engine.
   try {
     const result = await executeExport({
       sessionId,
-      outputPath,
+      outputPath: tileOutputPath,
       preset,
       bounds,
       heightmapFormat: heightmapFormat as any,
@@ -231,28 +306,58 @@ ipcMain.handle('settings:setApiKeys', async (_event: any, apiKeys: { opentopogra
 });
 
 ipcMain.handle('dialog:selectFolder', async () => {
-  const result = await dialog.showOpenDialog(mainWindow, {
+  const result = await dialog.showOpenDialog(BrowserWindow.getFocusedWindow() ?? mainWindow ?? undefined, {
     properties: ['openDirectory'],
     title: 'Select Output Folder',
   });
-  return result.canceled ? null : result.filePaths[0];
+  if (result.canceled) return null;
+  // Track the selected output folder for path validation
+  lastOutputFolder = path.resolve(result.filePaths[0]);
+  return result.filePaths[0];
 });
 
 ipcMain.handle('dialog:selectPackage', async () => {
-  const result = await dialog.showOpenDialog(mainWindow, {
+  const result = await dialog.showOpenDialog(BrowserWindow.getFocusedWindow() ?? mainWindow ?? undefined, {
     properties: ['openDirectory'],
     title: 'Select Terrain Package',
   });
-  return result.canceled ? null : result.filePaths[0];
+  if (result.canceled) return null;
+  // Track the selected package folder for path validation (3D viewer reads from here)
+  lastOutputFolder = path.resolve(result.filePaths[0]);
+  return result.filePaths[0];
 });
 
 ipcMain.handle('fs:readManifest', async (_event: any, packagePath: string) => {
-  const manifestPath = path.join(packagePath, 'manifest.json');
-  const data = await fs.promises.readFile(manifestPath, 'utf-8');
-  return JSON.parse(data);
+  try {
+    // Path validation: only allow reading manifests from allowed directories
+    const allowedBasePaths: string[] = [app.getPath('userData')];
+    if (lastOutputFolder) allowedBasePaths.push(lastOutputFolder);
+    allowedBasePaths.push(app.getPath('documents'));
+
+    if (!validatePath(packagePath, allowedBasePaths)) {
+      console.error('[Main] Failed to read manifest:', packagePath, 'Path validation failed');
+      return { error: `Path validation failed: "${packagePath}" is not within allowed directories.` };
+    }
+
+    const manifestPath = path.join(packagePath, 'manifest.json');
+    const data = await fs.promises.readFile(manifestPath, 'utf-8');
+    return JSON.parse(data);
+  } catch (err: any) {
+    console.error('[Main] Failed to read manifest:', packagePath, err?.message);
+    return { error: err?.message || 'Failed to read manifest' };
+  }
 });
 
 ipcMain.handle('fs:writeManifest', async (_event: any, packagePath: string, manifest: object) => {
+  // Path validation: only allow writing manifests to allowed directories
+  const allowedBasePaths: string[] = [app.getPath('userData')];
+  if (lastOutputFolder) allowedBasePaths.push(lastOutputFolder);
+  allowedBasePaths.push(app.getPath('documents'));
+
+  if (!validatePath(packagePath, allowedBasePaths)) {
+    throw new Error(`[Security] Path validation failed: "${packagePath}" is not within allowed directories.`);
+  }
+
   const manifestPath = path.join(packagePath, 'manifest.json');
   await fs.promises.mkdir(packagePath, { recursive: true });
   await fs.promises.writeFile(manifestPath, JSON.stringify(manifest, null, 2));
@@ -262,7 +367,7 @@ ipcMain.handle('fs:writeManifest', async (_event: any, packagePath: string, mani
 // ─── Project Save/Load ────────────────────────────────────────
 
 ipcMain.handle('dialog:saveProject', async () => {
-  const result = await dialog.showSaveDialog(mainWindow ?? undefined, {
+  const result = await dialog.showSaveDialog(BrowserWindow.getFocusedWindow() ?? mainWindow ?? undefined, {
     title: 'Save Project',
     defaultPath: 'project.gtp',
     filters: [
@@ -274,7 +379,7 @@ ipcMain.handle('dialog:saveProject', async () => {
 });
 
 ipcMain.handle('dialog:loadProject', async () => {
-  const result = await dialog.showOpenDialog(mainWindow ?? undefined, {
+  const result = await dialog.showOpenDialog(BrowserWindow.getFocusedWindow() ?? mainWindow ?? undefined, {
     properties: ['openFile'],
     title: 'Load Project',
     filters: [
@@ -286,6 +391,20 @@ ipcMain.handle('dialog:loadProject', async () => {
 });
 
 ipcMain.handle('fs:saveProject', async (_event: any, filePath: string, data: object) => {
+  // Path validation: only allow saving projects to allowed directories
+  const allowedBasePaths: string[] = [app.getPath('userData')];
+  if (lastOutputFolder) allowedBasePaths.push(lastOutputFolder);
+  allowedBasePaths.push(app.getPath('documents'));
+
+  if (!validatePath(filePath, allowedBasePaths)) {
+    throw new Error(`[Security] Path validation failed: "${filePath}" is not within allowed directories.`);
+  }
+
+  // Validate .gtp extension for project files
+  if (!filePath.endsWith('.gtp')) {
+    throw new Error(`[Security] Project files must have .gtp extension`);
+  }
+
   try {
     await fs.promises.writeFile(filePath, JSON.stringify(data, null, 2), 'utf-8');
     return true;
@@ -296,6 +415,15 @@ ipcMain.handle('fs:saveProject', async (_event: any, filePath: string, data: obj
 });
 
 ipcMain.handle('fs:loadProject', async (_event: any, filePath: string) => {
+  // Path validation: only allow loading projects from user-accessible directories
+  const allowedBasePaths: string[] = [app.getPath('userData')];
+  if (lastOutputFolder) allowedBasePaths.push(lastOutputFolder);
+  allowedBasePaths.push(app.getPath('documents'));
+
+  if (!validatePath(filePath, allowedBasePaths)) {
+    throw new Error(`[Security] Path validation failed: "${filePath}" is not within allowed directories.`);
+  }
+
   try {
     const data = await fs.promises.readFile(filePath, 'utf-8');
     return JSON.parse(data);
@@ -308,6 +436,21 @@ ipcMain.handle('fs:loadProject', async (_event: any, filePath: string) => {
 // ─── Binary File Reading for 3D Viewer ────────────────────────
 
 ipcMain.handle('fs:readFileBinary', async (_event: any, filePath: string) => {
+  // Build allowed paths list for validation
+  const allowedBasePaths: string[] = [app.getPath('userData')];
+  if (lastOutputFolder) {
+    allowedBasePaths.push(lastOutputFolder);
+  }
+
+  if (!validatePath(filePath, allowedBasePaths)) {
+    const error = new Error(
+      `[Security] Path validation failed: "${filePath}" is not within allowed directories. ` +
+      `Allowed: ${allowedBasePaths.filter(Boolean).join(', ')}`
+    );
+    console.error('[Main]', error.message);
+    throw error;
+  }
+
   try {
     const buffer = await fs.promises.readFile(filePath);
     return buffer;
