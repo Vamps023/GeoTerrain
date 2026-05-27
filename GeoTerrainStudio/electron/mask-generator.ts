@@ -166,7 +166,9 @@ async function generateOsmMask(
 
   try {
     progress(`Fetching ${maskType} data from Overpass...`);
+    console.log(`[mask-generator] Starting ${maskType} mask generation for bounds: S=${options.bounds.south.toFixed(4)}, W=${options.bounds.west.toFixed(4)}, N=${options.bounds.north.toFixed(4)}, E=${options.bounds.east.toFixed(4)}`);
     const queryResult = await fetchFn();
+    console.log(`[mask-generator] ${maskType}: received ${queryResult.featureCount} features in ${queryResult.queryTimeMs}ms`);
     progress(`Received ${queryResult.featureCount} ${maskType} features, rasterizing...`);
 
     // rasterizeToFile handles empty features by generating an all-black mask
@@ -182,6 +184,15 @@ async function generateOsmMask(
       outputFilePath
     );
 
+    // Verify file was written
+    const fs = require('fs');
+    if (fs.existsSync(outputFilePath)) {
+      const stats = fs.statSync(outputFilePath);
+      console.log(`[mask-generator] ${maskType} mask written: ${outputFilePath} (${stats.size} bytes)`);
+    } else {
+      console.error(`[mask-generator] ${maskType} mask file NOT found after write: ${outputFilePath}`);
+    }
+
     // Update result with filename only (for manifest inclusion)
     switch (maskType) {
       case 'road': result.roadMask = filename; break;
@@ -192,7 +203,10 @@ async function generateOsmMask(
     progress(`${maskType} mask generated: ${filename}`);
   } catch (err) {
     const errorMessage = err instanceof Error ? err.message : String(err);
-    console.warn(`[mask-generator] Failed to generate ${maskType} mask: ${errorMessage}`);
+    console.error(`[mask-generator] FAILED to generate ${maskType} mask: ${errorMessage}`);
+    if (err instanceof Error && err.stack) {
+      console.error(`[mask-generator] Stack: ${err.stack}`);
+    }
     progress(`Warning: ${maskType} mask generation failed — ${errorMessage}`);
     // Skip this mask type, do not abort remaining masks
   }

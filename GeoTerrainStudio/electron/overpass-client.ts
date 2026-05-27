@@ -36,6 +36,7 @@ export interface OverpassQueryResult {
 // ─── Constants ─────────────────────────────────────────────────
 
 const OVERPASS_ENDPOINT = 'https://overpass-api.de/api/interpreter';
+const OVERPASS_FALLBACK_ENDPOINT = 'https://overpass.kumi.systems/api/interpreter';
 const QUERY_TIMEOUT_SECONDS = 60;
 const MAX_CONCURRENT_REQUESTS = 2;
 const MAX_RESPONSE_BYTES = 100 * 1024 * 1024; // 100 MB
@@ -115,10 +116,10 @@ interface OverpassRawResponse {
  * Returns the raw JSON response string.
  * Throws on HTTP errors, timeouts, or responses exceeding MAX_RESPONSE_BYTES.
  */
-function postOverpassRequest(queryBody: string): Promise<string> {
+function postOverpassRequest(queryBody: string, endpoint: string = OVERPASS_ENDPOINT): Promise<string> {
   return new Promise<string>((resolve, reject) => {
     const postData = `data=${encodeURIComponent(queryBody)}`;
-    const url = new URL(OVERPASS_ENDPOINT);
+    const url = new URL(endpoint);
 
     const options: https.RequestOptions = {
       hostname: url.hostname,
@@ -128,6 +129,8 @@ function postOverpassRequest(queryBody: string): Promise<string> {
       headers: {
         'Content-Type': 'application/x-www-form-urlencoded',
         'Content-Length': Buffer.byteLength(postData),
+        'User-Agent': 'GeoTerrainStudio/2.0',
+        'Accept': '*/*',
       },
       timeout: HTTP_TIMEOUT_MS,
     };
@@ -284,9 +287,10 @@ function isRetryableError(err: unknown): boolean {
 async function executeWithRetry(query: string): Promise<OverpassFeature[]> {
   let lastError: unknown;
 
+  // Try primary endpoint with retries
   for (let attempt = 0; attempt <= RETRY_DELAYS_MS.length; attempt++) {
     try {
-      const responseStr = await postOverpassRequest(query);
+      const responseStr = await postOverpassRequest(query, OVERPASS_ENDPOINT);
       return parseOverpassResponse(responseStr);
     } catch (err) {
       lastError = err;
@@ -298,7 +302,8 @@ async function executeWithRetry(query: string): Promise<OverpassFeature[]> {
 
       // Only retry on rate limit or timeout
       if (!isRetryableError(err)) {
-        throw err;
+        // For non-retryable errors (like 406), try fallback endpoint once
+        break;
       }
 
       // If we have retries left, wait with exponential backoff
@@ -308,8 +313,16 @@ async function executeWithRetry(query: string): Promise<OverpassFeature[]> {
     }
   }
 
-  // All retries exhausted
-  throw lastError;
+  // Try fallback endpoint
+  try {
+    console.log(`[Overpass] Primary endpoint failed, trying fallback: ${OVERPASS_FALLBACK_ENDPOINT}`);
+    const responseStr = await postOverpassRequest(query, OVERPASS_FALLBACK_ENDPOINT);
+    return parseOverpassResponse(responseStr);
+  } catch (fallbackErr) {
+    // If fallback also fails, throw the original error
+    console.warn(`[Overpass] Fallback endpoint also failed:`, (fallbackErr as Error).message);
+    throw lastError;
+  }
 }
 
 function sleep(ms: number): Promise<void> {
