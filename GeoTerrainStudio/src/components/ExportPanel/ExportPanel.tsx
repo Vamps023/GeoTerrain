@@ -22,10 +22,10 @@ const PRESETS: PresetConfig[] = [
     name: 'UNIGINE',
     desc: 'LandscapeLayerMap (.lmap) + materials',
     icon: 'U',
-    heightmapFormat: 'float32', // Float32 GeoTIFF for full precision
-    albedoFormat: 'geotiff',      // GeoTIFF RGB
+    heightmapFormat: 'png',  // PNG 16-bit grayscale — Unigine Image::load() does not support GeoTIFF
+    albedoFormat: 'png',     // PNG RGB — best compatibility with Unigine's image loader
     recommendedRes: { heightmap: 4096, albedo: 4096 },
-    notes: 'GeoTIFF with full metadata',
+    notes: 'PNG format — Unigine\'s Image::load() supports PNG, not GeoTIFF',
   },
   {
     id: 'unreal',
@@ -326,9 +326,13 @@ export const ExportPanel: React.FC = () => {
               col: tile.col,
               bounds: tile.bounds,
               files: {
-                ...manifestTile.files,
                 heightmap: manifestTile.files.heightmap ? `${tileFolder}/${manifestTile.files.heightmap}` : undefined,
                 albedo: manifestTile.files.albedo ? `${tileFolder}/${manifestTile.files.albedo}` : undefined,
+                roadMask: manifestTile.files.roadMask ? `${tileFolder}/${manifestTile.files.roadMask}` : undefined,
+                waterMask: manifestTile.files.waterMask ? `${tileFolder}/${manifestTile.files.waterMask}` : undefined,
+                vegetationMask: manifestTile.files.vegetationMask ? `${tileFolder}/${manifestTile.files.vegetationMask}` : undefined,
+                buildingMask: manifestTile.files.buildingMask ? `${tileFolder}/${manifestTile.files.buildingMask}` : undefined,
+                cliffMask: manifestTile.files.cliffMask ? `${tileFolder}/${manifestTile.files.cliffMask}` : undefined,
               },
             }],
           });

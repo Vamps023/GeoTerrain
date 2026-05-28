@@ -1,0 +1,20 @@
+# Build artifacts
+build/
+cmake-build-*/
+*.user
+*.autosave
+
+# Deployed binaries (local only)
+deploy/
+
+# Machine-local config
+local_paths.cmake
+
+# IDE
+.vs/
+.vscode/
+.idea/
+
+# OS
+.DS_Store
+Thumbs.db

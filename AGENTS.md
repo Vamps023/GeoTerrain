@@ -1,3 +1,4 @@
+<!-- AGENTS.md — GeoTerrain Agent Guide -->
 # GeoTerrain Agent Guide
 
 This file is for AI coding agents working in this repository. Read it before changing code. It describes the project architecture, build process, conventions, known issues, and traps that have already cost time.
@@ -9,6 +10,7 @@ This file is for AI coding agents working in this repository. Read it before cha
 GeoTerrain is a desktop geospatial terrain extraction tool. The main product is **GeoTerrain Studio**, an Electron application that lets users select a real-world map area, download DEM (elevation) and satellite imagery, and export engine-ready terrain packages. Exported packages can be previewed in a built-in Babylon.js 3D viewer or imported into Blender via a Python add-on.
 
 There is also a Blender import add-on under `EnginesAddOn/GeoTerrainBlender/` and a packaged copy under `GeoTerrainStudio/EnginesAddOn/Blender/`.
+A new Unigine Editor plugin is under `EnginesAddOn/GeoTerrainUnigine/`.
 
 ### Repository Layout
 
@@ -21,12 +23,22 @@ GeoTerrain/
   EnginesAddOn/
     GeoTerrainBlender/              # Blender add-on source (Python)
     GeoTerrainBlender.zip           # generated add-on archive
+    GeoTerrainUnigine/              # Unigine Editor plugin source (C++/Qt)
+      source/
+        core/                       # Plugin entry point
+        landscape/                  # LandscapeSaveManager (async save batching)
+        terrain/                    # BrushMaterialFactory
+        importer/                   # GeoTerrainImporter (manifest parse + async dispatch)
+        ui/                         # Qt panel and controller
   GeoTerrainStudio/                 # main Electron + React application
     electron/                       # main process, preload, export engine
       main.ts                       # BrowserWindow and IPC handlers
       preload.ts                    # contextBridge API definitions
       export-engine.ts              # Node DEM/imagery downloader + exporter
       geotiff-writer.ts             # minimal GeoTIFF writer
+      mask-generator.ts             # OSM mask generation orchestrator
+      overpass-client.ts            # Overpass API client for OSM data
+      vector-rasterizer.ts          # vector-to-raster mask renderer
       native/                       # N-API C++ addon stubs
         binding.gyp
         src/
@@ -34,6 +46,7 @@ GeoTerrain/
           session_bridge.cpp
           datasource_bridge.cpp
           pipeline_bridge.cpp
+      __tests__/                    # property-based tests (vitest + fast-check)
     src/                            # React renderer (Vite bundle)
       App.tsx                       # root component, tab layout, export overlay
       main.tsx                      # React entry point
@@ -51,12 +64,14 @@ GeoTerrain/
         engines/                      # engine preset configs (if any)
       types/
         terrain.ts                    # shared domain and IPC types
+    tests/                          # unit + exploration tests (vitest)
     public/                         # icons, logo, static assets
     package.json                    # version 2.0.0, Electron 42, React 18
     tsconfig.json                   # renderer + electron included, strict
     vite.config.ts                  # aliases @, @components, @core, @types
     tailwind.config.cjs             # custom geo colors, Inter / JetBrains Mono fonts
     postcss.config.cjs
+    vitest.config.ts                # test runner config
     CODE_REVIEW.md                  # bug backlog and known risks
     README.md                       # human developer onboarding
 ```
@@ -78,8 +93,10 @@ GeoTerrain/
 | 3D Preview | Babylon.js Core | `^7.8.1` |
 | Image Processing | sharp | `^0.34.5` (Node main process **only**) |
 | GeoTIFF I/O | geotiff + custom writer | `geotiff-writer.ts` for 8/16/32-bit output |
+| Testing | vitest + fast-check | `^4.1.7` and `^4.8.0` for property-based tests |
 | Native Addon | node-addon-api / node-gyp | C++20 stubs, not production ready |
 | Blender Bridge | Python | Blender 4.0+ add-on |
+| Unigine Bridge | C++17 / Qt5 | Unigine 2.18+ Editor plugin |
 
 ---
 
@@ -112,11 +129,15 @@ npm run rebuild:native
 
 # Lint
 npm run lint
+
+# Tests
+npm run test         # run all tests once (vitest --run)
+npm run test:watch   # run tests in watch mode
 ```
 
 Build outputs:
 - `dist/` — Vite renderer bundle
-- `dist-electron/` — compiled Electron main/preload JS
+- `dist-electron/` — compiled Electron main/preload JS (CommonJS, emitted by `tsc --project electron/tsconfig.json`)
 - `release/` — electron-builder installers
 
 ### Important Build Notes
@@ -137,6 +158,7 @@ Build outputs:
 4. `electron/export-engine.ts` downloads tiles, merges/crops/resizes, writes per-tile files.
 5. For Babylon exports, renderer reads the root `manifest.json`, creates Blob URLs, and renders with `MeshBuilder.CreateGroundFromHeightMap`.
 6. Blender add-on imports the same package folder via `operators.py`.
+7. Unigine plugin imports the same package into `LandscapeLayerMap` tiles via `GeoTerrainImporter::importPackage()`.
 
 ### 4.2 IPC Architecture
 
@@ -171,6 +193,7 @@ The preload script (`electron/preload.ts`) defines the exact API shape exposed v
 | `activeTab` | `map`, `layers`, `jobs`, `export`, `view3d` |
 | `exportProgress` / `exportResult` / `exportStartTime` | Export overlay state |
 | `notifications` | Toast queue |
+| `maskSettings` | OSM mask generation toggles and thresholds |
 
 ### 4.4 Export Engine
 
@@ -179,9 +202,9 @@ The preload script (`electron/preload.ts`) defines the exact API shape exposed v
 Supported heightmap formats:
 - `png` — normalized 16-bit PNG (Babylon / browser viewing)
 - `r16` — normalized raw 16-bit little-endian
-- `geotiff` — signed 16-bit GeoTIFF (current implementation)
-- `float32` — label says float32 GeoTIFF, but currently also written as int16 (known issue, see CODE_REVIEW.md)
-- `dem` — currently identical to GeoTIFF-style output
+- `geotiff` — normalized UInt16 GeoTIFF
+- `float32` — true Float32 GeoTIFF (IEEE float, sampleFormat=3)
+- `dem` — signed Int16 GeoTIFF
 
 Supported albedo formats:
 - `png`
@@ -197,6 +220,7 @@ Supported export presets:
 Supported DEM sources (short IDs, used by `export-engine.ts`):
 - `aws-terrarium`, `mapzen`, `mapbox-terrain-rgb`
 - `opentopo-srtmgl1`, `opentopo-srtmgl3`, `opentopo-aw3d30`, `opentopo-cop30`, `opentopo-nasadem`, `opentopo-usgs10m`
+- `nasa-earthdata`
 
 Supported imagery sources:
 - `arcgis`, `mapbox`, `maptiler`
@@ -227,6 +251,15 @@ OutputFolder/
 ```
 
 The root manifest aggregates all tiles. The Blender add-on and Babylon viewer both consume this structure.
+
+### 4.6 Mask Generation Pipeline
+
+Optional terrain masks are generated via `electron/mask-generator.ts`:
+
+1. **Road / Water / Vegetation / Building masks** — fetch OSM vector data via `overpass-client.ts`, then rasterize via `vector-rasterizer.ts`.
+2. **Cliff mask** — computed directly from DEM elevation data using a 3×3 finite-difference gradient kernel; pixels exceeding `cliffThresholdDegrees` are marked white.
+
+Mask generation is non-fatal: if an OSM query fails or a mask type is unsupported for the area, the export continues without that mask.
 
 ---
 
@@ -259,9 +292,39 @@ Do **not** import `sharp`, `fs`, `path`, or any Node module into files under `sr
 
 ## 6. Testing Strategy
 
-**There is currently no automated test suite in the project source.** The only test files found are inside `node_modules/`. If you add tests, place them adjacent to the source files using a `.test.ts` or `.spec.ts` suffix, and update `package.json` scripts accordingly.
+The project uses **Vitest** with **fast-check** for property-based testing.
 
-Manual validation workflow after TypeScript changes:
+### Test Locations
+
+| Directory | Purpose |
+|---|---|
+| `GeoTerrainStudio/tests/` | Unit and exploration tests (renderer-side logic, GeoTIFF writer, path validation) |
+| `GeoTerrainStudio/electron/__tests__/` | Property-based tests for main-process modules (export engine, mask generator, overpass client, vector rasterizer) |
+
+### Running Tests
+
+```bash
+cd GeoTerrainStudio
+npm run test        # single run
+npm run test:watch  # watch mode
+```
+
+### Test Categories
+
+1. **Exploration tests** (`tests/exploration.test.ts`) — confirm known bugs exist. Some are expected to fail until the underlying code is fixed.
+2. **Preservation tests** (`tests/preservation.test.ts`) — capture existing correct behavior using fast-check property tests. These must always pass.
+3. **Path validation tests** (`tests/validate-path.test.ts`) — unit tests for the `validatePath` security utility.
+4. **Property tests** (`electron/__tests__/*.property.test.ts`) — fast-check tests for mask generation, vector rasterization, Overpass client, export integration, and parameter validation.
+
+### Adding New Tests
+
+- Place tests adjacent to the source file using `.test.ts` or `.spec.ts` suffix.
+- Update `vitest.config.ts` `include` array if you add a new test directory.
+- Prefer property-based tests for data-transformation logic (fast-check generates edge cases automatically).
+
+### Manual Validation Workflow
+
+After TypeScript changes that affect the export or viewer pipeline:
 1. `npm run build:vite`
 2. `npm run build:electron`
 3. Launch `npm run dev:electron` and exercise the full export + 3D preview flow.
@@ -277,6 +340,7 @@ Manual validation workflow after TypeScript changes:
 - All privileged operations go through typed IPC in `preload.ts`.
 - Renderer must use `src/core/ipc.ts` wrappers; never access `window.electronAPI` directly.
 - API keys (OpenTopography, Mapbox, MapTiler) are stored in `settings.json` inside the user's `app.getPath('userData')` directory, not in source.
+- **Path validation** (`validatePath` in `main.ts`) guards all `fs:*` IPC handlers against directory traversal, null-byte injection, and case-sensitivity attacks on Windows.
 
 ---
 
@@ -323,3 +387,6 @@ These are documented in `CODE_REVIEW.md` and verified to still exist:
 - If you modify Blender import behavior, check whether **both** add-on source locations need the same update:
   - `EnginesAddOn/GeoTerrainBlender/`
   - `GeoTerrainStudio/EnginesAddOn/Blender/`
+- If you modify Unigine plugin behavior, update **both** source locations:
+  - `EnginesAddOn/GeoTerrainUnigine/`
+  - `GeoTerrainStudio/EnginesAddOn/Unigine/` (when packaged)

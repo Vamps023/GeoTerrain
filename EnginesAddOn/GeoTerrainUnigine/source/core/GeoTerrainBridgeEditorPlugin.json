@@ -1,0 +1,8 @@
+{
+  "Name": "GeoTerrainBridgeEditorPlugin",
+  "Vendor": "GeoTerrainStudio",
+  "Description": "Import terrain packages from GeoTerrain Studio into Unigine Landscape Terrain",
+  "Version": "1.0.0.0",
+  "CompatVersion": "1.0.0.0",
+  "Dependencies": []
+}

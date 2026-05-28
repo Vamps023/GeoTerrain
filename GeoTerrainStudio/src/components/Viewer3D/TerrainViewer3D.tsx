@@ -18,6 +18,9 @@ import {
 import { fromArrayBuffer } from 'geotiff';
 import type { TerrainManifest, TerrainTile } from '../../types/terrain';
 import { FsAPI } from '../../core/ipc';
+import { useTerrainStore } from '../../core/store';
+import { parseMask } from './MaskSampler';
+import { scatter, clear, type ScatterResult, DEFAULT_SCATTER_CONFIG } from './TreeScatterer';
 
 interface TerrainViewer3DProps {
   manifest: TerrainManifest | null;
@@ -196,6 +199,7 @@ export const TerrainViewer3D: React.FC<TerrainViewer3DProps> = ({ manifest, pack
   const sceneRef = useRef<Scene | null>(null);
   const highlightLayerRef = useRef<HighlightLayer | null>(null);
   const selectedMeshRef = useRef<Mesh | null>(null);
+  const scatterResultsRef = useRef<Map<string, ScatterResult>>(new Map());
   const [isLoading, setIsLoading] = useState(false);
   const [status, setStatus] = useState('Ready — Click to enable fly controls');
   const [controlsHint, setControlsHint] = useState(true);
@@ -300,6 +304,14 @@ export const TerrainViewer3D: React.FC<TerrainViewer3DProps> = ({ manifest, pack
 
     return () => {
       window.removeEventListener('resize', onResize);
+      // Dispose all scatter results before engine disposal
+      for (const result of scatterResultsRef.current.values()) {
+        clear(result);
+        if (result.mesh && !result.mesh.isDisposed()) {
+          result.mesh.dispose(false, true);
+        }
+      }
+      scatterResultsRef.current.clear();
       engine.dispose();
       engineRef.current = null;
       sceneRef.current = null;
@@ -409,10 +421,12 @@ export const TerrainViewer3D: React.FC<TerrainViewer3DProps> = ({ manifest, pack
             subdivisions: Math.min(subDivs, 1024), // Cap at 1024 to prevent performance issues
             minHeight: 0,
             maxHeight: elevationRange * HEIGHT_EXAGGERATION,
-            onReady: () => {
+            onReady: (readyMesh) => {
               // Clean up blob URL after mesh is ready
               URL.revokeObjectURL(url);
               heightmapBlobUrl = null;
+              // Signal that geometry is ready for height sampling
+              readyMesh.metadata = { ...readyMesh.metadata, geometryReady: true };
             },
           },
           scene
@@ -478,6 +492,15 @@ export const TerrainViewer3D: React.FC<TerrainViewer3DProps> = ({ manifest, pack
       // Dispose old tile meshes
       scene.meshes.filter(m => m.name.startsWith('tile_')).forEach(m => m.dispose());
 
+      // Dispose old scatter results
+      for (const result of scatterResultsRef.current.values()) {
+        clear(result);
+        if (result.mesh && !result.mesh.isDisposed()) {
+          result.mesh.dispose(false, true);
+        }
+      }
+      scatterResultsRef.current.clear();
+
       const sourceTiles = manifest.tiles;
       if (!sourceTiles || sourceTiles.length === 0) {
         setStatus('No tiles in manifest');
@@ -534,9 +557,101 @@ export const TerrainViewer3D: React.FC<TerrainViewer3DProps> = ({ manifest, pack
               z: ((tile.row - minRow) * tileHeightM) - totalD / 2,
             },
           };
-          await buildTileMesh(scene, centeredTile, pkgPath, loaded, tileWidthM, tileHeightM);
+          const mesh = await buildTileMesh(scene, centeredTile, pkgPath, loaded, tileWidthM, tileHeightM);
           loaded++;
           setStatus(`Loading tiles... ${loaded}/${tiles.length}`);
+
+          // Fire-and-forget tree scattering if vegetation mask is available
+          if (centeredTile.files.vegetationMask) {
+            const maskPath = `${pkgPath.replace(/\\/g, '/')}/${centeredTile.files.vegetationMask}`;
+            const meshName = mesh.name;
+            const elevMin = Number.isFinite(centeredTile.elevation.min) ? centeredTile.elevation.min : 0;
+            const elevMax = Number.isFinite(centeredTile.elevation.max) ? centeredTile.elevation.max : 100;
+
+            // Non-blocking: scatter trees after terrain is rendered and camera is interactive
+            void (async () => {
+              try {
+                // Wait for terrain mesh geometry to be ready (CreateGroundFromHeightMap is async)
+                await new Promise<void>((resolve) => {
+                  const checkReady = () => {
+                    if (mesh.metadata?.geometryReady || mesh.getTotalVertices() > 0) {
+                      resolve();
+                    } else {
+                      setTimeout(checkReady, 100);
+                    }
+                  };
+                  setTimeout(checkReady, 100);
+                });
+
+                // Step 1: Load and parse the vegetation mask
+                let maskBuffer: ArrayBuffer;
+                let maskData: Awaited<ReturnType<typeof parseMask>>;
+                try {
+                  maskBuffer = await FsAPI.readFileBinary(maskPath);
+                  maskData = await parseMask(maskBuffer);
+                } catch (maskErr) {
+                  console.warn(`Tree scattering skipped for tile ${meshName}: mask loading/parsing failed`, maskErr);
+                  return;
+                }
+
+                // Step 2: Attempt scatter with explicit 50,000 instance cap
+                const scatterConfig = {
+                  heightExaggeration: HEIGHT_EXAGGERATION,
+                  maxInstancesPerTile: DEFAULT_SCATTER_CONFIG.maxInstancesPerTile, // 50,000 cap
+                };
+
+                let result: ScatterResult | null = null;
+                try {
+                  result = await scatter(
+                    scene,
+                    mesh,
+                    maskData,
+                    tileWidthM,
+                    tileHeightM,
+                    elevMin,
+                    elevMax,
+                    scatterConfig
+                  );
+                } catch (gpuErr) {
+                  // GPU memory error recovery: retry with 50% reduced instance count
+                  console.warn(`Tree scattering GPU allocation failed for tile ${meshName}, retrying with 50% capacity:`, gpuErr);
+                  try {
+                    result = await scatter(
+                      scene,
+                      mesh,
+                      maskData,
+                      tileWidthM,
+                      tileHeightM,
+                      elevMin,
+                      elevMax,
+                      {
+                        ...scatterConfig,
+                        maxInstancesPerTile: Math.floor(scatterConfig.maxInstancesPerTile * 0.5),
+                      }
+                    );
+                  } catch (retryErr) {
+                    // Retry also failed — disable scattering for this tile and show warning
+                    console.warn(`Tree scattering disabled for tile ${meshName}: GPU allocation retry failed`, retryErr);
+                    useTerrainStore.getState().addNotification({
+                      type: 'error',
+                      message: `Trees could not be rendered for tile ${meshName} due to GPU memory limits.`,
+                    });
+                    return;
+                  }
+                }
+
+                if (result) {
+                  scatterResultsRef.current.set(meshName, result);
+                  console.log(
+                    `TreeScatterer: ${result.instanceCount} trees placed on ${meshName} in ${result.generationTimeMs.toFixed(0)}ms`
+                  );
+                }
+              } catch (err) {
+                // Catch any unhandled exception — log and continue rendering terrain without trees
+                console.warn(`Tree scattering skipped for tile ${meshName}:`, err);
+              }
+            })();
+          }
         } catch (e) {
           console.error('Tile load error:', e);
         }
