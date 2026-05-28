@@ -11,6 +11,13 @@ export interface MaskSettings {
   roadLineWidthPx: number;
 }
 
+export interface Extract3DSettings {
+  extractBuildings: boolean;
+  extractRoads: boolean;
+  defaultBuildingHeight: number;
+  roadElevationOffset: number;
+}
+
 export interface ElectronAPI {
   native: {
     getVersion: () => Promise<string>;
@@ -34,6 +41,7 @@ export interface ElectronAPI {
       tileRow?: number,
       tileCol?: number,
       maskSettings?: MaskSettings,
+      extract3DSettings?: Extract3DSettings,
     ) => Promise<string>;
   };
   settings: {
@@ -116,8 +124,8 @@ const api: ElectronAPI = {
     startGeneration: (sessionId, plan) => ipcRenderer.invoke('native:startGeneration', sessionId, plan),
     cancelGeneration: (jobId) => ipcRenderer.invoke('native:cancelGeneration', jobId),
     getProgress: (jobId) => ipcRenderer.invoke('native:getProgress', jobId),
-    exportPackage: (sessionId, outputPath, preset, bounds, heightmapFormat, albedoFormat, heightmapResolution, albedoResolution, imageryZoom, demSource, imagerySource, apiKeys, tileRow, tileCol, maskSettings) =>
-      ipcRenderer.invoke('native:exportPackage', sessionId, outputPath, preset, bounds, heightmapFormat, albedoFormat, heightmapResolution, albedoResolution, imageryZoom, demSource, imagerySource, apiKeys, tileRow, tileCol, maskSettings),
+    exportPackage: (sessionId, outputPath, preset, bounds, heightmapFormat, albedoFormat, heightmapResolution, albedoResolution, imageryZoom, demSource, imagerySource, apiKeys, tileRow, tileCol, maskSettings, extract3DSettings) =>
+      ipcRenderer.invoke('native:exportPackage', sessionId, outputPath, preset, bounds, heightmapFormat, albedoFormat, heightmapResolution, albedoResolution, imageryZoom, demSource, imagerySource, apiKeys, tileRow, tileCol, maskSettings, extract3DSettings),
   },
   settings: {
     getApiKeys: () => ipcRenderer.invoke('settings:getApiKeys'),

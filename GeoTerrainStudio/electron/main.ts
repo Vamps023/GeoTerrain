@@ -241,6 +241,7 @@ ipcMain.handle('native:exportPackage', async (_event: any,
   tileRow = 0,
   tileCol = 0,
   maskSettings?: { generateRoadMask: boolean; generateWaterMask: boolean; generateVegetationMask: boolean; generateBuildingMask: boolean; generateCliffMask: boolean; cliffThresholdDegrees: number; roadLineWidthPx: number },
+  extract3DSettings?: { extractBuildings: boolean; extractRoads: boolean; defaultBuildingHeight: number; roadElevationOffset: number },
 ) => {
   // Construct tile output path server-side using path.join (avoids deprecated navigator.platform in renderer)
   const tileOutputPath = path.join(outputPath, `tile_${tileRow}_${tileCol}`);
@@ -268,6 +269,7 @@ ipcMain.handle('native:exportPackage', async (_event: any,
       tileRow,
       tileCol,
       maskSettings,
+      extract3DSettings,
     });
     return result.manifestPath;
   } catch (err) {

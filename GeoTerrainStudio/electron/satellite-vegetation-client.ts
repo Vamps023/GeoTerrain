@@ -50,6 +50,250 @@ const VEGETATION_CLASS_MAP: Record<number, number> = {
   40: 100,  // Cropland
 };
 
+// ─── Chunking Constants and Types ──────────────────────────────
+
+/**
+ * Maximum number of pixels (width * height) that sharp can process
+ * in a single operation. Conservative limit at 2^28.
+ */
+const SHARP_PIXEL_LIMIT = 268_435_456;
+
+/**
+ * Safety margin applied to the pixel limit. We use 90% of the limit
+ * to avoid edge cases where rounding pushes us over.
+ */
+const CHUNK_SAFETY_MARGIN = 0.9;
+
+/**
+ * Defines a single chunk within the subdivided output area.
+ * Each chunk maps to a rectangular region in both pixel space and geographic space.
+ */
+interface ChunkDefinition {
+  /** Pixel offset in the output buffer (x) */
+  outputX: number;
+  /** Pixel offset in the output buffer (y) */
+  outputY: number;
+  /** Width of this chunk in output pixels */
+  width: number;
+  /** Height of this chunk in output pixels */
+  height: number;
+  /** Geographic bounds for this chunk */
+  bounds: GeoBounds;
+}
+
+/**
+ * Computes chunk definitions that subdivide the output area into
+ * pieces where each chunk's source pixel count stays below the limit.
+ *
+ * The source-to-output ratio determines how many source pixels
+ * correspond to each output pixel. Chunks are computed so that
+ * sourceChunkWidth * sourceChunkHeight < SHARP_PIXEL_LIMIT for each chunk.
+ *
+ * When source dimensions fit within the pixel limit (with safety margin),
+ * a single chunk covering the full output area is returned.
+ *
+ * @param outputWidth - Total output width in pixels
+ * @param outputHeight - Total output height in pixels
+ * @param sourceWidth - Total source (mosaic) width in pixels
+ * @param sourceHeight - Total source (mosaic) height in pixels
+ * @param bounds - Geographic bounds covering the full output area
+ * @returns Array of chunk definitions that tile the output area
+ */
+export function computeChunks(
+  outputWidth: number,
+  outputHeight: number,
+  sourceWidth: number,
+  sourceHeight: number,
+  bounds: GeoBounds
+): ChunkDefinition[] {
+  const effectiveLimit = SHARP_PIXEL_LIMIT * CHUNK_SAFETY_MARGIN;
+
+  // If source fits within the pixel limit, return a single chunk
+  if (sourceWidth * sourceHeight < effectiveLimit) {
+    return [{
+      outputX: 0,
+      outputY: 0,
+      width: outputWidth,
+      height: outputHeight,
+      bounds,
+    }];
+  }
+
+  // Compute how many rows and columns we need to subdivide into.
+  // We want: (sourceWidth / cols) * (sourceHeight / rows) < effectiveLimit
+  // i.e., sourceWidth * sourceHeight < effectiveLimit * rows * cols
+  // Minimum subdivisions needed:
+  const totalSourcePixels = sourceWidth * sourceHeight;
+  const chunksNeeded = Math.ceil(totalSourcePixels / effectiveLimit);
+
+  // Distribute subdivisions across rows and columns proportionally
+  // to the aspect ratio of the source, so chunks are roughly square in source space.
+  const aspectRatio = sourceWidth / sourceHeight;
+  let cols = Math.max(1, Math.round(Math.sqrt(chunksNeeded * aspectRatio)));
+  let rows = Math.max(1, Math.round(Math.sqrt(chunksNeeded / aspectRatio)));
+
+  // Ensure we have enough subdivisions
+  while (
+    (sourceWidth / cols) * (sourceHeight / rows) >= effectiveLimit
+  ) {
+    // Increase the dimension that would reduce chunk size the most
+    if (sourceWidth / cols >= sourceHeight / rows) {
+      cols++;
+    } else {
+      rows++;
+    }
+  }
+
+  const chunks: ChunkDefinition[] = [];
+
+  // Compute chunk dimensions in output pixel space
+  const chunkOutputWidth = Math.floor(outputWidth / cols);
+  const chunkOutputHeight = Math.floor(outputHeight / rows);
+
+  // Geographic extent
+  const lonRange = bounds.east - bounds.west;
+  const latRange = bounds.north - bounds.south;
+
+  for (let row = 0; row < rows; row++) {
+    for (let col = 0; col < cols; col++) {
+      // Output pixel position
+      const outputX = col * chunkOutputWidth;
+      const outputY = row * chunkOutputHeight;
+
+      // Handle last column/row to cover remaining pixels (avoid rounding gaps)
+      const width = col === cols - 1 ? outputWidth - outputX : chunkOutputWidth;
+      const height = row === rows - 1 ? outputHeight - outputY : chunkOutputHeight;
+
+      // Interpolate geographic bounds proportionally
+      const chunkWest = bounds.west + (col / cols) * lonRange;
+      const chunkEast = bounds.west + ((col + 1) / cols) * lonRange;
+      // Note: row 0 is top (north), row N-1 is bottom (south)
+      const chunkNorth = bounds.north - (row / rows) * latRange;
+      const chunkSouth = bounds.north - ((row + 1) / rows) * latRange;
+
+      chunks.push({
+        outputX,
+        outputY,
+        width,
+        height,
+        bounds: {
+          south: chunkSouth,
+          north: chunkNorth,
+          west: chunkWest,
+          east: chunkEast,
+        },
+      });
+    }
+  }
+
+  return chunks;
+}
+
+// ─── Chunk Processing ──────────────────────────────────────────
+
+/**
+ * Processes a single chunk: extracts the geographic sub-region from
+ * the source mosaic, applies vegetation class extraction, crops, and
+ * resizes to the chunk's output dimensions.
+ *
+ * Steps:
+ * 1. Compute pixel coordinates in the mosaic for the chunk's geographic bounds
+ * 2. Extract that region using sharp
+ * 3. Apply vegetation class mapping (10→255, 20→200, 30→150, 40→100, others→0)
+ * 4. Resize to chunk output dimensions
+ *
+ * @param chunk - The chunk definition with output position, dimensions, and bounds
+ * @param mosaicBuffer - Raw grayscale pixel buffer of the full mosaic
+ * @param mosaicWidth - Width of the mosaic in pixels
+ * @param mosaicHeight - Height of the mosaic in pixels
+ * @param mosaicBounds - Geographic bounds of the full mosaic
+ * @returns Buffer of chunk.width * chunk.height bytes with vegetation class values
+ */
+async function processChunk(
+  chunk: ChunkDefinition,
+  mosaicBuffer: Buffer,
+  mosaicWidth: number,
+  mosaicHeight: number,
+  mosaicBounds: GeoBounds
+): Promise<Buffer> {
+  // Compute pixel coordinates in the mosaic for the chunk's geographic bounds
+  const lonRange = mosaicBounds.east - mosaicBounds.west;
+  const latRange = mosaicBounds.north - mosaicBounds.south;
+
+  // X maps longitude: west=0, east=mosaicWidth
+  const xStart = Math.max(0, Math.floor(((chunk.bounds.west - mosaicBounds.west) / lonRange) * mosaicWidth));
+  const xEnd = Math.min(mosaicWidth, Math.ceil(((chunk.bounds.east - mosaicBounds.west) / lonRange) * mosaicWidth));
+
+  // Y maps latitude: north=0, south=mosaicHeight (inverted)
+  const yStart = Math.max(0, Math.floor(((mosaicBounds.north - chunk.bounds.north) / latRange) * mosaicHeight));
+  const yEnd = Math.min(mosaicHeight, Math.ceil(((mosaicBounds.north - chunk.bounds.south) / latRange) * mosaicHeight));
+
+  const cropWidth = Math.max(1, xEnd - xStart);
+  const cropHeight = Math.max(1, yEnd - yStart);
+
+  // Extract the sub-region from the mosaic using sharp
+  const extractedRegion = await sharp(mosaicBuffer, {
+    raw: { width: mosaicWidth, height: mosaicHeight, channels: 1 },
+  })
+    .extract({ left: xStart, top: yStart, width: cropWidth, height: cropHeight })
+    .raw()
+    .toBuffer();
+
+  // Apply vegetation class mapping to the extracted region
+  const vegetationBuffer = extractVegetationClasses(extractedRegion);
+
+  // Resize to the chunk's output dimensions
+  const resized = await sharp(vegetationBuffer, {
+    raw: { width: cropWidth, height: cropHeight, channels: 1 },
+  })
+    .resize(chunk.width, chunk.height, { kernel: 'lanczos2' })
+    .raw()
+    .toBuffer();
+
+  return resized;
+}
+
+/**
+ * Reassembles processed chunk buffers into the final output buffer.
+ * Each chunk is copied row-by-row to its correct (outputX, outputY) position.
+ *
+ * The output buffer is pre-filled with zeros, so any missing or failed chunks
+ * (represented by zero-filled buffers) naturally produce zero regions.
+ *
+ * @param chunks - Array of chunk definitions paired with their processed buffers
+ * @param outputWidth - Total output width in pixels
+ * @param outputHeight - Total output height in pixels
+ * @returns Buffer of exactly outputWidth * outputHeight bytes
+ */
+export function reassembleChunks(
+  chunks: Array<{ definition: ChunkDefinition; buffer: Buffer }>,
+  outputWidth: number,
+  outputHeight: number
+): Buffer {
+  // Allocate output buffer filled with zeros
+  const output = Buffer.alloc(outputWidth * outputHeight, 0);
+
+  for (const { definition, buffer } of chunks) {
+    const { outputX, outputY, width, height } = definition;
+
+    // Copy each row of the chunk buffer to the correct position in the output
+    for (let row = 0; row < height; row++) {
+      const sourceOffset = row * width;
+      const destOffset = (outputY + row) * outputWidth + outputX;
+
+      // Bounds check to ensure we don't write outside the output buffer
+      if (outputY + row >= outputHeight) break;
+
+      const copyWidth = Math.min(width, outputWidth - outputX);
+      if (copyWidth <= 0) continue;
+
+      buffer.copy(output, destOffset, sourceOffset, sourceOffset + copyWidth);
+    }
+  }
+
+  return output;
+}
+
 // ─── Tile Grid Computation ─────────────────────────────────────
 
 /**
@@ -281,7 +525,41 @@ async function fetchAndProcessTiles(
       .raw()
       .toBuffer({ resolveWithObject: true });
 
-    // Extract vegetation classes from the raw WorldCover data
+    // Check if chunking is needed for this single tile
+    const sourcePixels = info.width * info.height;
+    const effectiveLimit = SHARP_PIXEL_LIMIT * CHUNK_SAFETY_MARGIN;
+
+    if (sourcePixels >= effectiveLimit) {
+      // Chunking needed — extract vegetation classes first, then chunk
+      const vegetationBuffer = extractVegetationClasses(rawPixels);
+
+      const mosaicBounds: GeoBounds = {
+        south: tile.latSW,
+        north: tile.latSW + TILE_SIZE_DEGREES,
+        west: tile.lonSW,
+        east: tile.lonSW + TILE_SIZE_DEGREES,
+      };
+
+      const chunks = computeChunks(outputWidth, outputHeight, info.width, info.height, bounds);
+      console.log(`[satellite-vegetation] Processing vegetation mask in ${chunks.length} chunks`);
+
+      const processedChunks: Array<{ definition: ChunkDefinition; buffer: Buffer }> = [];
+
+      for (const chunk of chunks) {
+        try {
+          const chunkBuffer = await processChunk(chunk, vegetationBuffer, info.width, info.height, mosaicBounds);
+          processedChunks.push({ definition: chunk, buffer: chunkBuffer });
+        } catch (err) {
+          const errorMessage = err instanceof Error ? err.message : String(err);
+          console.warn(`[satellite-vegetation] Chunk at (${chunk.outputX}, ${chunk.outputY}) failed: ${errorMessage}. Filling with zeros.`);
+          processedChunks.push({ definition: chunk, buffer: Buffer.alloc(chunk.width * chunk.height, 0) });
+        }
+      }
+
+      return reassembleChunks(processedChunks, outputWidth, outputHeight);
+    }
+
+    // No chunking needed — single-pass processing
     const vegetationBuffer = extractVegetationClasses(rawPixels);
 
     // Crop to bounds and resize to target dimensions
@@ -354,7 +632,39 @@ async function fetchAndProcessTiles(
     }
   }
 
-  // Crop mosaic to bounds and resize
+  // Check if chunking is needed for the mosaic
+  const mosaicPixels = mosaicWidth * mosaicHeight;
+  const effectiveLimit = SHARP_PIXEL_LIMIT * CHUNK_SAFETY_MARGIN;
+
+  if (mosaicPixels >= effectiveLimit) {
+    // Chunking needed — subdivide the mosaic processing
+    const mosaicBounds: GeoBounds = {
+      south: mosaicSouth,
+      north: mosaicNorth,
+      west: mosaicWest,
+      east: mosaicEast,
+    };
+
+    const chunks = computeChunks(outputWidth, outputHeight, mosaicWidth, mosaicHeight, bounds);
+    console.log(`[satellite-vegetation] Processing vegetation mask in ${chunks.length} chunks`);
+
+    const processedChunks: Array<{ definition: ChunkDefinition; buffer: Buffer }> = [];
+
+    for (const chunk of chunks) {
+      try {
+        const chunkBuffer = await processChunk(chunk, mosaic, mosaicWidth, mosaicHeight, mosaicBounds);
+        processedChunks.push({ definition: chunk, buffer: chunkBuffer });
+      } catch (err) {
+        const errorMessage = err instanceof Error ? err.message : String(err);
+        console.warn(`[satellite-vegetation] Chunk at (${chunk.outputX}, ${chunk.outputY}) failed: ${errorMessage}. Filling with zeros.`);
+        processedChunks.push({ definition: chunk, buffer: Buffer.alloc(chunk.width * chunk.height, 0) });
+      }
+    }
+
+    return reassembleChunks(processedChunks, outputWidth, outputHeight);
+  }
+
+  // No chunking needed — single-pass crop and resize
   return cropAndResize(
     mosaic,
     mosaicWidth,

@@ -4,7 +4,8 @@ import 'maplibre-gl/dist/maplibre-gl.css';
 import type { GeoBounds, TileGrid, TileDefinition, ProjectData } from '../../types/terrain';
 import { useTerrainStore } from '../../core/store';
 import { Native, Dialog, FsAPI } from '../../core/ipc';
-import { Grid3x3, Upload, CheckSquare, Square, FileUp, MapPin, Eye, EyeOff, Lock, Save, FolderOpen } from 'lucide-react';
+import { Grid3x3, Upload, CheckSquare, Square, FileUp, MapPin, Eye, EyeOff, Lock, Save, FolderOpen, Type } from 'lucide-react';
+import { SearchBar } from '@components/SearchBar/SearchBar';
 
 interface MapViewportProps {
   className?: string;
@@ -265,6 +266,163 @@ export const MapViewport: React.FC<MapViewportProps> = ({ className }) => {
     map.boxZoom.disable();
     map.addControl(new maplibregl.NavigationControl(), 'top-right');
     map.addControl(new maplibregl.ScaleControl(), 'bottom-left');
+
+    // ─── Place Labels Layer (vector tiles) ────────────────────────
+    // Add OpenMapTiles-compatible vector tile source and place label layers
+    // on map load. Uses OpenFreeMap (free, no API key required).
+    // Graceful degradation: if source fails, map continues without labels.
+    map.on('load', () => {
+      try {
+        // Add vector tile source (OpenFreeMap - OpenMapTiles schema, free, no key)
+        map.addSource('place-labels-source', {
+          type: 'vector',
+          tiles: [
+            'https://tiles.openfreemap.org/planet/{z}/{x}/{y}.pbf',
+          ],
+          maxzoom: 14,
+          attribution: '© OpenMapTiles © OpenStreetMap contributors',
+        });
+
+        // Country names (zoom 2-5)
+        map.addLayer({
+          id: 'place-labels-country',
+          type: 'symbol',
+          source: 'place-labels-source',
+          'source-layer': 'place',
+          filter: ['==', ['get', 'class'], 'country'],
+          minzoom: 2,
+          maxzoom: 5,
+          layout: {
+            'text-field': ['get', 'name'],
+            'text-size': ['interpolate', ['linear'], ['zoom'], 2, 12, 5, 16],
+            'text-font': ['Noto Sans Regular'],
+            'text-transform': 'uppercase',
+            'text-letter-spacing': 0.1,
+            'text-max-width': 8,
+            'text-allow-overlap': false,
+            'icon-allow-overlap': false,
+          },
+          paint: {
+            'text-color': '#ffffff',
+            'text-halo-color': 'rgba(0, 0, 0, 0.8)',
+            'text-halo-width': 1.5,
+          },
+        });
+
+        // City names (zoom 4-10)
+        map.addLayer({
+          id: 'place-labels-city',
+          type: 'symbol',
+          source: 'place-labels-source',
+          'source-layer': 'place',
+          filter: ['==', ['get', 'class'], 'city'],
+          minzoom: 4,
+          maxzoom: 10,
+          layout: {
+            'text-field': ['get', 'name'],
+            'text-size': ['interpolate', ['linear'], ['zoom'], 4, 11, 10, 16],
+            'text-font': ['Noto Sans Regular'],
+            'text-max-width': 8,
+            'text-allow-overlap': false,
+            'icon-allow-overlap': false,
+          },
+          paint: {
+            'text-color': '#ffffff',
+            'text-halo-color': 'rgba(0, 0, 0, 0.8)',
+            'text-halo-width': 1.5,
+          },
+        });
+
+        // Town names (zoom 8-13)
+        map.addLayer({
+          id: 'place-labels-town',
+          type: 'symbol',
+          source: 'place-labels-source',
+          'source-layer': 'place',
+          filter: ['==', ['get', 'class'], 'town'],
+          minzoom: 8,
+          maxzoom: 13,
+          layout: {
+            'text-field': ['get', 'name'],
+            'text-size': ['interpolate', ['linear'], ['zoom'], 8, 10, 13, 14],
+            'text-font': ['Noto Sans Regular'],
+            'text-max-width': 7,
+            'text-allow-overlap': false,
+            'icon-allow-overlap': false,
+          },
+          paint: {
+            'text-color': '#f0f0f0',
+            'text-halo-color': 'rgba(0, 0, 0, 0.75)',
+            'text-halo-width': 1.2,
+          },
+        });
+
+        // Village and suburb names (zoom 11-15)
+        map.addLayer({
+          id: 'place-labels-village',
+          type: 'symbol',
+          source: 'place-labels-source',
+          'source-layer': 'place',
+          filter: ['any',
+            ['==', ['get', 'class'], 'village'],
+            ['==', ['get', 'class'], 'suburb'],
+          ],
+          minzoom: 11,
+          maxzoom: 15,
+          layout: {
+            'text-field': ['get', 'name'],
+            'text-size': ['interpolate', ['linear'], ['zoom'], 11, 10, 15, 13],
+            'text-font': ['Noto Sans Regular'],
+            'text-max-width': 7,
+            'text-allow-overlap': false,
+            'icon-allow-overlap': false,
+          },
+          paint: {
+            'text-color': '#e8e8e8',
+            'text-halo-color': 'rgba(0, 0, 0, 0.7)',
+            'text-halo-width': 1,
+          },
+        });
+
+        // Landmarks and POIs (zoom 13-17)
+        map.addLayer({
+          id: 'place-labels-poi',
+          type: 'symbol',
+          source: 'place-labels-source',
+          'source-layer': 'poi',
+          minzoom: 13,
+          maxzoom: 17,
+          layout: {
+            'text-field': ['get', 'name'],
+            'text-size': ['interpolate', ['linear'], ['zoom'], 13, 9, 17, 12],
+            'text-font': ['Noto Sans Regular'],
+            'text-max-width': 6,
+            'text-allow-overlap': false,
+            'icon-allow-overlap': false,
+            'text-offset': [0, 0.5],
+          },
+          paint: {
+            'text-color': '#e0e0e0',
+            'text-halo-color': 'rgba(0, 0, 0, 0.7)',
+            'text-halo-width': 1,
+          },
+        });
+
+        console.log('[Map] Place labels layers added successfully');
+      } catch (err) {
+        // Graceful degradation: map continues without labels
+        console.warn('[Map] Failed to add place labels layer:', err);
+      }
+    });
+
+    // Handle vector tile source errors gracefully
+    map.on('error', (e) => {
+      // Suppress errors from the place-labels source to avoid noisy console
+      const errMsg = e.error?.message || '';
+      if (errMsg.includes('place-labels') || errMsg.includes('openfreemap')) {
+        return;
+      }
+    });
 
     // Zoom lock handler — uses ref to always get current state
     const onZoom = () => {
@@ -598,6 +756,9 @@ export const MapViewport: React.FC<MapViewportProps> = ({ className }) => {
   const [selectionVisible, setSelectionVisible] = useState(true);
   const [gridVisible, setGridVisible] = useState(true);
 
+  // ─── Place Labels Visibility ────────────────────────────────
+  const [labelsVisible, setLabelsVisible] = useState(true);
+
   // ─── Shapefile Import ───────────────────────────────────────
   const [isDraggingShp, setIsDraggingShp] = useState(false);
   const [shpBounds, setShpBounds] = useState<{ minX: number; maxX: number; minY: number; maxY: number } | null>(null);
@@ -643,6 +804,30 @@ export const MapViewport: React.FC<MapViewportProps> = ({ className }) => {
       map.setLayoutProperty(labelLayerId, 'visibility', gridVisible ? 'visible' : 'none');
     }
   }, [gridVisible]);
+
+  // Toggle place labels visibility
+  useEffect(() => {
+    const map = mapRef.current;
+    if (!map) return;
+    const labelLayerIds = [
+      'place-labels-country',
+      'place-labels-city',
+      'place-labels-town',
+      'place-labels-village',
+      'place-labels-poi',
+    ];
+    const visibility = labelsVisible ? 'visible' : 'none';
+    for (const layerId of labelLayerIds) {
+      try {
+        if (map.getLayer(layerId)) {
+          map.setLayoutProperty(layerId, 'visibility', visibility);
+        }
+      } catch (err) {
+        // Graceful degradation: if vector tile source is unavailable, map continues without labels
+        console.warn(`[Map] Failed to set visibility for ${layerId}:`, err);
+      }
+    }
+  }, [labelsVisible]);
 
   const handleShpDrop = useCallback((e: React.DragEvent) => {
     e.preventDefault();
@@ -1222,6 +1407,11 @@ export const MapViewport: React.FC<MapViewportProps> = ({ className }) => {
         </div>
       </div>
 
+      {/* Top Center: Search Bar */}
+      <div className="absolute top-4 left-1/2 -translate-x-1/2 z-20 w-80 pointer-events-auto">
+        <SearchBar mapRef={mapRef} />
+      </div>
+
       {/* Bottom Right: Legend */}
       <div className="absolute bottom-4 right-4 bg-black/70 backdrop-blur-sm text-white p-2 rounded-lg text-[10px] pointer-events-auto z-10 space-y-1">
         <div className="flex items-center gap-2">
@@ -1239,6 +1429,18 @@ export const MapViewport: React.FC<MapViewportProps> = ({ className }) => {
         <div className="flex items-center gap-2">
           <div className="w-2.5 h-2.5 bg-gray-500/20 border border-gray-500" />
           <span>Unselected Tile</span>
+        </div>
+        <div className="flex items-center gap-2 border-t border-gray-600 pt-1 mt-1">
+          <button
+            onClick={() => setLabelsVisible((v) => !v)}
+            className={`inline-flex items-center gap-1 py-0.5 px-1.5 rounded text-[9px] transition-colors ${
+              labelsVisible ? 'bg-cyan-600/30 text-cyan-400' : 'bg-gray-700 text-gray-500'
+            }`}
+            title={labelsVisible ? 'Hide place labels' : 'Show place labels'}
+          >
+            <Type className="w-2.5 h-2.5" />
+            Labels
+          </button>
         </div>
       </div>
     </div>

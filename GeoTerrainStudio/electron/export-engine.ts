@@ -22,6 +22,7 @@ import { writeGeoTIFF, GeoTIFFCompression } from './geotiff-writer';
 import { fromArrayBuffer } from 'geotiff';
 import { generateMasks } from './mask-generator';
 import type { MaskGenerationOptions, MaskResult } from './mask-generator';
+import { extract3DGeometry } from './osm-3d-extractor';
 
 // ─── Constants ─────────────────────────────────────────────────
 
@@ -154,6 +155,13 @@ interface ExportOptions {
   maptilerApiKey?: string;
   // Mask generation settings
   maskSettings?: MaskSettings;
+  // 3D geometry extraction settings
+  extract3DSettings?: {
+    extractBuildings: boolean;
+    extractRoads: boolean;
+    defaultBuildingHeight: number;
+    roadElevationOffset: number;
+  };
 }
 
 interface MaskSettings {
@@ -1668,6 +1676,52 @@ export async function executeExport(
   const worldOffsetX = tileCol * tileWidthM;
   const worldOffsetZ = tileRow * tileHeightM;
 
+  // ── Extract 3D geometry (if enabled) ─────────────────────────
+  const extract3DFiles: Record<string, string> = {};
+  const { extract3DSettings } = options;
+
+  if (extract3DSettings && (extract3DSettings.extractBuildings || extract3DSettings.extractRoads)) {
+    if (onProgress) {
+      onProgress({ stage: 'extract_3d', current: 0, total: 100, message: 'Extracting 3D geometry from OSM...' });
+    }
+
+    const tilePrefix = `tile_${tileRow}_${tileCol}`;
+
+    try {
+      const extraction3DResult = await extract3DGeometry({
+        bounds,
+        defaultBuildingHeight: extract3DSettings.defaultBuildingHeight,
+        roadElevationOffset: extract3DSettings.roadElevationOffset,
+      });
+
+      // Write buildings JSON (always write, even if empty array)
+      if (extract3DSettings.extractBuildings) {
+        const buildingsFilename = `${tilePrefix}_buildings3d.json`;
+        const buildingsPath = path.join(outputPath, buildingsFilename);
+        fs.writeFileSync(buildingsPath, JSON.stringify(extraction3DResult.buildings));
+        extract3DFiles.buildings3D = buildingsFilename;
+        console.log(`[Export] Written ${extraction3DResult.buildings.length} buildings to ${buildingsFilename}`);
+      }
+
+      // Write roads JSON (always write, even if empty array)
+      if (extract3DSettings.extractRoads) {
+        const roadsFilename = `${tilePrefix}_roads3d.json`;
+        const roadsPath = path.join(outputPath, roadsFilename);
+        fs.writeFileSync(roadsPath, JSON.stringify(extraction3DResult.roads));
+        extract3DFiles.roads3D = roadsFilename;
+        console.log(`[Export] Written ${extraction3DResult.roads.length} roads to ${roadsFilename}`);
+      }
+
+      if (onProgress) {
+        onProgress({ stage: 'extract_3d', current: 100, total: 100, message: `3D extraction complete (${extraction3DResult.extractionTimeMs}ms)` });
+      }
+    } catch (err) {
+      // Non-fatal: log warning and continue export without 3D geometry
+      const error = err as Error;
+      console.warn(`[Export] 3D geometry extraction failed (non-fatal), continuing without 3D data:`, error.message);
+    }
+  }
+
   const demInfo = getDEMSourceInfo(demSource);
 
   const manifest = {
@@ -1700,6 +1754,8 @@ export async function executeExport(
           ...(maskFiles.vegetationMask ? { vegetationMask: maskFiles.vegetationMask } : {}),
           ...(maskFiles.buildingMask ? { buildingMask: maskFiles.buildingMask } : {}),
           ...(maskFiles.cliffMask ? { cliffMask: maskFiles.cliffMask } : {}),
+          ...(extract3DFiles.buildings3D ? { buildings3D: extract3DFiles.buildings3D } : {}),
+          ...(extract3DFiles.roads3D ? { roads3D: extract3DFiles.roads3D } : {}),
         },
         elevation: {
           min: Math.round(elevationMeta.min * 100) / 100,

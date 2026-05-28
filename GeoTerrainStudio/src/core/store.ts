@@ -1,5 +1,5 @@
 import { create } from 'zustand';
-import type { AppState, GeoBounds, TerrainProfile, GenerationPlan, JobProgress, ExportPreset, TerrainManifest, HeightmapFormat, AlbedoFormat, DEMSource, ImagerySource, TileGrid, MaskSettings } from '../types/terrain';
+import type { AppState, GeoBounds, TerrainProfile, GenerationPlan, JobProgress, ExportPreset, TerrainManifest, HeightmapFormat, AlbedoFormat, DEMSource, ImagerySource, TileGrid, MaskSettings, Extract3DSettings } from '../types/terrain';
 
 const defaultProfile: TerrainProfile = {
   id: 'balanced',
@@ -52,6 +52,9 @@ export const useTerrainStore = create<AppState & {
   deselectAllTiles: () => void;
   setSelectedTiles: (tiles: Set<string>) => void;
   setMaskSettings: (settings: Partial<MaskSettings>) => void;
+  setExtract3DSettings: (settings: Partial<Extract3DSettings>) => void;
+  setBuildingsVisible: (visible: boolean) => void;
+  setRoadsVisible: (visible: boolean) => void;
   setActiveTab: (tab: AppState['activeTab']) => void;
   setExportedData: (manifest: TerrainManifest | null, packagePath: string | null) => void;
   resetGeneration: () => void;
@@ -95,6 +98,14 @@ export const useTerrainStore = create<AppState & {
     cliffThresholdDegrees: 45,
     roadLineWidthPx: 3,
   },
+  extract3DSettings: {
+    extractBuildings: false,
+    extractRoads: false,
+    defaultBuildingHeight: 9,
+    roadElevationOffset: 0.1,
+  },
+  buildingsVisible: true,
+  roadsVisible: true,
   activeTab: 'map',
   exportProgress: null,
   exportResult: null,
@@ -141,6 +152,11 @@ export const useTerrainStore = create<AppState & {
   setMaskSettings: (settings) => set((state) => ({
     maskSettings: { ...state.maskSettings, ...settings },
   })),
+  setExtract3DSettings: (settings) => set((state) => ({
+    extract3DSettings: { ...state.extract3DSettings, ...settings },
+  })),
+  setBuildingsVisible: (visible) => set({ buildingsVisible: visible }),
+  setRoadsVisible: (visible) => set({ roadsVisible: visible }),
   setActiveTab: (tab) => set({ activeTab: tab }),
   setExportedData: (manifest, packagePath) => set({ exportedManifest: manifest, exportedPackagePath: packagePath }),
   setExportProgress: (p) => set({ exportProgress: p }),

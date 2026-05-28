@@ -106,6 +106,10 @@ export const ExportPanel: React.FC = () => {
   // Mask settings (used by export, controlled from Layers tab)
   const maskSettings = useTerrainStore((s) => s.maskSettings);
 
+  // 3D extraction settings
+  const extract3DSettings = useTerrainStore((s) => s.extract3DSettings);
+  const setExtract3DSettings = useTerrainStore((s) => s.setExtract3DSettings);
+
   const [isExporting, setIsExporting] = useState(false);
 
   // API Keys state
@@ -273,6 +277,7 @@ export const ExportPanel: React.FC = () => {
 
         // Pass base outputPath and tile row/col; main process constructs tile path with path.join
         const currentMaskSettings = useTerrainStore.getState().maskSettings;
+        const currentExtract3DSettings = useTerrainStore.getState().extract3DSettings;
         await Native.exportPackage(
           sessionId,
           outputPath,
@@ -289,6 +294,7 @@ export const ExportPanel: React.FC = () => {
           tile.row,
           tile.col,
           currentMaskSettings,
+          currentExtract3DSettings,
         );
 
         // Update progress AFTER tile completes
@@ -333,6 +339,8 @@ export const ExportPanel: React.FC = () => {
                 vegetationMask: manifestTile.files.vegetationMask ? `${tileFolder}/${manifestTile.files.vegetationMask}` : undefined,
                 buildingMask: manifestTile.files.buildingMask ? `${tileFolder}/${manifestTile.files.buildingMask}` : undefined,
                 cliffMask: manifestTile.files.cliffMask ? `${tileFolder}/${manifestTile.files.cliffMask}` : undefined,
+                buildings3D: manifestTile.files.buildings3D ? `${tileFolder}/${manifestTile.files.buildings3D}` : undefined,
+                roads3D: manifestTile.files.roads3D ? `${tileFolder}/${manifestTile.files.roads3D}` : undefined,
               },
             }],
           });
@@ -670,6 +678,71 @@ export const ExportPanel: React.FC = () => {
                 <option value="geotiff">GeoTIFF (RGB)</option>
               </select>
             </div>
+          </div>
+        </div>
+
+        {/* 3D Geometry Extraction */}
+        <div>
+          <h3 className="text-xs font-semibold text-gray-400 uppercase tracking-wider mb-3">
+            3D Geometry Extraction
+          </h3>
+          <div className="space-y-3">
+            {/* Extract 3D Buildings toggle */}
+            <label className="flex items-center gap-2 cursor-pointer">
+              <input
+                type="checkbox"
+                checked={extract3DSettings.extractBuildings}
+                onChange={(e) => setExtract3DSettings({ extractBuildings: e.target.checked })}
+                className="w-4 h-4 rounded border-gray-600 bg-gray-700 text-cyan-500 focus:ring-cyan-500 focus:ring-offset-0"
+              />
+              <span className="text-sm text-gray-300">Extract 3D Buildings</span>
+            </label>
+            {/* Default Building Height (shown when buildings enabled) */}
+            {extract3DSettings.extractBuildings && (
+              <div className="ml-6 space-y-1">
+                <label className="text-xs text-gray-400">Default Height (m)</label>
+                <input
+                  type="number"
+                  min={3}
+                  max={100}
+                  step={1}
+                  value={extract3DSettings.defaultBuildingHeight}
+                  onChange={(e) => {
+                    const clamped = Math.max(3, Math.min(100, Math.round(Number(e.target.value))));
+                    setExtract3DSettings({ defaultBuildingHeight: clamped });
+                  }}
+                  className="w-full bg-gray-700 border border-gray-600 rounded text-sm py-1.5 px-2 text-white"
+                />
+              </div>
+            )}
+            {/* Extract 3D Roads toggle */}
+            <label className="flex items-center gap-2 cursor-pointer">
+              <input
+                type="checkbox"
+                checked={extract3DSettings.extractRoads}
+                onChange={(e) => setExtract3DSettings({ extractRoads: e.target.checked })}
+                className="w-4 h-4 rounded border-gray-600 bg-gray-700 text-cyan-500 focus:ring-cyan-500 focus:ring-offset-0"
+              />
+              <span className="text-sm text-gray-300">Extract 3D Roads</span>
+            </label>
+            {/* Road Elevation Offset (shown when roads enabled) */}
+            {extract3DSettings.extractRoads && (
+              <div className="ml-6 space-y-1">
+                <label className="text-xs text-gray-400">Road Elevation Offset (m)</label>
+                <input
+                  type="number"
+                  min={0}
+                  max={1}
+                  step={0.1}
+                  value={extract3DSettings.roadElevationOffset}
+                  onChange={(e) => {
+                    const clamped = Math.max(0, Math.min(1, Number(e.target.value)));
+                    setExtract3DSettings({ roadElevationOffset: Math.round(clamped * 10) / 10 });
+                  }}
+                  className="w-full bg-gray-700 border border-gray-600 rounded text-sm py-1.5 px-2 text-white"
+                />
+              </div>
+            )}
           </div>
         </div>
 

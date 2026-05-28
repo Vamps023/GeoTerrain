@@ -32,6 +32,7 @@ export interface ElectronAPI {
       tileRow?: number,
       tileCol?: number,
       maskSettings?: MaskSettings,
+      extract3DSettings?: Extract3DSettings,
     ) => Promise<string>;
   };
   settings: {
@@ -81,6 +82,8 @@ export interface TileFileSet {
   buildingMask?: string;
   cliffMask?: string;
   splat?: string;
+  buildings3D?: string;
+  roads3D?: string;
 }
 
 export interface ElevationRange {
@@ -259,6 +262,11 @@ export interface AppState {
   // Mask generation settings
   maskSettings: MaskSettings;
 
+  // 3D extraction settings
+  extract3DSettings: Extract3DSettings;
+  buildingsVisible: boolean;
+  roadsVisible: boolean;
+
   // UI
   activeTab: 'map' | 'layers' | 'jobs' | 'export' | 'view3d';
 
@@ -360,4 +368,42 @@ export interface ProjectData {
   // Map view state
   mapCenter: { lng: number; lat: number };
   mapZoom: number;
+}
+
+// ─── 3D Geometry Extraction ───────────────────────────────────
+
+export interface BuildingGeometry {
+  footprint: Array<{ lat: number; lon: number }>;
+  height: number;       // meters, >= 0
+  floors: number;       // integer, >= 0
+  minLevel: number;     // integer, >= 0
+  roofShape?: string;   // 'flat' | 'gabled' | 'hipped' | 'pyramidal' | undefined
+  tags: Record<string, string>;
+}
+
+export interface RoadGeometry {
+  centerline: Array<{ lat: number; lon: number }>;
+  width: number;        // meters, >= 0
+  surface: string;      // raw surface tag or ''
+  highway: string;      // highway classification tag
+  tags: Record<string, string>;
+}
+
+export interface Extract3DSettings {
+  extractBuildings: boolean;    // default: false
+  extractRoads: boolean;        // default: false
+  defaultBuildingHeight: number; // default: 9, range [3, 100]
+  roadElevationOffset: number;   // default: 0.1, range [0, 1]
+}
+
+export interface Extraction3DOptions {
+  bounds: GeoBounds;
+  defaultBuildingHeight: number;  // meters, 1-100, default 9
+  roadElevationOffset: number;    // meters, 0-1, default 0.1
+}
+
+export interface Extraction3DResult {
+  buildings: BuildingGeometry[];
+  roads: RoadGeometry[];
+  extractionTimeMs: number;
 }

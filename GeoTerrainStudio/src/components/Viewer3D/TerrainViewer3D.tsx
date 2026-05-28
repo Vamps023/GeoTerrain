@@ -16,11 +16,14 @@ import {
   HighlightLayer,
 } from '@babylonjs/core';
 import { fromArrayBuffer } from 'geotiff';
-import type { TerrainManifest, TerrainTile } from '../../types/terrain';
+import { Building2, Route } from 'lucide-react';
+import type { TerrainManifest, TerrainTile, BuildingGeometry, RoadGeometry } from '../../types/terrain';
 import { FsAPI } from '../../core/ipc';
 import { useTerrainStore } from '../../core/store';
 import { parseMask } from './MaskSampler';
 import { scatter, clear, type ScatterResult, DEFAULT_SCATTER_CONFIG } from './TreeScatterer';
+import { createBuildingMeshes, createRoadMeshes } from './MeshBuilder3D';
+import type { TileContext, MeshBuilder3DOptions } from './MeshBuilder3D';
 
 interface TerrainViewer3DProps {
   manifest: TerrainManifest | null;
@@ -200,6 +203,8 @@ export const TerrainViewer3D: React.FC<TerrainViewer3DProps> = ({ manifest, pack
   const highlightLayerRef = useRef<HighlightLayer | null>(null);
   const selectedMeshRef = useRef<Mesh | null>(null);
   const scatterResultsRef = useRef<Map<string, ScatterResult>>(new Map());
+  const buildingMeshesRef = useRef<Mesh[]>([]);
+  const roadMeshesRef = useRef<Mesh[]>([]);
   const [isLoading, setIsLoading] = useState(false);
   const [status, setStatus] = useState('Ready — Click to enable fly controls');
   const [controlsHint, setControlsHint] = useState(true);
@@ -312,6 +317,15 @@ export const TerrainViewer3D: React.FC<TerrainViewer3DProps> = ({ manifest, pack
         }
       }
       scatterResultsRef.current.clear();
+      // Dispose 3D building and road meshes
+      for (const m of buildingMeshesRef.current) {
+        if (!m.isDisposed()) m.dispose(false, true);
+      }
+      buildingMeshesRef.current = [];
+      for (const m of roadMeshesRef.current) {
+        if (!m.isDisposed()) m.dispose(false, true);
+      }
+      roadMeshesRef.current = [];
       engine.dispose();
       engineRef.current = null;
       sceneRef.current = null;
@@ -341,6 +355,28 @@ export const TerrainViewer3D: React.FC<TerrainViewer3DProps> = ({ manifest, pack
       selectedMeshRef.current.rotation.y = tileRotation * (Math.PI / 180);
     }
   }, [tileRotation]);
+
+  // ── 3D mesh visibility toggles ─────────────────────────────────────
+  const buildingsVisible = useTerrainStore((s) => s.buildingsVisible);
+  const roadsVisible = useTerrainStore((s) => s.roadsVisible);
+  const setBuildingsVisible = useTerrainStore((s) => s.setBuildingsVisible);
+  const setRoadsVisible = useTerrainStore((s) => s.setRoadsVisible);
+
+  useEffect(() => {
+    for (const mesh of buildingMeshesRef.current) {
+      if (!mesh.isDisposed()) {
+        mesh.isVisible = buildingsVisible;
+      }
+    }
+  }, [buildingsVisible]);
+
+  useEffect(() => {
+    for (const mesh of roadMeshesRef.current) {
+      if (!mesh.isDisposed()) {
+        mesh.isVisible = roadsVisible;
+      }
+    }
+  }, [roadsVisible]);
 
   // ── Demo terrain ───────────────────────────────────────────────────
   const buildDemoTerrain = useCallback((scene: Scene) => {
@@ -500,6 +536,16 @@ export const TerrainViewer3D: React.FC<TerrainViewer3DProps> = ({ manifest, pack
         }
       }
       scatterResultsRef.current.clear();
+
+      // Dispose old 3D building and road meshes
+      for (const m of buildingMeshesRef.current) {
+        if (!m.isDisposed()) m.dispose(false, true);
+      }
+      buildingMeshesRef.current = [];
+      for (const m of roadMeshesRef.current) {
+        if (!m.isDisposed()) m.dispose(false, true);
+      }
+      roadMeshesRef.current = [];
 
       const sourceTiles = manifest.tiles;
       if (!sourceTiles || sourceTiles.length === 0) {
@@ -668,6 +714,91 @@ export const TerrainViewer3D: React.FC<TerrainViewer3DProps> = ({ manifest, pack
               }
             })();
           }
+
+          // Fire-and-forget 3D building and road geometry loading
+          if (centeredTile.files.buildings3D || centeredTile.files.roads3D) {
+            const basePath = pkgPath.replace(/\\/g, '/');
+            const tileElevMin = Number.isFinite(centeredTile.elevation.min) ? centeredTile.elevation.min : 0;
+            const tileElevMax = Number.isFinite(centeredTile.elevation.max) ? centeredTile.elevation.max : 100;
+
+            void (async () => {
+              try {
+                // Wait for terrain mesh geometry to be ready
+                await new Promise<void>((resolve) => {
+                  const checkReady = () => {
+                    if (mesh.metadata?.geometryReady || mesh.getTotalVertices() > 0) {
+                      resolve();
+                    } else {
+                      setTimeout(checkReady, 100);
+                    }
+                  };
+                  setTimeout(checkReady, 100);
+                });
+
+                const tileContext: TileContext = {
+                  scene,
+                  tileBounds: centeredTile.bounds,
+                  tileWidthM,
+                  tileHeightM,
+                  tileOffsetX: centeredTile.worldOffset.x + tileWidthM / 2,
+                  tileOffsetZ: centeredTile.worldOffset.z + tileHeightM / 2,
+                  terrainMesh: mesh,
+                  elevationMin: tileElevMin,
+                  elevationMax: tileElevMax,
+                  heightExaggeration: HEIGHT_EXAGGERATION,
+                };
+
+                // Load and render 3D buildings
+                if (centeredTile.files.buildings3D) {
+                  const buildings3DPath = `${basePath}/${centeredTile.files.buildings3D}`;
+                  try {
+                    const buf = await FsAPI.readFileBinary(buildings3DPath);
+                    const decoder = new TextDecoder();
+                    const jsonStr = decoder.decode(buf);
+                    const buildings: BuildingGeometry[] = JSON.parse(jsonStr);
+                    if (Array.isArray(buildings)) {
+                      const meshes = createBuildingMeshes(buildings, tileContext);
+                      buildingMeshesRef.current.push(...meshes);
+                      if (meshes.length > 0) {
+                        console.log(`MeshBuilder3D: ${meshes.length} building meshes created for tile ${mesh.name}`);
+                      }
+                    } else {
+                      console.warn(`3D buildings JSON is not an array: ${buildings3DPath}`);
+                    }
+                  } catch (err) {
+                    console.warn(`Failed to load 3D buildings from ${buildings3DPath}:`, err);
+                  }
+                }
+
+                // Load and render 3D roads
+                if (centeredTile.files.roads3D) {
+                  const roads3DPath = `${basePath}/${centeredTile.files.roads3D}`;
+                  const meshBuilder3DOptions: MeshBuilder3DOptions = {
+                    roadElevationOffset: useTerrainStore.getState().extract3DSettings.roadElevationOffset,
+                  };
+                  try {
+                    const buf = await FsAPI.readFileBinary(roads3DPath);
+                    const decoder = new TextDecoder();
+                    const jsonStr = decoder.decode(buf);
+                    const roads: RoadGeometry[] = JSON.parse(jsonStr);
+                    if (Array.isArray(roads)) {
+                      const meshes = createRoadMeshes(roads, tileContext, meshBuilder3DOptions);
+                      roadMeshesRef.current.push(...meshes);
+                      if (meshes.length > 0) {
+                        console.log(`MeshBuilder3D: ${meshes.length} road meshes created for tile ${mesh.name}`);
+                      }
+                    } else {
+                      console.warn(`3D roads JSON is not an array: ${roads3DPath}`);
+                    }
+                  } catch (err) {
+                    console.warn(`Failed to load 3D roads from ${roads3DPath}:`, err);
+                  }
+                }
+              } catch (err) {
+                console.warn(`3D geometry loading failed for tile ${mesh.name}:`, err);
+              }
+            })();
+          }
         } catch (e) {
           console.error('Tile load error:', e);
         }
@@ -704,6 +835,36 @@ export const TerrainViewer3D: React.FC<TerrainViewer3DProps> = ({ manifest, pack
         <div className="absolute inset-0 flex flex-col items-center justify-center bg-black/70 z-10 gap-3">
           <div className="w-10 h-10 border-2 border-[#4a7c3f] border-t-transparent rounded-full animate-spin" />
           <div className="text-[#7ab86f] text-sm">{status}</div>
+        </div>
+      )}
+
+      {/* Visibility toggles */}
+      {!isLoading && (
+        <div className="absolute top-3 left-3 flex gap-1 z-10">
+          <button
+            onClick={() => setBuildingsVisible(!buildingsVisible)}
+            className={`flex items-center gap-1 px-2 py-1.5 rounded text-[10px] font-medium transition-colors ${
+              buildingsVisible
+                ? 'bg-[#4a7c3f]/90 text-white hover:bg-[#4a7c3f]'
+                : 'bg-black/70 text-gray-500 hover:bg-black/80 hover:text-gray-300'
+            }`}
+            title={buildingsVisible ? 'Hide buildings' : 'Show buildings'}
+          >
+            <Building2 size={13} />
+            <span>Buildings</span>
+          </button>
+          <button
+            onClick={() => setRoadsVisible(!roadsVisible)}
+            className={`flex items-center gap-1 px-2 py-1.5 rounded text-[10px] font-medium transition-colors ${
+              roadsVisible
+                ? 'bg-[#4a7c3f]/90 text-white hover:bg-[#4a7c3f]'
+                : 'bg-black/70 text-gray-500 hover:bg-black/80 hover:text-gray-300'
+            }`}
+            title={roadsVisible ? 'Hide roads' : 'Show roads'}
+          >
+            <Route size={13} />
+            <span>Roads</span>
+          </button>
         </div>
       )}
 
