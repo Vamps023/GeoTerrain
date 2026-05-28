@@ -186,8 +186,8 @@ export async function cycleDebugOverlay(
         const blob = new Blob([buffer], { type: 'image/png' });
         const url = URL.createObjectURL(blob);
         const tex = new Texture(url, scene);
-        tex.vScale = -1;
-        tex.vOffset = 1;
+        tex.vScale = vScale;
+        tex.vOffset = vOffset;
         mat.diffuseTexture = tex;
         mat.emissiveColor = Color3.Black();
         mat.specularColor = Color3.Black();
@@ -209,7 +209,7 @@ export async function cycleDebugOverlay(
           rgba[i * 4 + 2] = 0;           // B
           rgba[i * 4 + 3] = 255;         // A
         }
-        applyRawTexture(mat, rgba, maskData.width, maskData.height, scene);
+        applyRawTexture(mat, rgba, maskData.width, maskData.height, scene, vScale, vOffset);
       } else {
         console.warn('[MaskDebug] No vegetation mask available for this tile');
       }
@@ -230,7 +230,7 @@ export async function cycleDebugOverlay(
           rgba[i * 4 + 2] = val;          // B (water intensity)
           rgba[i * 4 + 3] = 255;         // A
         }
-        applyRawTexture(mat, rgba, maskData.width, maskData.height, scene);
+        applyRawTexture(mat, rgba, maskData.width, maskData.height, scene, vScale, vOffset);
       } else {
         console.warn('[MaskDebug] No water mask available for this tile');
       }
@@ -262,8 +262,8 @@ export async function cycleDebugOverlay(
           const blob = new Blob([buffer], { type: 'image/png' });
           const url = URL.createObjectURL(blob);
           const tex = new Texture(url, scene);
-          tex.vScale = -1;
-          tex.vOffset = 1;
+          tex.vScale = vScale;
+          tex.vOffset = vOffset;
           mat.diffuseTexture = tex;
           mat.emissiveTexture = tex;
           mat.emissiveColor = Color3.White();
@@ -272,7 +272,7 @@ export async function cycleDebugOverlay(
         }
 
         // Apply as RawTexture for GeoTIFF and R16 formats
-        applyRawTexture(mat, rgba, width, height, scene);
+        applyRawTexture(mat, rgba, width, height, scene, vScale, vOffset);
       } else {
         console.warn('[MaskDebug] No heightmap available for this tile');
       }

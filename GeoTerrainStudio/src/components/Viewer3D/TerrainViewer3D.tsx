@@ -712,13 +712,13 @@ export const TerrainViewer3D: React.FC<TerrainViewer3DProps> = ({ manifest, pack
     }
 
     try {
-      const newMode = await cycleDebugOverlay(mesh, scene, files, pkgPath);
+      const newMode = await cycleDebugOverlay(mesh, scene, files, pkgPath, flipY);
       setDebugMode(newMode as DebugOverlayMode);
       console.log(`[MaskDebug] Switched to: ${newMode}`);
     } catch (err) {
       console.error('[MaskDebug] Failed to cycle overlay:', err);
     }
-  }, []);
+  }, [flipY]);
 
   return (
     <div className="relative w-full h-full bg-[#080c10]">
