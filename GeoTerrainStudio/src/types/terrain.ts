@@ -305,6 +305,10 @@ export interface MaskGenerationOptions {
   generateCliffMask: boolean;
   cliffThresholdDegrees: number;
   roadLineWidthPx?: number;       // Default: 3
+  /** Target heightmap width in pixels. Used by resolution-sensitive masks (vegetation) to ensure output matches heightmap dimensions. */
+  heightmapWidth?: number;
+  /** Target heightmap height in pixels. Used by resolution-sensitive masks (vegetation) to ensure output matches heightmap dimensions. */
+  heightmapHeight?: number;
 }
 
 export interface MaskResult {

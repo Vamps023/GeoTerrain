@@ -48,6 +48,7 @@ GeoTerrainBridge/Makefile
 GeoTerrainBridge/install_manifest.txt
 GeoTerrainBridge/CTestTestfile.cmake
 GeoTerrainBridge/_deps/
+EnginesAddOn/GeoTerrainUnigine/thirdparty
 
 # Compiled binaries
 GeoTerrainBridge/**/*.dll
@@ -112,6 +113,7 @@ Desktop.ini
 *.swp
 *.swo
 *~
+
 node_modules
 
 #kiro

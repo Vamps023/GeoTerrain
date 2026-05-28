@@ -105,6 +105,7 @@ function createWindow(): void {
     icon: path.join(__dirname, '../public/logo/logo.png'),
     darkTheme: true,
     backgroundColor: '#1a1a1a',
+    autoHideMenuBar: true,
     webPreferences: {
       preload: path.join(__dirname, 'preload.js'),
       contextIsolation: true,

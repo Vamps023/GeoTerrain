@@ -145,14 +145,26 @@ export function filterByMask(
   maskData: MaskData,
   tileWidthM: number,
   tileHeightM: number,
-  vegetationThreshold: number
+  vegetationThreshold: number,
+  exclusionMask?: MaskData
 ): CandidatePosition[] {
   const filtered: CandidatePosition[] = [];
 
   for (const pos of candidates) {
     // Convert world position to UV coordinates
+    // V is flipped (1.0 - v) to match terrain mesh orientation:
+    // The terrain mesh has scaling.z = -1 and the albedo uses vScale = -1,
+    // so the mask must also be sampled with inverted V to align correctly.
     const u = pos.x / tileWidthM;
-    const v = pos.z / tileHeightM;
+    const v = 1.0 - (pos.z / tileHeightM);
+
+    // Check exclusion mask first (water, roads) — if pixel > 0, skip this position
+    if (exclusionMask) {
+      const exclusionValue = sampleAt(exclusionMask, u, v);
+      if (exclusionValue > 0) {
+        continue;
+      }
+    }
 
     // Sample mask and check against threshold
     const pixelValue = sampleAt(maskData, u, v);
@@ -459,7 +471,8 @@ export async function scatter(
   tileHeightM: number,
   _elevationMin: number,
   _elevationMax: number,
-  config?: Partial<ScatterConfig>
+  config?: Partial<ScatterConfig>,
+  exclusionMask?: MaskData
 ): Promise<ScatterResult> {
   const startTime = performance.now();
   const cfg: ScatterConfig = { ...DEFAULT_SCATTER_CONFIG, ...config };
@@ -467,13 +480,14 @@ export async function scatter(
   // Step 1: Generate jittered grid candidates
   const candidates = generateCandidates(tileWidthM, tileHeightM, cfg);
 
-  // Step 2: Filter candidates against vegetation mask
+  // Step 2: Filter candidates against vegetation mask (and exclusion mask if provided)
   const validPositions = filterByMask(
     candidates,
     maskData,
     tileWidthM,
     tileHeightM,
-    cfg.vegetationThreshold
+    cfg.vegetationThreshold,
+    exclusionMask
   );
 
   // Step 3: Enforce instance cap via seeded random selection

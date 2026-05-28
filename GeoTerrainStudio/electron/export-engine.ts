@@ -1604,6 +1604,11 @@ export async function executeExport(
       generateCliffMask: maskSettings.generateCliffMask,
       cliffThresholdDegrees: maskSettings.cliffThresholdDegrees,
       roadLineWidthPx: maskSettings.roadLineWidthPx,
+      // Explicit heightmap dimensions ensure the vegetation mask output is always
+      // resolution-matched to the heightmap. Other masks (road, water, building, cliff)
+      // continue to use the `resolution` field independently.
+      heightmapWidth: heightmapSize,
+      heightmapHeight: heightmapSize,
       onProgress: (message: string) => {
         if (onProgress) {
           onProgress({ stage: 'generate_masks', current: 0, total: 100, message });

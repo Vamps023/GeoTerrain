@@ -16,11 +16,11 @@ import sharp from 'sharp';
 import {
   fetchRoads,
   fetchWater,
-  fetchVegetation,
   fetchBuildings,
 } from './overpass-client';
 import type { GeoBounds, OverpassQueryResult } from './overpass-client';
 import { rasterizeToFile } from './vector-rasterizer';
+import { fetchSatelliteVegetation } from './satellite-vegetation-client';
 
 // ─── Orchestrator Interfaces ───────────────────────────────────
 
@@ -37,6 +37,10 @@ export interface MaskGenerationOptions {
   cliffThresholdDegrees: number;
   roadLineWidthPx?: number;   // Default: 3
   onProgress?: (message: string) => void;
+  /** Target heightmap width in pixels. Used by resolution-sensitive masks (vegetation) to ensure output matches heightmap dimensions. */
+  heightmapWidth?: number;
+  /** Target heightmap height in pixels. Used by resolution-sensitive masks (vegetation) to ensure output matches heightmap dimensions. */
+  heightmapHeight?: number;
 }
 
 export interface MaskResult {
@@ -110,14 +114,7 @@ export async function generateMasks(
 
   if (options.generateVegetationMask) {
     osmTasks.push(
-      generateOsmMask(
-        'vegetation',
-        () => fetchVegetation(options.bounds),
-        'polygon',
-        options,
-        result,
-        progress
-      )
+      generateSatelliteVegetationMask(options, result, progress)
     );
   }
 
@@ -140,6 +137,13 @@ export async function generateMasks(
   // Generate cliff mask from DEM if enabled
   if (options.generateCliffMask) {
     await generateCliffMaskTask(options, result, progress, elevations, elevationWidth, elevationHeight);
+  }
+
+  // Post-processing: subtract water mask from vegetation mask to prevent
+  // vegetation scattering on water bodies. This handles interpolation artifacts
+  // at water boundaries and ensures no trees are placed on rivers/lakes.
+  if (result.vegetationMask && result.waterMask) {
+    await subtractWaterFromVegetation(options, result, progress);
   }
 
   result.generationTimeMs = Date.now() - startTime;
@@ -209,6 +213,159 @@ async function generateOsmMask(
     }
     progress(`Warning: ${maskType} mask generation failed — ${errorMessage}`);
     // Skip this mask type, do not abort remaining masks
+  }
+}
+
+/**
+ * Generates the vegetation mask using satellite-derived raster data (ESA WorldCover).
+ *
+ * Uses `heightmapWidth` and `heightmapHeight` from options when available to ensure
+ * the vegetation mask output dimensions match the heightmap exactly. Falls back to
+ * `options.resolution` for backward compatibility when heightmap dimensions are not provided.
+ *
+ * On failure, logs a warning and continues without aborting (non-fatal).
+ */
+async function generateSatelliteVegetationMask(
+  options: MaskGenerationOptions,
+  result: MaskResult,
+  progress: (message: string) => void
+): Promise<void> {
+  const filename = `${options.tilePrefix}_vegetation_mask.tif`;
+  const outputFilePath = path.join(options.outputPath, filename);
+
+  // Use explicit heightmap dimensions when available, fall back to resolution
+  const outputWidth = options.heightmapWidth ?? options.resolution;
+  const outputHeight = options.heightmapHeight ?? options.resolution;
+
+  try {
+    progress('Fetching satellite vegetation data (ESA WorldCover)...');
+    console.log(
+      `[mask-generator] Starting satellite vegetation mask generation for bounds: ` +
+      `S=${options.bounds.south.toFixed(4)}, W=${options.bounds.west.toFixed(4)}, ` +
+      `N=${options.bounds.north.toFixed(4)}, E=${options.bounds.east.toFixed(4)} ` +
+      `(output: ${outputWidth}x${outputHeight})`
+    );
+
+    const vegetationBuffer = await fetchSatelliteVegetation(
+      options.bounds,
+      outputWidth,
+      outputHeight
+    );
+
+    progress('Writing satellite vegetation mask to TIFF...');
+
+    // Write as 8-bit single-channel grayscale TIFF with LZW compression
+    await sharp(vegetationBuffer, {
+      raw: { width: outputWidth, height: outputHeight, channels: 1 },
+    })
+      .tiff({ compression: 'lzw' })
+      .toFile(outputFilePath);
+
+    // Verify file was written
+    const fs = require('fs');
+    if (fs.existsSync(outputFilePath)) {
+      const stats = fs.statSync(outputFilePath);
+      console.log(`[mask-generator] vegetation mask written: ${outputFilePath} (${stats.size} bytes)`);
+    } else {
+      console.error(`[mask-generator] vegetation mask file NOT found after write: ${outputFilePath}`);
+    }
+
+    result.vegetationMask = filename;
+    progress(`Vegetation mask generated: ${filename}`);
+  } catch (err) {
+    const errorMessage = err instanceof Error ? err.message : String(err);
+    console.error(`[mask-generator] FAILED to generate vegetation mask: ${errorMessage}`);
+    if (err instanceof Error && err.stack) {
+      console.error(`[mask-generator] Stack: ${err.stack}`);
+    }
+    progress(`Warning: vegetation mask generation failed — ${errorMessage}`);
+    // Non-fatal: skip this mask type, do not abort remaining masks
+  }
+}
+
+/**
+ * Post-processing step: subtract water mask from vegetation mask.
+ *
+ * Reads both the vegetation and water mask TIFF files, and for every pixel
+ * where the water mask is non-zero (water present), sets the vegetation
+ * mask pixel to 0. This prevents vegetation scattering on rivers, lakes,
+ * and other water bodies.
+ *
+ * Also subtracts road mask areas from vegetation if both are present,
+ * preventing trees from being placed on roads.
+ *
+ * Overwrites the vegetation mask file in-place.
+ */
+async function subtractWaterFromVegetation(
+  options: MaskGenerationOptions,
+  result: MaskResult,
+  progress: (message: string) => void
+): Promise<void> {
+  const fs = require('fs');
+  const vegFilePath = path.join(options.outputPath, result.vegetationMask!);
+  const waterFilePath = path.join(options.outputPath, result.waterMask!);
+
+  try {
+    progress('Subtracting water areas from vegetation mask...');
+
+    // Read vegetation mask raw pixels
+    const vegImage = sharp(vegFilePath);
+    const vegMeta = await vegImage.metadata();
+    const vegWidth = vegMeta.width!;
+    const vegHeight = vegMeta.height!;
+    const vegBuffer = await sharp(vegFilePath).raw().toBuffer();
+
+    // Read water mask and resize to match vegetation mask dimensions if needed
+    const waterBuffer = await sharp(waterFilePath)
+      .resize(vegWidth, vegHeight, { kernel: 'nearest' })
+      .raw()
+      .toBuffer();
+
+    // Subtract: where water > 0, set vegetation to 0
+    const outputBuffer = Buffer.from(vegBuffer);
+    let waterPixelsCleared = 0;
+    for (let i = 0; i < outputBuffer.length; i++) {
+      if (waterBuffer[i] > 0) {
+        outputBuffer[i] = 0;
+        waterPixelsCleared++;
+      }
+    }
+
+    // Also subtract road mask if present
+    let roadPixelsCleared = 0;
+    if (result.roadMask) {
+      const roadFilePath = path.join(options.outputPath, result.roadMask);
+      if (fs.existsSync(roadFilePath)) {
+        const roadBuffer = await sharp(roadFilePath)
+          .resize(vegWidth, vegHeight, { kernel: 'nearest' })
+          .raw()
+          .toBuffer();
+
+        for (let i = 0; i < outputBuffer.length; i++) {
+          if (roadBuffer[i] > 0) {
+            outputBuffer[i] = 0;
+            roadPixelsCleared++;
+          }
+        }
+      }
+    }
+
+    // Write the modified vegetation mask back
+    await sharp(outputBuffer, {
+      raw: { width: vegWidth, height: vegHeight, channels: 1 },
+    })
+      .tiff({ compression: 'lzw' })
+      .toFile(vegFilePath);
+
+    console.log(
+      `[mask-generator] Vegetation mask post-processed: ${waterPixelsCleared} water pixels ` +
+      `and ${roadPixelsCleared} road pixels cleared from vegetation mask`
+    );
+    progress('Vegetation mask post-processed (water/road areas excluded)');
+  } catch (err) {
+    const errorMessage = err instanceof Error ? err.message : String(err);
+    console.warn(`[mask-generator] Failed to subtract water from vegetation mask (non-fatal): ${errorMessage}`);
+    // Non-fatal: vegetation mask remains as-is without water subtraction
   }
 }
 
