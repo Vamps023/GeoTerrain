@@ -386,6 +386,8 @@ export interface RoadGeometry {
   width: number;        // meters, >= 0
   surface: string;      // raw surface tag or ''
   highway: string;      // highway classification tag
+  bridge?: string;      // raw bridge tag value: 'yes', 'viaduct', etc.
+  layer: number;        // parsed layer tag, default 0
   tags: Record<string, string>;
 }
 

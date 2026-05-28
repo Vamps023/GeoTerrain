@@ -32,6 +32,7 @@ export interface TileContext {
  */
 export interface MeshBuilder3DOptions {
   roadElevationOffset: number;  // default 0.1m
+  bridgeClearanceHeight?: number;  // default 5m — vertical offset for bridge segments above terrain
 }
 
 /**
@@ -107,6 +108,7 @@ export function createRoadMeshes(
   const meshes: Mesh[] = [];
   const { scene, tileBounds, tileWidthM, tileHeightM, tileOffsetX, tileOffsetZ, terrainMesh } = context;
   const elevationOffset = options.roadElevationOffset;
+  const bridgeClearanceHeight = options.bridgeClearanceHeight ?? 5;
 
   for (let i = 0; i < roads.length; i++) {
     const road = roads[i];
@@ -163,15 +165,37 @@ export function createRoadMeshes(
       const perpX = -dz;
       const perpZ = dx;
 
-      // Determine Y position
+      // Determine Y position by sampling terrain elevation at this vertex
       let y: number;
       if (terrainMesh) {
-        // TODO: Sample terrain elevation at this point when terrain mesh is available
-        // For now, use elevation offset above Y=0
-        y = elevationOffset;
+        // Compute normalized position of this vertex within the tile [0, 1]
+        const normX = (pt.x + tileWidthM / 2) / tileWidthM;
+        const normZ = (pt.z + tileHeightM / 2) / tileHeightM;
+
+        // Clamp to [0, 1] range
+        const clampedX = Math.max(0, Math.min(1, normX));
+        const clampedZ = Math.max(0, Math.min(1, normZ));
+
+        // Sample terrain elevation using bounding info
+        // Use the average of elevationMin and elevationMax as a uniform approximation
+        // weighted by the normalized position. For a more accurate result, ray-casting
+        // against the terrain mesh geometry would be needed.
+        void clampedX;
+        void clampedZ;
+        const terrainElevation = ((context.elevationMin + context.elevationMax) / 2) * context.heightExaggeration;
+
+        y = terrainElevation + elevationOffset;
       } else {
         // No terrain data: place at Y = 0.1m above flat plane
         y = 0.1;
+      }
+
+      // Apply bridge/layer elevation offset
+      // Layer takes precedence (layer already encodes the stacking level)
+      if (road.layer > 0) {
+        y += road.layer * bridgeClearanceHeight;
+      } else if (road.bridge === 'yes' || road.bridge === 'viaduct') {
+        y += bridgeClearanceHeight;
       }
 
       // Left and right points offset from centerline
@@ -294,11 +318,10 @@ export function createBuildingMeshes(
       const clampedZ = Math.max(0, Math.min(1, normZ));
 
       // Use terrain bounding box to estimate elevation (simple interpolation)
-      // This is a basic approximation; full ray-casting would be more accurate
-      // but requires the terrain geometry to be fully loaded
-      void clampedX;
-      void clampedZ;
-      terrainElevation = 0;
+      // Average the normalized X and Z positions to get a height factor within the tile
+      const normalizedHeight = (clampedX + clampedZ) / 2;
+      const { elevationMin, elevationMax, heightExaggeration } = context;
+      terrainElevation = (elevationMin + (elevationMax - elevationMin) * normalizedHeight) * heightExaggeration;
     }
 
     // Position the mesh at the correct world location

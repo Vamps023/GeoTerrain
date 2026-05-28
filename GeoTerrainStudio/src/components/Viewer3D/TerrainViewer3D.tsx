@@ -775,6 +775,7 @@ export const TerrainViewer3D: React.FC<TerrainViewer3DProps> = ({ manifest, pack
                   const roads3DPath = `${basePath}/${centeredTile.files.roads3D}`;
                   const meshBuilder3DOptions: MeshBuilder3DOptions = {
                     roadElevationOffset: useTerrainStore.getState().extract3DSettings.roadElevationOffset,
+                    bridgeClearanceHeight: 5,
                   };
                   try {
                     const buf = await FsAPI.readFileBinary(roads3DPath);

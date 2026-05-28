@@ -26,6 +26,8 @@ export interface RoadGeometry {
   width: number;        // meters, >= 0
   surface: string;      // raw surface tag or ''
   highway: string;      // highway classification tag
+  bridge?: string;      // raw bridge tag value: 'yes', 'viaduct', etc.
+  layer: number;        // parsed layer tag, default 0
   tags: Record<string, string>;
 }
 
@@ -261,13 +263,28 @@ export function extractRoads(
     // Extract highway classification tag
     const highway = tags['highway'] ?? '';
 
-    roads.push({
+    // Extract bridge tag if present
+    const bridgeTag = tags['bridge'];
+
+    // Parse layer tag as integer, default to 0 if absent or invalid
+    const layerRaw = parseInt(tags['layer'] ?? '', 10);
+    const layer = Number.isFinite(layerRaw) ? layerRaw : 0;
+
+    const road: RoadGeometry = {
       centerline: feature.geometry.map(pt => ({ lat: pt.lat, lon: pt.lon })),
       width,
       surface,
       highway,
+      layer,
       tags,
-    });
+    };
+
+    // Only include bridge if the tag exists in OSM data
+    if (bridgeTag !== undefined) {
+      road.bridge = bridgeTag;
+    }
+
+    roads.push(road);
   }
 
   return roads;
