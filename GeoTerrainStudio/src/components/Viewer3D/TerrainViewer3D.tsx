@@ -21,7 +21,6 @@ import { FsAPI } from '../../core/ipc';
 import { useTerrainStore } from '../../core/store';
 import { parseMask } from './MaskSampler';
 import { scatter, clear, type ScatterResult, DEFAULT_SCATTER_CONFIG } from './TreeScatterer';
-import { cycleDebugOverlay, getDebugMode, type DebugOverlayMode } from './MaskDebugOverlay';
 
 interface TerrainViewer3DProps {
   manifest: TerrainManifest | null;
@@ -208,9 +207,6 @@ export const TerrainViewer3D: React.FC<TerrainViewer3DProps> = ({ manifest, pack
   const [flipX, setFlipX] = useState(false);
   const [flipY, setFlipY] = useState(false);
   const [tileRotation, setTileRotation] = useState(0);
-  const [debugMode, setDebugMode] = useState<DebugOverlayMode>('albedo');
-  const selectedTileFilesRef = useRef<{ heightmap?: string; albedo?: string; vegetationMask?: string; waterMask?: string } | null>(null);
-  const packagePathRef = useRef<string | null>(null);
 
   // Initialize engine + FPS camera
   useEffect(() => {
@@ -275,17 +271,14 @@ export const TerrainViewer3D: React.FC<TerrainViewer3DProps> = ({ manifest, pack
         if (tileData) {
           setSelectedTile(tileData);
           selectedMeshRef.current = mesh;
-          selectedTileFilesRef.current = tileData.files ?? null;
           setFlipX(false);
           setFlipY(false);
           setTileRotation(0);
-          setDebugMode('albedo');
           hl.removeAllMeshes();
           hl.addMesh(mesh, new Color3(1, 0.8, 0.2));
         } else {
           setSelectedTile(null);
           selectedMeshRef.current = null;
-          selectedTileFilesRef.current = null;
           setFlipX(false);
           setFlipY(false);
           setTileRotation(0);
@@ -495,7 +488,6 @@ export const TerrainViewer3D: React.FC<TerrainViewer3DProps> = ({ manifest, pack
     async (manifest: TerrainManifest, pkgPath: string, scene: Scene) => {
       setIsLoading(true);
       setControlsHint(false);
-      packagePathRef.current = pkgPath;
 
       // Dispose old tile meshes
       scene.meshes.filter(m => m.name.startsWith('tile_')).forEach(m => m.dispose());
@@ -699,27 +691,6 @@ export const TerrainViewer3D: React.FC<TerrainViewer3DProps> = ({ manifest, pack
     [manifest, packagePath]
   );
 
-  // Debug overlay cycle handler
-  const handleDebugCycle = useCallback(async () => {
-    const mesh = selectedMeshRef.current;
-    const scene = sceneRef.current;
-    const files = selectedTileFilesRef.current;
-    const pkgPath = packagePathRef.current;
-
-    if (!mesh || !scene || !files || !pkgPath) {
-      console.warn('[MaskDebug] Select a tile first to use debug overlay');
-      return;
-    }
-
-    try {
-      const newMode = await cycleDebugOverlay(mesh, scene, files, pkgPath, flipY);
-      setDebugMode(newMode as DebugOverlayMode);
-      console.log(`[MaskDebug] Switched to: ${newMode}`);
-    } catch (err) {
-      console.error('[MaskDebug] Failed to cycle overlay:', err);
-    }
-  }, [flipY]);
-
   return (
     <div className="relative w-full h-full bg-[#080c10]">
       <canvas
@@ -782,18 +753,6 @@ export const TerrainViewer3D: React.FC<TerrainViewer3DProps> = ({ manifest, pack
               >
                 Flip Y
               </button>
-            </div>
-          </div>
-          <div className="mt-2 pt-2 border-t border-gray-700">
-            <div className="text-gray-500 mb-1">Debug Overlay</div>
-            <button
-              onClick={handleDebugCycle}
-              className="w-full px-2 py-1.5 rounded text-[10px] bg-gray-700 text-gray-300 hover:bg-gray-600"
-            >
-              Cycle: <span className="text-[#7ab86f] font-mono">{debugMode}</span>
-            </button>
-            <div className="text-gray-600 text-[9px] mt-1">
-              Click to cycle: albedo → vegetation → water → heightmap
             </div>
           </div>
         </div>
